@@ -4,24 +4,11 @@ import LiveRunConstellation from './components/LiveRunConstellation';
 import StatusBadge from './components/StatusBadge';
 import Toast, { type ToastItem } from './components/Toast';
 import WorkflowBuilder from './components/WorkflowBuilder';
+import { useViewport } from './hooks/useViewport';
 import { LAYER_Z_INDEX } from './constants/layers';
 import { ApiError, api } from './services/api';
 import type { ConstellationData, Workflow, WorkflowRun } from './types';
 import { createToastId } from './utils/toastId';
-
-function useIsMobilePortrait() {
-  const query = '(max-width: 767px) and (orientation: portrait)';
-  const [isMobilePortrait, setIsMobilePortrait] = useState<boolean>(window.matchMedia(query).matches);
-
-  useEffect(() => {
-    const media = window.matchMedia(query);
-    const listener = () => setIsMobilePortrait(media.matches);
-    media.addEventListener('change', listener);
-    return () => media.removeEventListener('change', listener);
-  }, []);
-
-  return isMobilePortrait;
-}
 
 export default function App() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -31,10 +18,21 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [focusNodeRequest, setFocusNodeRequest] = useState<{ nodeId: string; requestId: number } | null>(null);
-  const isMobilePortrait = useIsMobilePortrait();
+  const viewport = useViewport();
+  const isMobilePortrait = viewport.isMobile && viewport.isPortrait;
   const activeRunRef = useRef<WorkflowRun | null>(null);
   const toastsRef = useRef<ToastItem[]>([]);
   const dedupedToastKeysRef = useRef<Set<string>>(new Set());
+
+  const commitToasts = (next: ToastItem[]) => {
+    toastsRef.current = next;
+    dedupedToastKeysRef.current = new Set(
+      next
+        .map((toast) => toast.dedupeKey)
+        .filter((key): key is string => Boolean(key)),
+    );
+    setToasts(next);
+  };
 
   const enqueueToast = (
     level: ToastItem['level'],
@@ -61,8 +59,7 @@ export default function App() {
       });
     }
     const trimmed = next.slice(-3);
-    toastsRef.current = trimmed;
-    setToasts(trimmed);
+    commitToasts(trimmed);
   };
 
   const closeToast = (id: string) => {
@@ -71,8 +68,11 @@ export default function App() {
       dedupedToastKeysRef.current.delete(target.dedupeKey);
     }
     const next = toastsRef.current.filter((toast) => toast.id !== id);
-    toastsRef.current = next;
-    setToasts(next);
+    commitToasts(next);
+  };
+
+  const clearAllToasts = () => {
+    commitToasts([]);
   };
 
   const loadWorkflows = async () => {
@@ -95,15 +95,6 @@ export default function App() {
   useEffect(() => {
     activeRunRef.current = run;
   }, [run]);
-
-  useEffect(() => {
-    toastsRef.current = toasts;
-    dedupedToastKeysRef.current = new Set(
-      toasts
-        .map((toast) => toast.dedupeKey)
-        .filter((key): key is string => Boolean(key)),
-    );
-  }, [toasts]);
 
   useEffect(() => {
     if (!activeWorkflow) return;
@@ -204,6 +195,11 @@ export default function App() {
   return (
     <div className="app-shell">
       <div className="toast-stack" data-testid="toast-stack" style={{ zIndex: LAYER_Z_INDEX.toast }} aria-label="시스템 알림">
+        {toasts.length > 1 && (
+          <button type="button" className="toast-clear-all btn btn-ghost" onClick={clearAllToasts} aria-label="모든 알림 닫기">
+            일괄 닫기
+          </button>
+        )}
         {toasts.map((item) => (
           <Toast key={item.id} item={item} onClose={closeToast} />
         ))}

@@ -103,15 +103,22 @@ const workflowsFixture: Workflow[] = [
   },
 ];
 
-const mobileMediaQuery = '(max-width: 767px) and (orientation: portrait)';
-let mobilePortrait = false;
+let viewportWidth = 1024;
+let portraitOrientation = true;
 
 describe('App', () => {
   beforeAll(() => {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
       value: jest.fn().mockImplementation((query: string) => ({
-        matches: query === mobileMediaQuery ? mobilePortrait : false,
+        matches:
+          query === '(max-width: 767px)'
+            ? viewportWidth <= 767
+            : query === '(orientation: portrait)'
+              ? portraitOrientation
+              : query === '(orientation: landscape)'
+                ? !portraitOrientation
+                : false,
         media: query,
         onchange: null,
         addEventListener: jest.fn(),
@@ -125,7 +132,8 @@ describe('App', () => {
 
   beforeEach(() => {
     jest.useRealTimers();
-    mobilePortrait = false;
+    viewportWidth = 1024;
+    portraitOrientation = true;
     jest.clearAllMocks();
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
     (api.subscribeWorkflowRuns as jest.Mock).mockReturnValue(() => undefined);
@@ -219,7 +227,8 @@ describe('App', () => {
   });
 
   test('모바일 세로에서는 문제 노드 이동 액션 버튼을 숨긴다', async () => {
-    mobilePortrait = true;
+    viewportWidth = 390;
+    portraitOrientation = true;
     render(<App />);
     await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
@@ -235,5 +244,70 @@ describe('App', () => {
     expect(toastStack).toBeInTheDocument();
     expect(toastStack).toHaveStyle({ zIndex: `${LAYER_Z_INDEX.toast}` });
     expect(LAYER_Z_INDEX.toast).toBeGreaterThan(LAYER_Z_INDEX.canvasOverlay);
+  });
+
+  test('Clear All 버튼으로 누적된 알림을 일괄 제거한다', async () => {
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-b' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-c' }));
+    expect(screen.getAllByRole('button', { name: '알림 닫기' })).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole('button', { name: '모든 알림 닫기' }));
+    expect(screen.queryByRole('button', { name: '알림 닫기' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a-repeat' }));
+    expect(screen.getByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toBeInTheDocument();
+  });
+
+  test('동시성 웹훅 이벤트가 빠르게 유입되어도 상태 갱신 요청이 누락되지 않는다', async () => {
+    jest.useFakeTimers();
+    const streamHandlers: { onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void }[] = [];
+    (api.subscribeWorkflowRuns as jest.Mock).mockImplementation(
+      (
+        _workflowId: number,
+        handlers: { onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void },
+      ) => {
+        streamHandlers.push(handlers);
+        return () => undefined;
+      },
+    );
+    (api.getRun as jest.Mock).mockResolvedValue({
+      id: 101,
+      workflow_id: 1,
+      status: 'running',
+      started_at: '2026-03-04T12:00:00Z',
+      updated_at: '2026-03-04T12:00:01Z',
+      node_runs: [],
+    });
+    (api.getConstellation as jest.Mock).mockResolvedValue({
+      run_id: 101,
+      status: 'running',
+      nodes: [],
+      links: [],
+    });
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(streamHandlers).toHaveLength(1));
+
+    act(() => {
+      for (let i = 0; i < 6; i += 1) {
+        setTimeout(() => {
+          streamHandlers[0]?.onRunStatus({
+            workflow_id: 1,
+            runs: [{ id: 101, status: 'running', updated_at: `2026-03-04T12:00:0${i}Z` }],
+          });
+        }, 0);
+      }
+      jest.runAllTimers();
+    });
+
+    await waitFor(() => {
+      expect(api.getRun).toHaveBeenCalledTimes(6);
+      expect(api.getConstellation).toHaveBeenCalledTimes(6);
+    });
   });
 });

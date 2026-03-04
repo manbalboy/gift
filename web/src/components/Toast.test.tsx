@@ -1,26 +1,29 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import Toast, { type ToastItem } from './Toast';
 import { createToastId } from '../utils/toastId';
+import { useViewport } from '../hooks/useViewport';
+
+jest.mock('../hooks/useViewport', () => ({
+  useViewport: jest.fn(),
+}));
+
+const mockedUseViewport = useViewport as jest.MockedFunction<typeof useViewport>;
 
 describe('Toast', () => {
-  const originalInnerWidth = window.innerWidth;
-
   beforeEach(() => {
     jest.useFakeTimers();
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      writable: true,
-      value: 1024,
+    mockedUseViewport.mockReturnValue({
+      width: 1200,
+      height: 800,
+      isMobile: false,
+      isPortrait: false,
+      isLandscape: true,
     });
   });
 
   afterEach(() => {
     jest.useRealTimers();
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      writable: true,
-      value: originalInnerWidth,
-    });
+    jest.clearAllMocks();
   });
 
   test('warning/error 타입에 맞는 타이틀을 렌더링한다', () => {
@@ -94,10 +97,12 @@ describe('Toast', () => {
   });
 
   test('모바일 뷰포트에서는 액션 버튼을 숨긴다', () => {
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      writable: true,
-      value: 640,
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
     });
     const item: ToastItem = {
       id: 'toast-mobile-action',
@@ -113,61 +118,22 @@ describe('Toast', () => {
     expect(screen.queryByRole('button', { name: '해당 노드로 이동' })).not.toBeInTheDocument();
   });
 
-  test('렌더링 이후 뷰포트 리사이즈에도 액션 버튼 노출이 실시간 반영된다', () => {
-    const item: ToastItem = {
-      id: 'toast-resize',
-      level: 'warning',
-      message: '리사이즈 테스트',
-      action: {
-        label: '해당 노드로 이동',
-        onClick: jest.fn(),
-      },
-    };
-
-    render(<Toast item={item} onClose={jest.fn()} />);
-    expect(screen.getByRole('button', { name: '해당 노드로 이동' })).toBeInTheDocument();
-
-    act(() => {
-      Object.defineProperty(window, 'innerWidth', {
-        configurable: true,
-        writable: true,
-        value: 640,
-      });
-      window.dispatchEvent(new Event('resize'));
-      jest.advanceTimersByTime(120);
+  test('모바일에서 메시지가 실제로 넘치면 탭으로 확장/축소할 수 있다', () => {
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
     });
+    const scrollHeightSpy = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(44);
+    const clientHeightSpy = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(22);
+    const clientWidthSpy = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(220);
 
-    expect(screen.queryByRole('button', { name: '해당 노드로 이동' })).not.toBeInTheDocument();
-  });
-
-  test('언마운트 시 리사이즈 디바운스 타이머를 정리한다', () => {
-    const item: ToastItem = {
-      id: 'toast-cleanup',
-      level: 'warning',
-      message: 'cleanup',
-    };
-    const clearTimeoutSpy = jest.spyOn(window, 'clearTimeout');
-    const { unmount } = render(<Toast item={item} onClose={jest.fn()} />);
-
-    act(() => {
-      window.dispatchEvent(new Event('resize'));
-    });
-    unmount();
-
-    expect(clearTimeoutSpy).toHaveBeenCalled();
-    clearTimeoutSpy.mockRestore();
-  });
-
-  test('모바일 긴 메시지는 토스트 클릭으로 확장/축소된다', () => {
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      writable: true,
-      value: 640,
-    });
     const item: ToastItem = {
       id: 'toast-expand',
       level: 'error',
-      message: '아주긴메시지'.repeat(20),
+      message: '길이가 짧아도 실제 줄바꿈이 발생하는 메시지',
     };
 
     render(<Toast item={item} onClose={jest.fn()} />);
@@ -179,6 +145,38 @@ describe('Toast', () => {
 
     fireEvent.click(toast);
     expect(toast).toHaveAttribute('aria-expanded', 'false');
+
+    scrollHeightSpy.mockRestore();
+    clientHeightSpy.mockRestore();
+    clientWidthSpy.mockRestore();
+  });
+
+  test('모바일에서 좌우 스와이프 임계값을 넘기면 알림이 닫힌다', () => {
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
+    });
+    const onClose = jest.fn();
+    const item: ToastItem = {
+      id: 'toast-swipe',
+      level: 'warning',
+      message: '스와이프 제스처 테스트',
+    };
+
+    render(<Toast item={item} onClose={onClose} />);
+    const toast = screen.getByRole('status');
+
+    fireEvent.touchStart(toast, { touches: [{ clientX: 200, clientY: 200 }] });
+    fireEvent.touchMove(toast, {
+      touches: [{ clientX: 320, clientY: 204 }],
+      cancelable: true,
+    });
+    fireEvent.touchEnd(toast);
+
+    expect(onClose).toHaveBeenCalledWith('toast-swipe');
   });
 
   test('Toast ID 생성기는 연속 호출 시 중복되지 않는다', () => {
