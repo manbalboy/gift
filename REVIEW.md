@@ -26,8 +26,8 @@
 - SSE 연결 중 클라이언트의 네트워크 단절이나 비정상 종료 시 서버 자원이 안전하게 회수되는지에 대한 명시적인 검증 절차가 요구됩니다.
 
 ## TODO
-- [ ] `AgentRunner`에 `DockerRunner` 구조를 도입하여 임시 스크립트 실행 환경 샌드박싱 (Phase 1 적용)
-- [ ] 다중 워커 확장을 대비하여 Redis 기반 분산 락(`LockProvider`)을 `WorkflowEngine` 로직에 반영
-- [ ] 실시간 상태 스트리밍(SSE) API 엔드포인트에 대한 스트림 연결/종료 단위 테스트 작성
-- [ ] 개발 및 로컬 테스트 환경 문서의 포트 안내를 3100번대 규격으로 일괄 점검 및 업데이트
-- [ ] `docs/security/container-sandbox-plan.md` 및 `docs/architecture/redis-distributed-lock-plan.md` 기획안에 맞춘 마일스톤 티켓/이슈 생성
+- [x] `AgentRunner`에 `DockerRunner` 구조를 도입하여 임시 스크립트 실행 환경 샌드박싱 (Phase 1 적용)
+- [x] 다중 워커 확장을 대비하여 Redis 기반 분산 락(`LockProvider`)을 `WorkflowEngine` 로직에 반영
+- [x] 실시간 상태 스트리밍(SSE) API 엔드포인트에 대한 스트림 연결/종료 단위 테스트 작성
+- [x] 개발 및 로컬 테스트 환경 문서의 포트 안내를 3100번대 규격으로 일괄 점검 및 업데이트
+- [x] `docs/security/container-sandbox-plan.md` 및 `docs/architecture/redis-distributed-lock-plan.md` 기획안에 맞춘 마일스톤 티켓/이슈 생성

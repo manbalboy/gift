@@ -289,8 +289,8 @@ timeline
         ## Deployment & Preview Requirements
 
         - 1회 실행 사이클의 결과물은 Docker 실행 가능 상태를 목표로 구현합니다.
-        - Preview 외부 노출 포트는 7000-7099 범위를 사용합니다.
-        - Preview 외부 기준 도메인/호스트: http://ssh.manbalboy.com:7000
+        - Preview 외부 노출 포트는 3100-3199 범위를 사용합니다.
+        - Preview 외부 기준 도메인/호스트: http://ssh.manbalboy.com:3100
         - CORS 허용 대상은 manbalboy.com 계열 또는 localhost 계열로 제한합니다.
         - 허용 origin 정책(기준값): https://manbalboy.com,http://manbalboy.com,https://localhost,http://localhost,https://127.0.0.1,http://127.0.0.1
         - PR 본문에는 Docker Preview 정보(컨테이너/포트/URL)를 포함합니다.

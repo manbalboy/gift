@@ -4,8 +4,8 @@
 
 핵심 목표는 기존 FastAPI 고정 파이프라인 구조를 유지하면서 **Workflow Engine 정식화**, **CORS 보안 강화**, **AgentRunner 견고성 개선**, **React Flow 기반 Visual Builder 기초**, **상태 보상(Compensation) 데몬** 을 MVP 범위 내에서 구현하는 것입니다.
 
-> **Docker Preview**: `http://ssh.manbalboy.com:7000` (포트 범위 `7000–7099`)  
-> API 서버: `7000`, 대시보드(Next.js): `7001`, Web(Vite): `7002`
+> **Docker Preview**: `http://ssh.manbalboy.com:3100` (포트 범위 `3100–3199`)  
+> API 서버: `3101`, 대시보드(Next.js): `3102`, Web(Vite): `3100`
 
 ---
 
@@ -15,7 +15,7 @@
 
 | 항목 | 변경 내용 |
 |---|---|
-| **CORS 정규식 보완** (`api/app/main.py`) | 포트 허용 범위를 `7000–7099`로 명시하고, ReDoS 위험이 없는 정규식(`(?:[A-Za-z0-9-]+\.)*manbalboy\.com`)으로 교체. `localhost`·`127.0.0.1` 계열 안전하게 허용 |
+| **CORS 정규식 보완** (`api/app/main.py`) | 포트 허용 범위를 `3100–3199`로 명시하고, ReDoS 위험이 없는 정규식(`(?:[A-Za-z0-9-]+\.)*manbalboy\.com`)으로 교체. `localhost`·`127.0.0.1` 계열 안전하게 허용 |
 | **Path Traversal 방어** (`api/app/services/agent_runner.py`) | 임시 `.sh` 파일 경로를 허용 디렉토리 밖으로 탈출하지 못하도록 경로 검증 로직 추가 |
 | **Race Condition DB 락** (`api/app/services/workflow_engine.py`) | `with_for_update()`로 동시 요청 시 노드 상태 덮어쓰기 방지, 트랜잭션 단위 commit 적용 |
 | **AgentRunner 실 구동** (`api/app/services/agent_runner.py`) | 긴 프롬프트 대비 `bash -lc` → 임시 `.sh` 파일 실행 구조로 전환. `os.killpg` 타임아웃 종료 포함 |
@@ -39,7 +39,7 @@
 | **Unit — AgentRunner 임시파일 라이프사이클** | ✅ PASS | 생성→실행→삭제 순서 및 시스템 예외 브랜치 Mocking 포함 |
 | **Unit — 보상 데몬 조건 필터링** | ✅ PASS | 정상 실행 노드 오작동 없이 장기 체류 노드만 선별 복원 확인 |
 | **Integration — DB 트랜잭션 격리** | ✅ PASS | `with_for_update` 대기 지연 및 Rollback 케이스 격리 검증 |
-| **Integration — CORS 정책** | ✅ PASS | `manbalboy.com` 서브도메인·포트 `7000–7099` 허용, 외부 도메인 차단 확인 |
+| **Integration — CORS 정책** | ✅ PASS | `manbalboy.com` 서브도메인·포트 `3100–3199` 허용, 외부 도메인 차단 확인 |
 | **E2E — Webhook → 파이프라인 → 아티팩트** | ✅ PASS | GitHub Webhook 모의 트리거 → Issue Job 생성 → 상태 갱신 → `workspace/` 아티팩트 기록 전 과정 통과 |
 | **프론트엔드 UI (WorkflowBuilder)** | ⚠️ 부분 커버 | 노드·엣지 변경 이벤트 기본 케이스 통과. 모바일 뷰포트 전환·잘못된 연결 피드백 테스트 미흡 (Follow-up 항목) |
 
