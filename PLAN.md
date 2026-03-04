@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> 최우선 1차 목표: `ex-code` 내부 코드를 분석해 현재 프로젝트에 모든 기능을 구현한다.
+
 ```markdown
 # PLAN
 
