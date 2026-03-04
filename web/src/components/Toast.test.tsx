@@ -179,6 +179,84 @@ describe('Toast', () => {
     expect(onClose).toHaveBeenCalledWith('toast-swipe');
   });
 
+  test('멀티 터치 입력은 스와이프 닫힘으로 처리하지 않는다', () => {
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
+    });
+    const onClose = jest.fn();
+    const item: ToastItem = {
+      id: 'toast-multi-touch',
+      level: 'warning',
+      message: '멀티 터치 무시 테스트',
+    };
+
+    render(<Toast item={item} onClose={onClose} />);
+    const toast = screen.getByRole('status');
+
+    fireEvent.touchStart(toast, { touches: [{ clientX: 200, clientY: 200 }, { clientX: 210, clientY: 208 }] });
+    fireEvent.touchMove(toast, { touches: [{ clientX: 340, clientY: 204 }, { clientX: 352, clientY: 208 }] });
+    fireEvent.touchEnd(toast);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test('메시지는 HTML 이스케이프 처리되어 스크립트가 렌더링되지 않는다', () => {
+    const item: ToastItem = {
+      id: 'toast-xss',
+      level: 'error',
+      message: '<img src=x onerror=alert(1)>',
+    };
+    const { container } = render(<Toast item={item} onClose={jest.fn()} />);
+
+    expect(container.querySelector('img')).not.toBeInTheDocument();
+    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument();
+  });
+
+  test('document.fonts 미지원 환경에서도 폴백 타이머로 오버플로우를 재측정한다', () => {
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
+    });
+    const originalFonts = (document as Document & { fonts?: unknown }).fonts;
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: undefined,
+    });
+    const item: ToastItem = {
+      id: 'toast-font-fallback',
+      level: 'warning',
+      message: '폰트 로딩 폴백 테스트',
+    };
+    const scrollHeightSpy = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(44);
+    const clientHeightSpy = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(22);
+    const clientWidthSpy = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(220);
+
+    const { rerender } = render(<Toast item={item} onClose={jest.fn()} />);
+    expect(screen.getByRole('status')).toHaveAttribute('aria-expanded', 'false');
+
+    act(() => {
+      jest.advanceTimersByTime(520);
+    });
+
+    rerender(<Toast item={{ ...item, id: 'toast-font-fallback-2' }} onClose={jest.fn()} />);
+    expect(screen.getByRole('status')).toHaveAttribute('aria-expanded', 'false');
+
+    scrollHeightSpy.mockRestore();
+    clientHeightSpy.mockRestore();
+    clientWidthSpy.mockRestore();
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: originalFonts,
+    });
+  });
+
   test('Toast ID 생성기는 연속 호출 시 중복되지 않는다', () => {
     const idA = createToastId();
     const idB = createToastId();

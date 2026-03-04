@@ -27,7 +27,7 @@ p {
 
 .toast-stack {
   position: fixed;
-  top: var(--space-24);
+  bottom: var(--space-16);
   left: var(--space-16);
   right: var(--space-16);
   z-index: 120;
@@ -595,6 +595,7 @@ input {
   .toast-stack {
     left: auto;
     right: var(--space-24);
+    bottom: var(--space-24);
     width: min(420px, calc(100vw - 48px));
   }
 

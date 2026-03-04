@@ -17,21 +17,23 @@ export default function App() {
   const [constellation, setConstellation] = useState<ConstellationData | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [queuedToastCount, setQueuedToastCount] = useState(0);
   const [focusNodeRequest, setFocusNodeRequest] = useState<{ nodeId: string; requestId: number } | null>(null);
   const viewport = useViewport();
   const isMobilePortrait = viewport.isMobile && viewport.isPortrait;
   const activeRunRef = useRef<WorkflowRun | null>(null);
   const toastsRef = useRef<ToastItem[]>([]);
+  const toastQueueRef = useRef<ToastItem[]>([]);
   const dedupedToastKeysRef = useRef<Set<string>>(new Set());
 
-  const commitToasts = (next: ToastItem[]) => {
+  const commitVisibleToasts = (next: ToastItem[]) => {
     toastsRef.current = next;
-    dedupedToastKeysRef.current = new Set(
-      next
-        .map((toast) => toast.dedupeKey)
-        .filter((key): key is string => Boolean(key)),
-    );
     setToasts(next);
+  };
+
+  const commitToastQueue = (next: ToastItem[]) => {
+    toastQueueRef.current = next;
+    setQueuedToastCount(next.length);
   };
 
   const enqueueToast = (
@@ -46,20 +48,12 @@ export default function App() {
       if (dedupedToastKeysRef.current.has(options.dedupeKey)) return;
       dedupedToastKeysRef.current.add(options.dedupeKey);
     }
-    const next = [
-      ...toastsRef.current,
-      { id: createToastId(), level, message, dedupeKey: options?.dedupeKey, action: options?.action },
-    ];
-    const overflowCount = Math.max(0, next.length - 3);
-    if (overflowCount > 0) {
-      next.slice(0, overflowCount).forEach((toast) => {
-        if (toast.dedupeKey) {
-          dedupedToastKeysRef.current.delete(toast.dedupeKey);
-        }
-      });
+    const nextToast = { id: createToastId(), level, message, dedupeKey: options?.dedupeKey, action: options?.action };
+    if (toastsRef.current.length < 3) {
+      commitVisibleToasts([...toastsRef.current, nextToast]);
+      return;
     }
-    const trimmed = next.slice(-3);
-    commitToasts(trimmed);
+    commitToastQueue([...toastQueueRef.current, nextToast]);
   };
 
   const closeToast = (id: string) => {
@@ -67,12 +61,22 @@ export default function App() {
     if (target?.dedupeKey) {
       dedupedToastKeysRef.current.delete(target.dedupeKey);
     }
-    const next = toastsRef.current.filter((toast) => toast.id !== id);
-    commitToasts(next);
+
+    const nextVisible = toastsRef.current.filter((toast) => toast.id !== id);
+    const nextQueue = [...toastQueueRef.current];
+    while (nextVisible.length < 3 && nextQueue.length > 0) {
+      const queued = nextQueue.shift();
+      if (!queued) break;
+      nextVisible.push(queued);
+    }
+    commitToastQueue(nextQueue);
+    commitVisibleToasts(nextVisible);
   };
 
   const clearAllToasts = () => {
-    commitToasts([]);
+    commitToastQueue([]);
+    dedupedToastKeysRef.current.clear();
+    commitVisibleToasts([]);
   };
 
   const loadWorkflows = async () => {
@@ -195,7 +199,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <div className="toast-stack" data-testid="toast-stack" style={{ zIndex: LAYER_Z_INDEX.toast }} aria-label="시스템 알림">
-        {toasts.length > 1 && (
+        {toasts.length + queuedToastCount > 1 && (
           <button type="button" className="toast-clear-all btn btn-ghost" onClick={clearAllToasts} aria-label="모든 알림 닫기">
             일괄 닫기
           </button>

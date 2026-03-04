@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useViewport } from '../hooks/useViewport';
+import { sanitizeToastText } from '../utils/escapeHtml';
 
 export type ToastLevel = 'warning' | 'error';
 
@@ -30,11 +31,13 @@ export default function Toast({
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const isSwipingRef = useRef(false);
   const swipeTriggeredRef = useRef(false);
+  const swipeOffsetRef = useRef(0);
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [isExpandableMessage, setIsExpandableMessage] = useState(false);
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
   const { isMobile } = useViewport();
+  const safeMessage = useMemo(() => sanitizeToastText(item.message), [item.message]);
 
   const closeOnce = useCallback(() => {
     if (closedRef.current) return;
@@ -81,6 +84,7 @@ export default function Toast({
     closedRef.current = false;
     setIsExpanded(false);
     setSwipeOffsetX(0);
+    swipeOffsetRef.current = 0;
     swipeTriggeredRef.current = false;
     isSwipingRef.current = false;
     const timer = window.setTimeout(() => closeOnce(), durationMs);
@@ -101,6 +105,39 @@ export default function Toast({
     observer.observe(node);
     return () => observer.disconnect();
   }, [measureMessageOverflow]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+
+    let cancelled = false;
+    const onMeasure = () => {
+      if (cancelled) return;
+      measureMessageOverflow();
+    };
+    const timeoutPrimary = window.setTimeout(onMeasure, 120);
+    const timeoutFallback = window.setTimeout(onMeasure, 520);
+    const rafId = window.requestAnimationFrame(onMeasure);
+    window.addEventListener('load', onMeasure, { once: true });
+
+    const fontFaceSet = document.fonts;
+    if (fontFaceSet?.ready) {
+      void fontFaceSet.ready
+        .then(() => {
+          onMeasure();
+        })
+        .catch(() => {
+          onMeasure();
+        });
+    }
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutPrimary);
+      window.clearTimeout(timeoutFallback);
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('load', onMeasure);
+    };
+  }, [isMobile, item.message, measureMessageOverflow]);
 
   useEffect(() => {
     if (!isMobile && isExpanded) {
@@ -142,14 +179,27 @@ export default function Toast({
       }}
       onTouchStart={(event) => {
         if (!isMobile) return;
+        if (event.touches.length > 1) {
+          touchStartRef.current = null;
+          isSwipingRef.current = false;
+          return;
+        }
         const touch = event.touches[0];
         if (!touch) return;
         touchStartRef.current = { x: touch.clientX, y: touch.clientY };
         swipeTriggeredRef.current = false;
         isSwipingRef.current = false;
+        swipeOffsetRef.current = 0;
       }}
       onTouchMove={(event) => {
         if (!isMobile) return;
+        if (event.touches.length > 1 || event.touches.length === 0) {
+          touchStartRef.current = null;
+          isSwipingRef.current = false;
+          swipeOffsetRef.current = 0;
+          setSwipeOffsetX(0);
+          return;
+        }
         const touch = event.touches[0];
         const start = touchStartRef.current;
         if (!touch || !start) return;
@@ -168,24 +218,28 @@ export default function Toast({
           event.preventDefault();
         }
         const bounded = Math.max(-140, Math.min(140, deltaX));
+        swipeOffsetRef.current = bounded;
         setSwipeOffsetX(bounded);
       }}
       onTouchEnd={() => {
         if (!isMobile) return;
         touchStartRef.current = null;
+        const currentOffset = swipeOffsetRef.current;
 
-        if (Math.abs(swipeOffsetX) >= SWIPE_DISMISS_THRESHOLD) {
+        if (Math.abs(currentOffset) >= SWIPE_DISMISS_THRESHOLD) {
           swipeTriggeredRef.current = true;
           closeOnce();
           return;
         }
 
         isSwipingRef.current = false;
+        swipeOffsetRef.current = 0;
         setSwipeOffsetX(0);
       }}
       onTouchCancel={() => {
         touchStartRef.current = null;
         isSwipingRef.current = false;
+        swipeOffsetRef.current = 0;
         setSwipeOffsetX(0);
       }}
     >
@@ -196,9 +250,8 @@ export default function Toast({
           ref={messageRef}
           className={`toast-message ${canToggleExpand && isExpanded ? 'toast-message-expanded' : ''}`}
           title={item.message}
-        >
-          {item.message}
-        </p>
+          dangerouslySetInnerHTML={{ __html: safeMessage }}
+        />
         {shouldShowAction && item.action && (
           <button
             type="button"
