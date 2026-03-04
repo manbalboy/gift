@@ -1,49 +1,26 @@
 # REVIEW
 
-본 문서는 `SPEC.md`와 `PLAN.md`를 기반으로 현재 저장소의 아키텍처 및 구현 상태를 리뷰한 결과입니다. 플랫폼 인프라의 안정성, 보안, 그리고 의도된 기획(DevFlow Agent Hub) 사양을 달성하기 위한 개선점을 정리했습니다.
+현재 저장소 상태(SPEC.md 및 PLAN.md)를 기준으로 구현된 코드를 분석한 리뷰 결과입니다. 전반적으로 PLAN.md에서 요구한 MVP 스코프와 방어 로직들이 API 및 프론트엔드 코드에 잘 반영되어 있으며, 66개의 API 테스트가 성공적으로 통과하고 있습니다. 아래는 상세 리뷰 및 보완이 필요한 항목들입니다.
 
 ## Functional bugs
-
-- **CORS 정책 정규식 오류**
-  - **설명**: 현재 API 서버(`api/app/main.py`)의 CORS 허용 도메인(`allow_origin_regex`)이 스펙과 다르게 과도하게 제한적입니다. `SPEC.md`에 따르면 `manbalboy.com`의 모든 서브도메인 및 포트를 허용해야 하며, `localhost`와 `127.0.0.1`에 대해서도 제한 없이 허용해야 합니다. 현재는 비정상적인 포트 제한을 강제하고 있어 정상적인 클라이언트 접근이 차단될 수 있습니다.
-  - **재현 예시**: 로컬 개발 환경에서 프론트엔드를 띄우고 `http://localhost:3100` 또는 `http://test.manbalboy.com:3101`에서 API를 호출할 때 CORS 에러 발생.
-
-- **Boolean 타입 파싱 엣지 케이스 (타입 캐스팅 버그)**
-  - **설명**: 워크플로우를 트리거할 때 검증 로직에서 `workflow_id`가 Boolean 값인 `true`로 들어올 경우, Python의 특성상 `isinstance(true, int)`가 참으로 평가되어 `workflow_id = 1`로 오인식되는 버그가 있습니다.
-  - **재현 예시**: Webhook JSON 페이로드에 `{"workflow_id": true}`를 전송하면 파싱 에러 없이 1번 워크플로우가 잘못 실행됨.
+- **웹 대시보드 UI 오타**: `web/src/components/WorkflowBuilder.tsx` 파일 내 모바일 뷰 예외 처리 안내 문구에 "모 니터링을"이라는 불필요한 공백 오타가 존재합니다.
+- **다중 워커 환경에서의 Rate Limiter 오작동**: `LocalSlidingWindowRateLimiter`는 메모리 기반으로 동작하므로, `uvicorn`이 멀티 프로세스(워커)로 실행될 경우 각각 독립적인 상태를 가지게 되어 Rate Limit가 의도한 제한 값보다 초과 허용될 수 있는 잠재적 논리 버그가 있습니다.
 
 ## Security concerns
-
-- **Webhook Payload 제한 부재 (DoS 취약점)**
-  - **설명**: `api/app/api/webhooks.py` 내의 엔드포인트에서 Request Body 크기를 제한하지 않고 로드하고 있습니다. 악의적인 클라이언트가 매우 큰 용량의 페이로드를 전송할 경우 메모리 고갈(OOM) 및 서버 크래시를 유발할 수 있는 서비스 거부(DoS) 공격에 취약합니다.
-  - **해결 방안**: 요청 바디를 읽기 전 크기를 확인하여 최대 5MB를 초과할 경우 `413 Payload Too Large` 응답을 반환하도록 방어 로직을 추가해야 합니다.
+- **X-Forwarded-For 헤더 변조(Spoofing) 위험**: `api/app/api/webhooks.py`의 `_extract_client_key` 함수는 클라이언트 IP를 식별할 때 `x-forwarded-for` 헤더를 우선적으로 참조합니다. 리버스 프록시 단에서 해당 헤더를 신뢰할 수 있도록 강제하거나 FastAPI의 `TrustedHostsMiddleware`를 사용하지 않으면, 악의적인 공격자가 해당 헤더를 임의로 조작하여 IP 기반 Rate Limiting을 우회할 위험이 있습니다.
+- **CORS 설정 및 포트 매핑**: `api/app/main.py`에 적용된 `allow_origin_regex` 정규식은 악의적 서브도메인 우회를 훌륭하게 방어하고 있습니다. 지정된 로컬 포트들(예: `http://localhost:3100`)만 접근이 허용되도록 올바르게 구성되었습니다.
 
 ## Missing tests / weak test coverage
-
-- **CORS 정책 접근 제어 테스트 누락**
-  - **설명**: 정상 도메인(`manbalboy.com` 서브도메인, 다양한 포트 환경)과 악의적 도메인에 대한 CORS 허용/차단 여부를 철저하게 검증하는 단위 및 통합 테스트 코드가 부족합니다.
-- **대용량 페이로드 방어 스트레스 테스트 누락**
-  - **설명**: 5MB 이상의 더미 스트리밍 페이로드를 API에 전송했을 때 서버가 메모리를 소진하지 않고 안전하게 HTTP 413 상태 코드로 방어해내는지 확인하는 검증 테스트가 없습니다.
-- **의존성 자원(Docker, Redis) 장애 Fallback 테스트 누락**
-  - **설명**: Docker 데몬이나 Redis 서버가 응답하지 않는 상황을 모킹(Mocking)하여, 서비스가 지속적인 타임아웃 병목에 빠지지 않고 Fail-Fast(Negative Cache)를 통해 즉시 에러 응답을 반환하는지 확인하는 시간 측정 기반의 성능 테스트가 필요합니다.
+- **프론트엔드 컴포넌트 단위 테스트 실행 부족**: API 계층의 `pytest`는 완벽하게 작성되어 통과하지만, PLAN.md에 언급된 Visual Builder 화면 및 `web/` 디렉터리에 대한 UI 단위 테스트(`jest` 등)의 자동화 실행 결과가 확인되지 않습니다.
+- **Rate Limiting 동시성(Concurrency) 및 부하 테스트 부족**: `RedisSlidingWindowRateLimiter`의 작동 및 로컬 메모리 Fallback 전환 과정에서 다중 요청 시 발생할 수 있는 Race Condition 우회 가능성에 대한 강력한 통합 부하 테스트가 없습니다.
 
 ## Edge cases
-
-- **외부 자원(Docker, Redis) 장애 시 연속적인 타임아웃 병목**
-  - **설명**: 워커나 스케줄러가 상태 체크를 위해 지속적으로 Docker 데몬(`_docker_ping`)이나 Redis에 연결을 시도할 때, 장애 상황임에도 매번 긴 타임아웃 시간만큼 대기하게 되면 플랫폼 전체의 에러 전파(Cascading Failure)로 이어집니다.
-  - **해결 방안**: 연결 실패 시 일정 시간(예: 3~5초) 동안 실패 상태를 기억하는 Negative Cache 및 서킷 브레이커 패턴을 도입하여 시스템 무응답 대기를 끊어내야 합니다.
-- **장애 부분 복구 시 지연 반영 현상**
-  - **설명**: Negative Cache의 유지 시간(TTL)이 너무 길게 설정될 경우, 인프라 장애가 복구되었음에도 불구하고 캐시로 인해 서비스 마비가 지속되는 것처럼 보일 수 있으므로 섬세한 TTL 튜닝이 요구됩니다.
-
----
+- **Webhook Payload 내 `workflow_id`의 비정상 타입 파싱**: `api/app/api/webhooks.py`에서 `{"workflow_id": [1, 2]}`와 같이 배열이나 객체가 전송되었을 때, `.isdigit()` 캐스팅 검사를 통해 서버 크래시(HTTP 500)는 방어되지만, 어떠한 에러 로그도 남기지 않고 즉시 무시(None 처리)됩니다. 이는 연동 클라이언트 입장에서 원인을 파악하기 힘든 디버깅 엣지 케이스를 만듭니다.
+- **Docker 핑 토글(Flapping) 현상**: Docker 데몬이 매우 짧은 간격으로 켜짐과 꺼짐을 반복하는 경우, 적용된 Fail-Fast의 Negative Cache TTL로 인하여 데몬이 실제 복구된 순간에도 즉각적인 작업이 실행되지 못하고 인위적 지연이 발생할 수 있습니다.
 
 ## TODO
-
-- [ ] `api/app/main.py`의 CORS `allow_origin_regex`를 수정하여 `manbalboy.com` (서브도메인, 포트 무관), `localhost`, `127.0.0.1` 에 대한 원활한 접근을 허용하도록 로직 개선.
-- [ ] `api/app/api/webhooks.py` 웹훅 엔드포인트에 Request Payload 크기를 5MB로 제한하고, 초과 시 `413 Payload Too Large`를 반환하는 방어 로직 구현.
-- [ ] `workflow_id` 검증 로직에서 `type(workflow_id_raw) is int` 등을 사용하여 `true`가 1로 변환되는 현상을 차단하고, 잘못된 타입 입력 시 `422 Unprocessable Entity` 에러 반환.
-- [ ] `api/app/services/agent_runner.py`의 `_docker_ping()` 기능에 타임아웃 실패를 3~5초간 단기 보관하는 Negative Cache 메커니즘 추가.
-- [ ] `api/app/services/rate_limiter.py`의 Redis 기반 처리 로직에 장애 상태 지속성을 인지하여 타임아웃 지연을 해소하는 서킷 브레이커 패턴 도입.
-- [ ] `api/tests/test_main.py`에 변경된 CORS 정규식 검증, 페이로드 5MB 초과 시 413 방어 검증, 의존성 자원 타임아웃 시 O(1) 시간에 수렴하는 Fail-Fast 시간 측정 테스트 작성.
-- [ ] (선택) `/health` API 응답 스키마에 Redis Fallback 상태와 Docker 가용성 상태 상세 정보 추가 반영.
-- [ ] (선택) 특정 IP의 비정상적인 Webhook 대량 요청 시 일정 시간 차단하는 IP 기반 Rate Limiting 기능 추가.
+- [ ] `web/src/components/WorkflowBuilder.tsx`의 "모 니터링을" 오타를 "모니터링을"로 수정하기.
+- [ ] API 서버에서 `X-Forwarded-For` 헤더를 안전하게 파싱하기 위한 방어 로직 검토 및 수정하기.
+- [ ] 프론트엔드(`web/` 폴더) 영역의 테스트 스크립트 실행 환경 보완 및 점검하기.
+- [ ] `webhooks.py` 내 `workflow_id`의 비정상 타입 파싱이 실패하여 무시되는 지점에 디버깅용 Logger 추가하기.
+- [ ] 향후 다중 워커 환경 도입을 고려하여, 로컬 환경의 Rate Limiter 상태 경합 문제를 방지할 구조적 대안(주석/문서화 등) 마련하기.
