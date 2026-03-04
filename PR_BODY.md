@@ -1,80 +1,70 @@
 ## Summary
 
-**DevFlow Agent Hub** MVP의 보안·안정성·실행 신뢰도를 강화하는 패치입니다.
+이 PR은 이슈 #65 **[초장기] 오픈소스의 왕이 될 프로그램 제작**의 일환으로, `manbalboy/agent-hub` 프로젝트를 **GitHub Issue → 자동 파이프라인 실행 → PR 생성** 을 지원하는 **DevFlow Agent Hub MVP** 로 고도화한 결과물입니다.
 
-GitHub Issue `agent:run` 라벨 트리거 → 워크플로우 노드 실행 → PR 생성 파이프라인에서 발견된 **CORS 취약점**, **Path Traversal 공격 위험**, **Race Condition**, **Mock 엔진 미실행** 문제를 REVIEW 피드백 기반으로 전면 수정하고, 스키마 유효성 검사 및 테스트 커버리지를 추가했습니다.
+핵심 목표는 기존 FastAPI 고정 파이프라인 구조를 유지하면서 **Workflow Engine 정식화**, **CORS 보안 강화**, **AgentRunner 견고성 개선**, **React Flow 기반 Visual Builder 기초**, **상태 보상(Compensation) 데몬** 을 MVP 범위 내에서 구현하는 것입니다.
+
+> **Docker Preview**: `http://ssh.manbalboy.com:7000` (포트 범위 `7000–7099`)  
+> API 서버: `7000`, 대시보드(Next.js): `7001`, Web(Vite): `7002`
 
 ---
 
 ## What Changed
 
-### [P0] 보안 취약점 조치
+### P0 — 핵심 수정 및 보안 강화
 
-- **CORS 정규식 보강** (`api/app/main.py`)
-  - `manbalboy.com` 서브도메인(예: `http://ssh.manbalboy.com:7000`) 및 포트 변형을 정확히 허용하도록 정규식 패턴 수정
-  - 말미 슬래시(`/`) 및 특수 포트 조합 엣지 케이스 처리 포함
+| 항목 | 변경 내용 |
+|---|---|
+| **CORS 정규식 보완** (`api/app/main.py`) | 포트 허용 범위를 `7000–7099`로 명시하고, ReDoS 위험이 없는 정규식(`(?:[A-Za-z0-9-]+\.)*manbalboy\.com`)으로 교체. `localhost`·`127.0.0.1` 계열 안전하게 허용 |
+| **Path Traversal 방어** (`api/app/services/agent_runner.py`) | 임시 `.sh` 파일 경로를 허용 디렉토리 밖으로 탈출하지 못하도록 경로 검증 로직 추가 |
+| **Race Condition DB 락** (`api/app/services/workflow_engine.py`) | `with_for_update()`로 동시 요청 시 노드 상태 덮어쓰기 방지, 트랜잭션 단위 commit 적용 |
+| **AgentRunner 실 구동** (`api/app/services/agent_runner.py`) | 긴 프롬프트 대비 `bash -lc` → 임시 `.sh` 파일 실행 구조로 전환. `os.killpg` 타임아웃 종료 포함 |
+| **스키마 유효성 검사** | `WorkflowDefinition` 노드 속성에서 실제 `command`를 추출해 `AgentTaskRequest.payload`에 전달하는 로직 추가 — echo 폴백만 실행되던 치명적 버그 수정 |
+| **상태 보상 데몬** (`recover_stuck_runs`) | 서버 재시작 시 장기 `running` 상태 노드를 `failed` 또는 재시도 대상으로 복원. 노드 단위 개별 `commit`으로 부분 실패 시 전체 롤백 방지 |
 
-- **Path Traversal 방어 로직 추가** (`api/app/services/workspace.py`)
-  - 노드 ID·파일명에 `../` 등 상위 경로 문자열 포함 시 즉시 `400` 에러 반환
-  - `os.path.realpath` 기반 경로 정규화 및 허용 기준 경로 이탈 여부 검증
+### P1 — 기능 강화
 
-### [P0] 워크플로우 실행 엔진 실질화
-
-- **AgentRunner Mock 제거 및 실제 Subprocess 연동** (`api/app/services/agent_runner.py`)
-  - 기존 `asyncio.sleep` 기반 Mock 로직 제거
-  - `bash -lc` 실제 커맨드 실행 파이프라인 구현 (stdout/stderr 캡처, 종료 코드 반환)
-  - 노드별 최대 실행 시간(timeout) 초과 시 `SIGKILL` → 상태 `failed(timeout)` 처리
-
-- **Race Condition 방지** (`api/app/services/workflow_engine.py`)
-  - 다중 탭 폴링 요청 시 동일 워크플로우 실행 건에 중복 워커 트리거 방지
-  - DB Row Lock(`SELECT ... FOR UPDATE`) 트랜잭션 범위 적용
-
-### [P1] 스키마 유효성 검사 및 테스트 커버리지 확대
-
-- **Pydantic Validator 추가** (`api/app/schemas/workflow.py`)
-  - 노드 0개 빈 그래프 및 순환 참조 포함 워크플로우 → `422 Unprocessable Entity` 반환
-
-- **백엔드 테스트 보강** (`api/tests/test_workflow_api.py`)
-  - CORS 정책, Path Traversal 필터, 그래프 순환 참조 차단, 동시 폴링 경합 안전성 pytest 케이스 추가
-
-- **프론트엔드 유닛 테스트 신설** (`web/src/components/WorkflowBuilder.test.tsx`)
-  - React Flow 캔버스 초기 렌더링, 노드 상태 색상 매핑(성공/실패/진행/대기) Jest 테스트 작성
+| 항목 | 변경 내용 |
+|---|---|
+| **React Flow 기반 Visual Workflow Builder 기초** (`web/`) | 노드·엣지 렌더링, 드래그/줌, validate/save 인터랙션 기본 구현 |
+| **상태 확장** | `queued / running / done / failed` 외 `review_needed / retrying / blocked / skipped` 추가 |
+| **디자인 시스템 적용** | 다크 테마(`#0B1020` 계열) + 상태 시맨틱 컬러 토큰(Success `#22C55E`, Running `#3B82F6`, Failed `#EF4444` 등) 반영. `Pretendard` + `JetBrains Mono` 이중 타이포 체계 |
 
 ---
 
 ## Test Results
 
-| 구분 | 테스트 항목 | 결과 |
+| 테스트 유형 | 결과 | 비고 |
 |---|---|---|
-| CORS | 서브도메인/포트 변형 Origin 허용 검증 | ✅ 통과 |
-| CORS | 유사 악성 도메인 차단 검증 | ✅ 통과 |
-| 보안 | `../../etc/passwd` 경로 삽입 → 400 반환 | ✅ 통과 |
-| 스키마 | 빈 노드 워크플로우 → 422 반환 | ✅ 통과 |
-| 스키마 | 순환 참조 포함 그래프 → 422 반환 | ✅ 통과 |
-| 동시성 | 다중 폴링 시 단일 워커 실행 보장 | ✅ 통과 |
-| AgentRunner | 실제 CLI 스크립트 실행 및 stdout 로깅 | ✅ 통과 |
-| AgentRunner | 타임아웃 초과 시 `failed(timeout)` 상태 전이 | ✅ 통과 |
-| UI | WorkflowBuilder 노드 렌더링 Jest | ✅ 통과 |
-
-> **Docker Preview**: `http://ssh.manbalboy.com:7000`
-> - API 서버: 컨테이너 포트 `3000` → 외부 포트 `7000`
-> - Web 프론트엔드: 컨테이너 포트 `3001` → 외부 포트 `7001`
+| **Unit — AgentRunner 임시파일 라이프사이클** | ✅ PASS | 생성→실행→삭제 순서 및 시스템 예외 브랜치 Mocking 포함 |
+| **Unit — 보상 데몬 조건 필터링** | ✅ PASS | 정상 실행 노드 오작동 없이 장기 체류 노드만 선별 복원 확인 |
+| **Integration — DB 트랜잭션 격리** | ✅ PASS | `with_for_update` 대기 지연 및 Rollback 케이스 격리 검증 |
+| **Integration — CORS 정책** | ✅ PASS | `manbalboy.com` 서브도메인·포트 `7000–7099` 허용, 외부 도메인 차단 확인 |
+| **E2E — Webhook → 파이프라인 → 아티팩트** | ✅ PASS | GitHub Webhook 모의 트리거 → Issue Job 생성 → 상태 갱신 → `workspace/` 아티팩트 기록 전 과정 통과 |
+| **프론트엔드 UI (WorkflowBuilder)** | ⚠️ 부분 커버 | 노드·엣지 변경 이벤트 기본 케이스 통과. 모바일 뷰포트 전환·잘못된 연결 피드백 테스트 미흡 (Follow-up 항목) |
 
 ---
 
 ## Risks / Follow-ups
 
-### 잔존 리스크
+### 잔여 리스크
 
-- **DB 락 지연**: `with_for_update` 트랜잭션 점유 범위가 길어질 경우 대시보드 상태 갱신 API 타임아웃 가능. 모니터링 필요.
-- **비정상 강제 종료 시 상태 불일치**: OOM/재시작으로 프로세스 중단 시 DB 상태가 `running`에 고착될 수 있음. 주기적인 stale run 복구 보상 로직 추가 예정.
+| 구분 | 내용 | 심각도 |
+|---|---|---|
+| **RCE (원격 코드 실행)** | 임시 `.sh` 파일을 호스트 `bash`에서 직접 실행하는 구조로, 외부 입력이 검증 없이 주입될 경우 시스템 전체 장악 위험. 현재 단계는 컨테이너 기반 샌드박스 없이 운영 중 | 🔴 높음 |
+| **CORS 서브도메인 전수 허용** | `*.manbalboy.com` 전체 허용으로, 취약한 서브도메인이 탈취될 경우 API에 악의적 교차 출처 요청 가능 | 🟡 중간 |
+| **다중 프로세스 DB 락 경합** | `threading.Lock` + `with_for_update()` 조합은 Gunicorn 멀티 워커 환경에서 데드락/타임아웃 병목 발생 가능. MVP 범위 외 항목 | 🟡 중간 |
+| **좀비 프로세스 대기** | `setsid` 우회 또는 백그라운드 데몬을 생성하는 스크립트 실행 시 `communicate()`에서 무한 대기 가능 | 🟡 중간 |
 
-### 후속 과제
+### Follow-up 항목 (다음 단계)
 
-- [ ] **SSE 기반 실시간 로그 스트리밍** 도입 (`/api/workflows/runs/{run_id}/logs/stream`) — 폴링 의존도 감소
-- [ ] **Live Run Constellation** 미니맵 UI 구현 — 병목 노드 3초 이내 식별 목표 (DESIGN_SYSTEM WOW Point)
-- [ ] **Workflow Engine 정식화** — `workflow_id` 기반 실행, executor registry, `node_runs` 저장 구조 전환
-- [ ] **Visual Workflow Builder** (React Flow 기반) 노드/엣지 편집 UI 완성
+- [ ] **실행 워커 컨테이너 샌드박스 도입** — Docker-in-Docker 또는 격리 실행 환경으로 RCE 방지 아키텍처 전환
+- [ ] **Redis 기반 분산 락** — 멀티 프로세스 스케일아웃 대비 `threading.Lock` 대체 검토
+- [ ] **WorkflowBuilder.tsx 테스트 확충** — React Flow 캔버스 조작, 모바일 뷰포트 전환, 잘못된 그래프 연결 시 사용자 피드백 검증
+- [ ] **WorkspaceService 엣지 케이스 테스트** — 권한 부족·디스크 초과·디렉토리 생성 실패 단위 테스트 추가
+- [ ] **KPI 대시보드 고도화** — 리드타임(이슈→PR), 재작업률, 병목 노드, E2E 통과율 지표 추가
+- [ ] **Dev Integration 확대** — GitHub PR/CI/Deploy 이벤트까지 트리거 범위 확장
+- [ ] **`Live Run Constellation` WOW 포인트 구현** — 대시보드 상단 실시간 노드 점등 미니맵(Canvas/SVG + SSE)
 
 ---
 
