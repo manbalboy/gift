@@ -1,25 +1,39 @@
 # REVIEW
 
 ## Functional bugs
-- **Toast 큐 및 식별자(dedupeKey) 누수 오류**: `web/src/App.tsx` 내 `enqueueToast` 로직에서 Toast 배열을 `.slice(-3)`으로 자르고 있습니다. 이로 인해 화면에 4개 이상의 Toast가 연속으로 발생하여 기존 Toast가 배열에서 밀려나 렌더링에서 제외될 경우, `closeToast`가 정상적으로 호출되지 않습니다. 결과적으로 큐에서 강제로 탈락한 Toast의 `dedupeKey`가 `dedupedToastKeysRef`에 영구적으로 남아, 이후 동일한 식별자를 가진 Toast가 영원히 노출되지 않는 버그가 발생합니다.
+
+- **Toast 큐 상태 관리 및 식별자(dedupeKey) 누수**
+  - **설명**: `web/src/App.tsx`에서 알림 큐를 관리할 때, 새로운 Toast 알림이 추가되면서 기존 큐 배열을 `slice(-3)`으로 자를 때 큐에서 밀려난 항목들의 `dedupeKey`가 정상적으로 해제되지 않는 치명적인 버그가 존재합니다. 이로 인해 한 번 밀려난 알림과 동일한 내용의 알림을 다시 띄우려고 할 때 무시되는 현상이 발생합니다.
+  - **재현 예시**: 로컬 개발 서버(예: `http://localhost:3100`)에 접속하여 동일한 경고 알림을 4번 연속 트리거할 경우, 첫 번째로 큐에서 제거된 알림이 이후 다시 호출되어도 렌더링되지 않음을 확인할 수 있습니다.
+
+- **모바일 뷰포트에서 UI 오버플로우 및 상호작용 충돌**
+  - **설명**: 모바일과 같은 좁은 화면 비율에서 긴 텍스트를 가진 Toast 메시지가 뷰포트를 벗어나는 오버플로우 문제가 있습니다. 또한 화면 차단을 위해 사용하는 `mobile-blocker`와 Toast 내부의 액션 버튼(예: '노드로 이동')이 겹쳐서 의도치 않은 상호작용 충돌이 발생합니다.
 
 ## Security concerns
-- **CORS 정규표현식 점검**: `api/app/main.py`의 `allow_origin_regex`에 작성된 정규표현식(`rf"^https?://{_CORS_ALLOWED_HOST_PATTERN}{_CORS_PORT_PATTERN}$"`)은 SPEC 요구사항(`manbalboy.com`, `localhost`, `127.0.0.1`, 포트 대역 등)을 충족하여 의도대로 구현되었습니다. 단, `http://`와 `https://` 모두를 허용하고 있으므로, 추후 프로덕션 단계에서는 HTTPS를 강제하는 방향으로 HSTS 등의 추가 보안 조치가 필요할 수 있습니다. 
+
+- **CORS 허용 도메인 정책의 광범위한 정규식 허용**
+  - **설명**: SPEC 문서에 따르면 `manbalboy.com` 계열의 서브도메인 및 포트를 포괄적으로 허용하는 정책이 요구됩니다. 비록 이번 MVP 구현 범위(Out-of-scope)에서는 CORS 정규식 변경이 제외되었으나, 광범위한 도메인 허용은 악의적인 서브도메인 탈취나 스푸핑 공격에 취약할 수 있습니다. 향후 배포 환경에서는 허용 origin 정책에 대해 보다 엄격한 검증 로직이 요구됩니다.
 
 ## Missing tests / weak test coverage
-- **Toast 전역 큐 상태 관리 단위 테스트 부재**: `web/src/components/Toast.test.tsx`에서 컴포넌트 내부 생명주기 관련 테스트는 충실히 작성되었으나, `App.tsx` 레벨에서의 큐 상태 관리(최대 3개 유지 등) 및 중복 방지 키(`dedupeKey`) 라이프사이클을 검증하는 통합 단위 테스트가 누락되어 있습니다.
-- **Z-Index E2E 테스트의 한계**: `web/tests/e2e/toast-layering.spec.ts`에서 시스템 알림 래퍼(`.toast-stack`)의 Z-index 레이어를 검증하고 있지만, 실제 에러 상황을 트리거하여 실제 Toast 항목 요소(`.toast-content`)가 노출되었을 때의 렌더링을 완전히 포착하지 않습니다. 실제 Toast 발생 시나리오 기반의 E2E로 보강이 필요합니다.
+
+- **전역 상태 통합을 위한 단위 테스트 누락**
+  - **설명**: 현재 Toast의 큐 밀어내기 로직과 `dedupeKey` 누수 발생을 방어하기 위한 테스트가 부재합니다. `web/src/App.test.tsx` 파일을 신규로 작성하여, 모의 타이머(Fake Timers)와 큐 조작을 혼합해 `dedupeKey` 누수 조건 및 최대 3개의 알림 유지를 검증하는 단위 테스트가 시급합니다.
+
+- **Z-Index 및 렌더링 계층 E2E 테스트 부족**
+  - **설명**: 컴포넌트 간의 겹침 상태를 실제 렌더링 트립에서 확인하는 테스트가 미흡합니다. `web/tests/e2e/toast-layering.spec.ts`를 보강하여, 모바일 뷰포트 크기로 조정 시 시스템 알림이 항상 최상단에 올바르게 노출되는지(z-index)를 검증하는 E2E 테스트 작성이 필요합니다.
 
 ## Edge cases
-- **모바일 환경 레이아웃 및 상호작용 충돌**: 뷰포트가 좁은 모바일(세로 방향) 환경일 때 `mobile-blocker`가 캔버스를 가리고 편집을 제한합니다. 이때 경고 Toast의 "해당 노드로 이동" 액션 버튼을 클릭하게 되면 내부적으로 캔버스의 `setCenter`가 호출되나, 사용자의 시야는 여전히 블로커 화면에 막혀 있어 시각적 피드백의 인지 부조화가 발생할 수 있습니다. 모바일 상태일 경우 해당 액션 버튼의 노출을 숨기거나 작동 방식을 다르게 처리하는 방안이 필요합니다.
-- **다수 노드 Fallback 시의 메시지 오버플로우**: 워크플로우 로드 시 Fallback되는 노드가 지나치게 많을 경우, Toast 내 메시지가 너무 길어져 뷰포트를 벗어나거나 UI가 깨질 위험이 존재합니다. 텍스트 말줄임(text-overflow) 처리 또는 메시지 가이드의 간소화가 권장됩니다.
 
----
+- **타이머 기반 상태 제거와 큐 정리 시점의 충돌(Race Condition)**
+  - **설명**: 기존 `setTimeout` 기반의 `closeToast` 타이머가 만료되는 시점과 새로운 Toast가 추가되어 `slice(-3)`을 통해 큐가 강제로 잘리는 시점이 겹칠 경우 발생할 수 있는 잠재적인 레이스 컨디션(Race Condition)이 존재합니다. 이 경우 타이머가 이미 삭제된 요소를 참조하려 하면서 React 상태 업데이트 에러가 발생할 수 있습니다.
 
-## TODO (Checklist for Coder)
+- **예외 해상도에서의 CSS 분기점(Breakpoint) 오작동**
+  - **설명**: 모바일 CSS 분기점이 `mobile-blocker`의 활성화 해상도와 완벽하게 일치하지 않을 수 있습니다. 특정 태블릿 해상도나 화면 분할 환경(예: 로컬 테스트 `http://localhost:3101`에서 가로폭을 임의로 조절하는 경우)에서 액션 버튼이 반쯤 가려지거나 클릭이 불가능한 상태로 렌더링될 수 있는 엣지 케이스가 우려됩니다.
 
-- [ ] `web/src/App.tsx` 내 Toast 큐 밀어내기(`.slice(-3)`) 시 제거되는 항목의 `dedupeKey`를 `dedupedToastKeysRef`에서 안전하게 삭제하는 로직(useEffect 또는 커스텀 훅 활용) 추가 구현.
-- [ ] `web/src/App.test.tsx` 등을 생성하여 최대 3개의 Toast 유지 동작과 중복 식별자(dedupeKey) 관리 및 해제에 대한 통합 단위 테스트 작성.
-- [ ] 모바일 모드(세로)에서는 Toast 알림의 '노드 이동 액션'을 비활성화 하거나 클릭 시 `mobile-blocker` 우회 안내 텍스트를 제공하는 조건부 렌더링 로직 추가.
-- [ ] 워크플로우에 심각한 Fallback이 일어날 경우를 대비해 Toast 알림 내부 텍스트에 `overflow: hidden; text-overflow: ellipsis;` 등 긴 문자열 처리용 CSS 클래스 보완.
-- [ ] `web/tests/e2e/toast-layering.spec.ts` 내 테스트 스텝에 실제로 버튼 클릭이나 훅을 트리거하여 Toast 알림 아이템이 등장한 직후의 Z-index 겹침을 확정 검증하는 절차 추가.
+## TODO
+
+- [ ] `web/src/App.tsx`: `enqueueToast` 함수 내 배열 `slice(-3)` 처리 시 밀려나는 이전 Toast들의 `dedupeKey`를 `dedupedToastKeysRef`에서 `delete` 하는 로직 추가
+- [ ] `web/src/components/Toast.tsx`: 모바일 뷰포트 감지 시 액션 버튼('노드로 이동' 등)의 렌더링을 제한하거나 숨기도록 컴포넌트 수정
+- [ ] `web/src/styles/app.css`: 좁은 화면에서 텍스트가 뷰포트를 이탈하지 않도록 `text-overflow: ellipsis`를 적용한 모바일 전용 미디어 쿼리 속성 추가
+- [ ] `web/src/App.test.tsx`: Toast 3개 초과 유지 방지 및 `dedupeKey` 해제를 검증하는 통합 단위 테스트 작성(모의 타이머 활용)
+- [ ] `web/tests/e2e/toast-layering.spec.ts`: 모바일 뷰포트 크기를 시뮬레이션하고, 강제 오류 알림 발생 시 UI 가시성 및 Z-Index 겹침 방지를 확인하는 E2E 테스트 보강
