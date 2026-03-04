@@ -144,6 +144,14 @@ p {
   transition: none;
 }
 
+.toast-swipe-rebound {
+  transition:
+    transform 300ms ease-out,
+    opacity 300ms ease-out,
+    background-color 180ms ease,
+    max-height 280ms ease;
+}
+
 .top-bar {
   height: 64px;
   display: flex;

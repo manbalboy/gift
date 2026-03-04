@@ -1,1 +1,1 @@
-Toast 큐 방식 도입으로 최대 3개 초과 알림이 유실되던 문제를 수정하고 XSS 방지를 위한 HTML 이스케이프 유틸리티 추가
+Toast 컴포넌트에서 dangerouslySetInnerHTML 제거 및 XSS 취약점 수정, 스와이프 제스처와 메시지 오버플로우 방어 로직 보완

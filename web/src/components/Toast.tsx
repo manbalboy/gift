@@ -6,7 +6,7 @@ export type ToastLevel = 'warning' | 'error';
 export type ToastItem = {
   id: string;
   level: ToastLevel;
-  message?: string | null;
+  message?: unknown;
   dedupeKey?: string;
   action?: {
     label: string;
@@ -15,6 +15,25 @@ export type ToastItem = {
 };
 
 const SWIPE_DISMISS_THRESHOLD = 88;
+
+function formatToastMessage(input: unknown): string {
+  if (input === null || input === undefined) return '';
+  if (typeof input === 'string') return input;
+  if (typeof input === 'number' || typeof input === 'boolean' || typeof input === 'bigint') {
+    return String(input);
+  }
+  if (typeof input === 'symbol' || typeof input === 'function') {
+    return String(input);
+  }
+  if (input instanceof Error) {
+    return input.message ? `${input.name}: ${input.message}` : input.name;
+  }
+  try {
+    return JSON.stringify(input);
+  } catch {
+    return '[Unserializable data]';
+  }
+}
 
 export default function Toast({
   item,
@@ -31,18 +50,67 @@ export default function Toast({
   const isSwipingRef = useRef(false);
   const swipeTriggeredRef = useRef(false);
   const swipeOffsetRef = useRef(0);
+  const dismissTimerRef = useRef<number | null>(null);
+  const timerStartedAtRef = useRef(0);
+  const remainingMsRef = useRef(durationMs);
+  const reboundTimeoutRef = useRef<number | null>(null);
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [isExpandableMessage, setIsExpandableMessage] = useState(false);
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocusWithin, setIsFocusWithin] = useState(false);
+  const [isTouchInteracting, setIsTouchInteracting] = useState(false);
+  const [isSwipeRebound, setIsSwipeRebound] = useState(false);
   const { isMobile } = useViewport();
-  const message = typeof item.message === 'string' ? item.message : '';
+  const message = useMemo(() => formatToastMessage(item.message), [item.message]);
+  const isPersistent = durationMs === 0;
 
   const closeOnce = useCallback(() => {
     if (closedRef.current) return;
     closedRef.current = true;
     onClose(item.id);
   }, [item.id, onClose]);
+
+  const clearDismissTimer = useCallback(() => {
+    if (dismissTimerRef.current === null) return;
+    window.clearTimeout(dismissTimerRef.current);
+    dismissTimerRef.current = null;
+  }, []);
+
+  const scheduleDismiss = useCallback(() => {
+    clearDismissTimer();
+    if (closedRef.current) return;
+    if (isPersistent) return;
+    const delay = Math.max(0, remainingMsRef.current);
+    if (delay === 0) {
+      closeOnce();
+      return;
+    }
+    timerStartedAtRef.current = Date.now();
+    dismissTimerRef.current = window.setTimeout(() => {
+      dismissTimerRef.current = null;
+      closeOnce();
+    }, delay);
+  }, [clearDismissTimer, closeOnce, isPersistent]);
+
+  const pauseDismiss = useCallback(() => {
+    if (dismissTimerRef.current === null) return;
+    const elapsed = Date.now() - timerStartedAtRef.current;
+    remainingMsRef.current = Math.max(0, remainingMsRef.current - elapsed);
+    clearDismissTimer();
+  }, [clearDismissTimer]);
+
+  const triggerSwipeRebound = useCallback(() => {
+    setIsSwipeRebound(true);
+    if (reboundTimeoutRef.current !== null) {
+      window.clearTimeout(reboundTimeoutRef.current);
+    }
+    reboundTimeoutRef.current = window.setTimeout(() => {
+      setIsSwipeRebound(false);
+      reboundTimeoutRef.current = null;
+    }, 320);
+  }, []);
 
   const measureMessageOverflow = useCallback(() => {
     if (!isMobile) {
@@ -83,12 +151,32 @@ export default function Toast({
     closedRef.current = false;
     setIsExpanded(false);
     setSwipeOffsetX(0);
+    setIsHovered(false);
+    setIsFocusWithin(false);
+    setIsTouchInteracting(false);
+    setIsSwipeRebound(false);
     swipeOffsetRef.current = 0;
     swipeTriggeredRef.current = false;
     isSwipingRef.current = false;
-    const timer = window.setTimeout(() => closeOnce(), durationMs);
-    return () => window.clearTimeout(timer);
-  }, [closeOnce, durationMs, item.id]);
+    remainingMsRef.current = durationMs;
+    scheduleDismiss();
+    return () => {
+      clearDismissTimer();
+      if (reboundTimeoutRef.current !== null) {
+        window.clearTimeout(reboundTimeoutRef.current);
+        reboundTimeoutRef.current = null;
+      }
+    };
+  }, [clearDismissTimer, durationMs, item.id, scheduleDismiss]);
+
+  useEffect(() => {
+    const shouldPause = isHovered || isFocusWithin || isTouchInteracting;
+    if (shouldPause) {
+      pauseDismiss();
+      return;
+    }
+    scheduleDismiss();
+  }, [isFocusWithin, isHovered, isTouchInteracting, pauseDismiss, scheduleDismiss]);
 
   useLayoutEffect(() => {
     measureMessageOverflow();
@@ -148,6 +236,7 @@ export default function Toast({
     if (isMobile) return;
     touchStartRef.current = null;
     isSwipingRef.current = false;
+    setIsTouchInteracting(false);
     swipeTriggeredRef.current = false;
     swipeOffsetRef.current = 0;
     setSwipeOffsetX(0);
@@ -172,11 +261,18 @@ export default function Toast({
     <article
       className={`toast toast-${item.level} ${canToggleExpand ? 'toast-expandable' : ''} ${
         canToggleExpand && isExpanded ? 'toast-expanded' : ''
-      } ${swipeOffsetX !== 0 ? 'toast-swipe-active' : ''}`}
+      } ${swipeOffsetX !== 0 ? 'toast-swipe-active' : ''} ${isSwipeRebound ? 'toast-swipe-rebound' : ''}`}
       role={role}
       aria-live="polite"
       aria-expanded={canToggleExpand ? isExpanded : undefined}
       style={toastStyle}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onFocusCapture={() => setIsFocusWithin(true)}
+      onBlurCapture={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setIsFocusWithin(false);
+      }}
       onClick={(event) => {
         if (swipeTriggeredRef.current) {
           swipeTriggeredRef.current = false;
@@ -187,13 +283,16 @@ export default function Toast({
         if (event.touches.length > 1) {
           touchStartRef.current = null;
           isSwipingRef.current = false;
+          setIsTouchInteracting(false);
           return;
         }
         const touch = event.touches[0];
         if (!touch) return;
+        setIsTouchInteracting(true);
         touchStartRef.current = { x: touch.clientX, y: touch.clientY };
         swipeTriggeredRef.current = false;
         isSwipingRef.current = false;
+        setIsSwipeRebound(false);
         swipeOffsetRef.current = 0;
       }}
       onTouchMove={(event) => {
@@ -201,10 +300,12 @@ export default function Toast({
         if (event.touches.length > 1 || event.touches.length === 0) {
           touchStartRef.current = null;
           isSwipingRef.current = false;
+          setIsTouchInteracting(false);
           swipeOffsetRef.current = 0;
           setSwipeOffsetX(0);
           return;
         }
+        setIsTouchInteracting(true);
         const touch = event.touches[0];
         const start = touchStartRef.current;
         if (!touch || !start) return;
@@ -223,11 +324,13 @@ export default function Toast({
           event.preventDefault();
         }
         const bounded = Math.max(-140, Math.min(140, deltaX));
+        setIsSwipeRebound(false);
         swipeOffsetRef.current = bounded;
         setSwipeOffsetX(bounded);
       }}
       onTouchEnd={() => {
         if (!isMobile) return;
+        setIsTouchInteracting(false);
         touchStartRef.current = null;
         const currentOffset = swipeOffsetRef.current;
 
@@ -239,12 +342,15 @@ export default function Toast({
 
         isSwipingRef.current = false;
         swipeOffsetRef.current = 0;
+        triggerSwipeRebound();
         setSwipeOffsetX(0);
       }}
       onTouchCancel={() => {
+        setIsTouchInteracting(false);
         touchStartRef.current = null;
         isSwipingRef.current = false;
         swipeOffsetRef.current = 0;
+        triggerSwipeRebound();
         setSwipeOffsetX(0);
       }}
     >

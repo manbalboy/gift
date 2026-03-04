@@ -235,6 +235,145 @@ describe('Toast', () => {
     expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
 
+  test('message가 number 타입이어도 문자열로 안전하게 렌더링한다', () => {
+    const onClose = jest.fn();
+    render(<Toast item={{ id: 'toast-number', level: 'warning', message: 404 }} onClose={onClose} />);
+
+    expect(screen.getByText('404')).toBeInTheDocument();
+  });
+
+  test('message가 객체/배열 타입이면 JSON 문자열로 렌더링한다', () => {
+    const onClose = jest.fn();
+    const objectMessage = { id: 1, status: 'failed' };
+    const arrayMessage = ['node-a', 'node-b'];
+
+    const { rerender } = render(
+      <Toast item={{ id: 'toast-object', level: 'error', message: objectMessage }} onClose={onClose} />,
+    );
+    expect(screen.getByText('{"id":1,"status":"failed"}')).toBeInTheDocument();
+
+    rerender(<Toast item={{ id: 'toast-array', level: 'warning', message: arrayMessage }} onClose={onClose} />);
+    expect(screen.getByText('["node-a","node-b"]')).toBeInTheDocument();
+  });
+
+  test('durationMs가 0이면 자동 닫힘 없이 영구 노출된다', () => {
+    const onClose = jest.fn();
+    const item: ToastItem = { id: 'toast-persistent', level: 'error', message: '영구 노출' };
+    render(<Toast item={item} durationMs={0} onClose={onClose} />);
+
+    act(() => {
+      jest.advanceTimersByTime(30_000);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText('영구 노출')).toBeInTheDocument();
+  });
+
+  test('hover 상태에서는 자동 만료 타이머를 일시 정지하고 해제 시 재개한다', () => {
+    const onClose = jest.fn();
+    const item: ToastItem = {
+      id: 'toast-hover-pause',
+      level: 'warning',
+      message: '호버 일시 정지 테스트',
+    };
+
+    render(<Toast item={item} durationMs={1000} onClose={onClose} />);
+    const toast = screen.getByRole('status');
+
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+    fireEvent.mouseEnter(toast);
+    act(() => {
+      jest.advanceTimersByTime(1200);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.mouseLeave(toast);
+    act(() => {
+      jest.advanceTimersByTime(499);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(onClose).toHaveBeenCalledWith('toast-hover-pause');
+  });
+
+  test('focus 상태에서는 자동 만료 타이머를 일시 정지하고 blur 시 재개한다', () => {
+    const onClose = jest.fn();
+    const item: ToastItem = {
+      id: 'toast-focus-pause',
+      level: 'error',
+      message: '포커스 일시 정지 테스트',
+    };
+
+    render(<Toast item={item} durationMs={1000} onClose={onClose} />);
+    const closeButton = screen.getByRole('button', { name: '알림 닫기' });
+
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    act(() => {
+      fireEvent.focus(closeButton);
+    });
+    act(() => {
+      jest.advanceTimersByTime(1100);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => {
+      fireEvent.blur(closeButton);
+    });
+    act(() => {
+      jest.advanceTimersByTime(599);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(onClose).toHaveBeenCalledWith('toast-focus-pause');
+  });
+
+  test('터치 시작/이동 중에는 자동 만료 타이머를 일시 정지하고 touch end 이후 재개한다', () => {
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
+    });
+    const onClose = jest.fn();
+    const item: ToastItem = {
+      id: 'toast-touch-pause',
+      level: 'warning',
+      message: '터치 일시 정지 테스트',
+    };
+
+    render(<Toast item={item} durationMs={1000} onClose={onClose} />);
+    const toast = screen.getByRole('status');
+
+    act(() => {
+      jest.advanceTimersByTime(400);
+    });
+    fireEvent.touchStart(toast, { touches: [{ clientX: 180, clientY: 220 }] });
+    fireEvent.touchMove(toast, { touches: [{ clientX: 186, clientY: 222 }] });
+    act(() => {
+      jest.advanceTimersByTime(1200);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.touchEnd(toast);
+    act(() => {
+      jest.advanceTimersByTime(599);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    expect(onClose).toHaveBeenCalledWith('toast-touch-pause');
+  });
+
   test('모바일 스와이프 중 데스크톱 전환 시 스와이프 오프셋을 초기화한다', () => {
     mockedUseViewport.mockReturnValue({
       width: 390,
@@ -267,6 +406,31 @@ describe('Toast', () => {
     rerender(<Toast item={item} onClose={jest.fn()} />);
 
     expect(toast).not.toHaveClass('toast-swipe-active');
+    expect(toast.style.transform).toBe('');
+  });
+
+  test('모바일 스와이프 취소 시 복귀 transition 클래스를 적용한다', () => {
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
+    });
+    const item: ToastItem = {
+      id: 'toast-swipe-rebound',
+      level: 'warning',
+      message: '스와이프 복귀 애니메이션 테스트',
+    };
+
+    render(<Toast item={item} onClose={jest.fn()} />);
+    const toast = screen.getByRole('status');
+
+    fireEvent.touchStart(toast, { touches: [{ clientX: 200, clientY: 200 }] });
+    fireEvent.touchMove(toast, { touches: [{ clientX: 240, clientY: 204 }], cancelable: true });
+    fireEvent.touchEnd(toast);
+
+    expect(toast).toHaveClass('toast-swipe-rebound');
     expect(toast.style.transform).toBe('');
   });
 

@@ -3,9 +3,9 @@ import { expect, test } from '@playwright/test';
 test('Toast가 캔버스 오버레이보다 위 레이어에서 렌더링된다', async ({ page }) => {
   await page.goto('/');
 
-  await expect(page.getByLabel('시스템 알림')).toBeVisible();
   await expect(page.locator('.react-flow__controls')).toBeVisible();
   await page.getByRole('button', { name: '파싱 오류 시뮬레이션' }).click();
+  await expect(page.locator('.toast-stack .toast').first()).toBeVisible();
   await expect(page.locator('.toast-content').first()).toBeVisible();
 
   const zIndex = await page.evaluate(() => {
@@ -32,7 +32,6 @@ test('모바일 뷰포트에서도 Toast가 최상단에 유지되고 레이아�
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 
-  await expect(page.getByLabel('시스템 알림')).toBeVisible();
   await page.getByRole('button', { name: '파싱 오류 시뮬레이션' }).click();
   await expect(page.locator('.toast').first()).toBeVisible();
 
@@ -202,6 +201,16 @@ test('4개 이상 알림 발생 후 일괄 닫기로 큐를 비울 수 있다', 
 
 test('Toast는 레벨에 맞는 ARIA role과 aria-live 속성을 유지한다', async ({ page }) => {
   await page.route('**/api/webhooks/dev-integration', async (route) => {
+    const raw = route.request().postData() ?? '';
+    const isMalformedPayload = raw.includes('"provider":"jenkins"') && !raw.endsWith('}');
+    if (isMalformedPayload) {
+      await route.fulfill({
+        status: 422,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Malformed JSON payload' }),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -230,4 +239,107 @@ test('Toast는 레벨에 맞는 ARIA role과 aria-live 속성을 유지한다', 
   await expect(errorToast).toBeVisible();
   await expect(warningToast).toHaveAttribute('aria-live', 'polite');
   await expect(errorToast).toHaveAttribute('aria-live', 'polite');
+});
+
+test('브라우저 Hover/Focus 상호작용 중에는 자동 닫힘이 일시 정지되고 해제 시 재개된다', async ({ page }) => {
+  await page.route('**/api/webhooks/dev-integration', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        accepted: true,
+        provider: 'jenkins',
+        category: 'ci',
+        event_type: 'ci.completed',
+        workflow_id: null,
+        warning_code: 'workflow_id_ignored',
+        warning_message: `pause-resume-${Date.now()}`,
+        triggered: false,
+        triggered_run_id: null,
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'workflow_id 경고 시뮬레이션' }).click();
+
+  const firstToast = page.locator('.toast[role="status"]').first();
+  await expect(firstToast).toBeVisible();
+  await page.waitForTimeout(1200);
+  await firstToast.hover();
+  await page.waitForTimeout(2600);
+  await expect(firstToast).toBeVisible();
+
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(900);
+  await expect(firstToast).toBeVisible();
+  await page.waitForTimeout(1000);
+  await expect(firstToast).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'workflow_id 경고 시뮬레이션' }).click();
+  const secondToast = page.locator('.toast[role="status"]').first();
+  await expect(secondToast).toBeVisible();
+  await page.waitForTimeout(1000);
+
+  const closeButton = secondToast.getByRole('button', { name: '알림 닫기' });
+  await closeButton.focus();
+  await page.waitForTimeout(2400);
+  await expect(secondToast).toBeVisible();
+
+  await page.getByRole('button', { name: 'workflow_id 경고 시뮬레이션' }).focus();
+  await page.waitForTimeout(1100);
+  await expect(secondToast).toHaveCount(0);
+});
+
+test('모바일 긴 메시지 Toast에서 Tab 키로 펼치기/닫기 버튼에 접근하고 조작할 수 있다', async ({ page }) => {
+  await page.route('**/api/webhooks/dev-integration', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        accepted: true,
+        provider: 'jenkins',
+        category: 'ci',
+        event_type: 'ci.completed',
+        workflow_id: null,
+        warning_code: 'workflow_id_ignored',
+        warning_message:
+          'keyboard tab accessibility verification message for mobile toast expansion and close actions in sequence.',
+        triggered: false,
+        triggered_run_id: null,
+      }),
+    });
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'workflow_id 경고 시뮬레이션' }).click();
+
+  const toast = page.locator('.toast', { hasText: 'keyboard tab accessibility verification message' });
+  const expandButton = toast.getByRole('button', { name: '펼치기' });
+  const closeButton = toast.getByRole('button', { name: '알림 닫기' });
+
+  await expect(toast).toBeVisible();
+  await expect(expandButton).toBeVisible();
+  await expect(toast).toHaveAttribute('aria-expanded', 'false');
+
+  await toast.evaluate((node) => {
+    const target = node as HTMLElement;
+    target.setAttribute('tabindex', '-1');
+    target.focus();
+  });
+  await expect(toast).toBeFocused();
+
+  await page.keyboard.press('Tab');
+  await expect(expandButton).toBeFocused();
+
+  await page.keyboard.press('Enter');
+  await expect(toast).toHaveAttribute('aria-expanded', 'true');
+  await expect(toast.getByRole('button', { name: '접기' })).toBeVisible();
+
+  await page.keyboard.press('Tab');
+  await expect(closeButton).toBeFocused();
+
+  await page.keyboard.press('Enter');
+  await expect(toast).toHaveCount(0);
 });

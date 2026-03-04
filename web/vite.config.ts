@@ -7,5 +7,6 @@ export default defineConfig({
     port: 3100,
     strictPort: true,
     host: '0.0.0.0',
+    allowedHosts: ['ssh.manbalboy.com'],
   },
 });
