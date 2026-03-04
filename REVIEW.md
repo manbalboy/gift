@@ -1,26 +1,36 @@
 # REVIEW
 
+이 문서는 Spec 및 Plan을 바탕으로 현재 저장소의 상태를 리뷰한 결과입니다.
+
 ## Functional bugs
-- **DAG Fallback 예외 처리 오류**: `api/app/services/workflow_engine.py` 내부 `_build_predecessors` 함수에서 엣지가 없는 독립 노드 배치 시, 병렬 실행 처리 또는 그래프 검증 단계에서 사전 차단해야 하나 강제적으로 순차 실행으로 Fallback되는 기능적 결함이 있습니다.
+
+- **DAG Fallback 예외 처리 미비**: `api/app/services/workflow_engine.py`의 `_build_predecessors` 로직에서 연결(엣지)이 없는 독립 노드가 강제적으로 순차 실행되는 버그가 있습니다. 워크플로우 검증 단계에서 이를 사전에 예외 처리하거나, 올바르게 병렬 처리 큐에 진입할 수 있도록 로직을 수정해야 합니다.
+- **Webhook 유효성 검사 누락**: `api/app/api/webhooks.py` 웹훅 수신부에서 잘못된 포맷이나 존재하지 않는 `workflow_id`를 전달받을 경우 명확한 에러 처리가 부족합니다. 클라이언트 측에서 명확히 인지할 수 있도록 `422 Unprocessable Entity` 상태 코드를 반환하는 응답 로직을 명시적으로 추가해야 합니다.
 
 ## Security concerns
-- **Webhook `workflow_id` 검증 미흡 (Silent Fail)**: `api/app/api/webhooks.py`의 웹훅 수신부에서 잘못된 포맷의 `workflow_id`가 수신되었을 때, 명시적인 에러 반환 없이 요청을 무시하는 현상이 있습니다. 보안 및 시스템 예측성을 높이기 위해 HTTP `422 Unprocessable Entity` 에러를 명확히 반환해야 합니다.
-- **Human Gate 인가(Authorization) 로직 부족**: `api/app/api/workflows.py` 및 관련 서비스의 승인 처리 엔드포인트가 단순 토큰 검증에 그치고 있습니다. 권한 없는 사용자의 불법적인 승인 조작을 방지하기 위해 사용자 Role(예: reviewer, admin) 및 워크스페이스 권한을 대조하는 세밀한 인가 로직 구현이 시급합니다.
+
+- **Human Gate 인가(Authorization) 취약점**: `api/app/api/workflows.py` 등에서 Human Gate 승인 엔드포인트 호출 시 단순 토큰의 존재 여부만 검증하고 있습니다. 권한이 없는 일반 사용자가 단계를 무단으로 통과시키는 상황을 방지하기 위해, 사용자 Role(예: reviewer, admin) 기반의 세밀하고 강력한 권한 검증(RBAC) 로직을 적용해야 합니다.
 
 ## Missing tests / weak test coverage
-- **Frontend Human Gate E2E 통합 테스트 누락**: 대시보드 상에서 Human Gate 노드가 실행 대기(Pending) 상태에 진입하고, 사용자의 승인/반려 조작에 의해 파이프라인이 재개(Resume)되는 전체 흐름을 검증하는 Playwright E2E 시나리오 테스트가 부족합니다. (재현 및 테스트 실행 환경 구성 시 프론트엔드 포트는 `3100`, 백엔드 API는 `3101` 포트를 활용합니다.)
-- **Backend 헬스체크 및 DLQ 통합 테스트 미흡**: 백엔드 워커의 상태 기반 헬스체크 추적 및 Dead Letter Queue(DLQ) 에러 복원 처리에 관한 단위 테스트와 스트레스 테스트 커버리지가 부족합니다.
+
+- **프론트엔드 E2E 통합 테스트 부재**: `web/tests/e2e/` 경로에 Playwright를 활용하여 Human Gate의 전체 라이프사이클(대기 상태 -> 승인 또는 반려 -> 워크플로우 재개)을 시뮬레이션하는 통합 시나리오 테스트가 구현되어 있지 않습니다.
+- **포트 고정 및 통신 테스트 보강**: 프론트엔드 UI 포트를 `3100`, API 포트를 `3101`로 고정하여 E2E 테스트가 일관된 환경에서 동작하도록 구동 스크립트와 환경 변수를 정비해야 합니다. (예: `http://localhost:3100` 및 `http://localhost:3101` 바인딩 검증)
+- **SSE 예외 테스트 및 DLQ 단위 테스트**: 비동기 제너레이터 취소 동작과 관련된 백엔드 단위 테스트가 보강되어야 합니다. 워크플로우 강제 취소 시 `asyncio.CancelledError`가 정상적으로 포착되고, 서버 크래시 없이 제너레이터가 안전하게 종료됨을 입증하는 테스트 코드가 필요합니다.
 
 ## Edge cases
-- **SSE 커넥션 레이스 컨디션 (Zombie Connection 방지)**: 워크플로우 강제 취소 시, 기존에 연결된 서버-클라이언트 간 스트림 제너레이터 연결 풀이 즉각적으로 클리어되지 않아 Zombie Connection으로 남을 수 있는 엣지 케이스가 존재합니다. 다중 클라이언트 환경에서의 일관성 동기화 및 엣지 케이스 안정성을 위해 스트리밍 연결 해제 로직 보완이 필요합니다.
 
----
+- **SSE 좀비 커넥션 및 메모리 누수**: 사용자가 워크플로우 실행을 강제로 취소(Cancel)할 때, 연결되어 있던 서버-클라이언트 간의 SSE 스트리밍 커넥션이 즉각적으로 풀에서 해제되지 않을 수 있습니다. 이는 좀비 커넥션으로 남아 서버 자원 고갈 및 메모리 누수를 유발할 수 있으므로, 활성 스트림을 강제 종료하고 정리하는 로직의 보완이 필수적입니다.
+- **인가 실패 시나리오의 UX 저하**: 권한이 없는 사용자가 Human Gate 승인을 시도하여 403 에러가 발생했을 때, 프론트엔드에서 단순히 콘솔 에러나 모호한 토스트 메시지만 띄울 경우 사용자가 상황을 이해하기 어렵습니다. 이 에러를 Catch하여 "필요 권한 안내 및 관리자 문의"를 유도하는 모달로 우아하게 폴백(Fallback) 처리하는 엣지 케이스 고려가 필요합니다.
+- **네트워크 단절 시 SSE 재연결**: 스트림 끊김이나 재연결 등 이벤트 소스 객체의 상태 변화를 사용자가 즉각적으로 인지할 수 있도록 GNB 상단에 SSE 연결 상태를 보여주는 시각적 인디케이터 엣지 케이스 대응이 요구됩니다.
 
 ## TODO
-- [ ] `api/app/services/workflow_engine.py` 파일 내 DAG Fallback 로직 수정 (독립 노드 강제 순차 실행 제거)
-- [ ] `api/app/api/webhooks.py` 웹훅 수신부에서 잘못된 `workflow_id` 요청에 대해 HTTP 422 에러 응답 로직 추가
-- [ ] `api/app/api/workflows.py` 내 Human Gate 승인 엔드포인트에 Role/Workspace 기반 인가(Authorization) 로직 반영
-- [ ] `web/tests/e2e/` 디렉토리에 대시보드 Human Gate 승인/재개 플로우에 대한 Playwright E2E 테스트 작성
-- [ ] `api/tests/` 디렉토리에 워커 헬스체크 상태 및 DLQ 복원 로직에 대한 백엔드 통합/스트레스 테스트 보강
-- [ ] 워크플로우 취소 시 SSE 커넥션 풀이 즉시 해제되도록 연결 관리 로직 보완
-- [ ] 로컬 실행 가이드 포트 수정 (프론트엔드: `3100`, 백엔드 API: `3101`) 및 연동 테스트 점검
+
+- [ ] `api/app/services/workflow_engine.py` 수정: 엣지 없는 노드의 강제 순차 실행 방지 및 예외/병렬 큐 처리 로직 추가
+- [ ] `api/app/api/webhooks.py` 수정: 유효하지 않은 `workflow_id` 요청에 대해 HTTP `422 Unprocessable Entity` 반환 로직 구현
+- [ ] `api/app/api/workflows.py` 수정: Human Gate 처리 API에 사용자 Role(reviewer, admin 등) 기반 인가 확인 로직 도입
+- [ ] 워크플로우 취소 API 호출 시 연결된 활성 SSE 스트림을 즉각적으로 해제하는 커넥션 자원 관리 로직 보완
+- [ ] 워크플로우 무한 스트리밍 상태에서 Cancel 시 `asyncio.CancelledError`가 포착되어 제너레이터가 안전하게 종료되는지 검증하는 백엔드 단위 테스트 추가
+- [ ] Role 기반 인가 및 Webhook 유효성 검증(422 반환 등)을 증명하는 백엔드 API 테스트 케이스 작성
+- [ ] 프론트엔드 포트 `3100`, API 포트 `3101` 고정을 위한 환경 변수 및 구동 스크립트 반영
+- [ ] `web/tests/e2e/` 디렉토리에 Playwright 기반의 Human Gate(대기->승인/반려->재개) E2E 시나리오 테스트 작성
+- [ ] 프론트엔드 UI에 권한 인가 실패(403) 시 안내 모달 출력 및 SSE 실시간 스트리밍 상태 표시등 인디케이터 컴포넌트 추가
