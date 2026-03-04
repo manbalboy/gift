@@ -31,6 +31,7 @@ class Settings:
     github_webhook_secret: str = os.getenv("DEVFLOW_GITHUB_WEBHOOK_SECRET", "")
     generic_webhook_secret: str = os.getenv("DEVFLOW_GENERIC_WEBHOOK_SECRET", "")
     human_gate_approver_token: str = os.getenv("DEVFLOW_HUMAN_GATE_APPROVER_TOKEN", "")
+    human_gate_approver_roles: str = os.getenv("DEVFLOW_HUMAN_GATE_APPROVER_ROLES", "reviewer,admin")
     webhook_allowed_source_ips: str = os.getenv("DEVFLOW_WEBHOOK_ALLOWED_SOURCE_IPS", "*")
 
     lock_backend: str = os.getenv("DEVFLOW_LOCK_BACKEND", "local")
@@ -75,6 +76,11 @@ class Settings:
     @property
     def allowed_webhook_source_ips(self) -> set[str]:
         values = [item.strip() for item in self.webhook_allowed_source_ips.split(",")]
+        return {item for item in values if item}
+
+    @property
+    def allowed_human_gate_roles(self) -> set[str]:
+        values = [item.strip().lower() for item in self.human_gate_approver_roles.split(",")]
         return {item for item in values if item}
 
 

@@ -278,7 +278,6 @@ describe('App', () => {
   });
 
   test('동시성 웹훅 이벤트가 빠르게 유입되어도 상태 갱신 요청이 누락되지 않는다', async () => {
-    jest.useFakeTimers();
     const streamHandlers: { onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void }[] = [];
     (api.subscribeWorkflowRuns as jest.Mock).mockImplementation(
       (
@@ -310,14 +309,11 @@ describe('App', () => {
 
     act(() => {
       for (let i = 0; i < 6; i += 1) {
-        setTimeout(() => {
-          streamHandlers[0]?.onRunStatus({
-            workflow_id: 1,
-            runs: [{ id: 101, status: 'running', updated_at: `2026-03-04T12:00:0${i}Z` }],
-          });
-        }, 0);
+        streamHandlers[0]?.onRunStatus({
+          workflow_id: 1,
+          runs: [{ id: 101, status: 'running', updated_at: `2026-03-04T12:00:0${i}Z` }],
+        });
       }
-      jest.runAllTimers();
     });
 
     await waitFor(() => {

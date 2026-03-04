@@ -7,7 +7,7 @@ import WorkflowBuilder from './components/WorkflowBuilder';
 import { useViewport } from './hooks/useViewport';
 import { LAYER_Z_INDEX } from './constants/layers';
 import { ApiError, api } from './services/api';
-import type { ConstellationData, Workflow, WorkflowRun } from './types';
+import type { ConstellationData, WebhookBlockedEvent, Workflow, WorkflowRun } from './types';
 import { createToastId } from './utils/toastId';
 
 export default function App() {
@@ -24,6 +24,7 @@ export default function App() {
   const [artifactNextOffset, setArtifactNextOffset] = useState(0);
   const [artifactHasMore, setArtifactHasMore] = useState(false);
   const [artifactLoading, setArtifactLoading] = useState(false);
+  const [blockedWebhookEvents, setBlockedWebhookEvents] = useState<WebhookBlockedEvent[]>([]);
   const viewport = useViewport();
   const isMobilePortrait = viewport.isMobile && viewport.isPortrait;
   const activeRunRef = useRef<WorkflowRun | null>(null);
@@ -99,6 +100,31 @@ export default function App() {
 
   useEffect(() => {
     void loadWorkflows();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncBlockedEvents = async () => {
+      try {
+        const items = await api.listWebhookBlockedEvents(20);
+        if (!cancelled) {
+          setBlockedWebhookEvents(items);
+        }
+      } catch {
+        // 보안 로그 패널 동기화 실패는 핵심 실행을 막지 않도록 무시합니다.
+      }
+    };
+
+    void syncBlockedEvents();
+    const timer = window.setInterval(() => {
+      void syncBlockedEvents();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -255,18 +281,18 @@ export default function App() {
         event_type: 'ci.completed',
         workflow_id: 'invalid-id',
       });
-      if (response.warning_code === 'workflow_id_ignored') {
-        enqueueToast('warning', response.warning_message ?? 'workflow_id 예외 데이터가 감지되어 무시되었습니다.');
+      if (response.warning_message) {
+        enqueueToast('warning', response.warning_message);
         return;
       }
-      enqueueToast('warning', 'workflow_id 예외 경고를 확인하지 못했습니다.');
+      enqueueToast('warning', 'workflow_id 검증 오류를 확인하지 못했습니다.');
     } catch (error) {
       if (error instanceof ApiError && error.status === 422) {
         enqueueToast('error', 'workflow_id 검증 오류(422)가 감지되었습니다.');
         return;
       }
       const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '웹훅 검증 요청 실패';
-      enqueueToast('error', `workflow_id 경고 시뮬레이션 실패 (${message})`);
+      enqueueToast('error', `workflow_id 오류 시뮬레이션 실패 (${message})`);
     }
   };
 
@@ -319,6 +345,7 @@ export default function App() {
           <LiveRunConstellation data={constellation} />
           <Dashboard
             run={run}
+            blockedEvents={blockedWebhookEvents}
             onTriggerMalformedWebhook={handleMalformedWebhookSimulation}
             onTriggerInvalidWorkflowWebhook={handleInvalidWorkflowWebhookSimulation}
             onApproveHumanGate={handleApproveHumanGate}

@@ -68,3 +68,13 @@ export type ArtifactChunkResponse = {
   has_more: boolean;
   content: string;
 };
+
+export type WebhookBlockedEvent = {
+  id: string;
+  created_at: string;
+  reason: string;
+  client_ip: string;
+  provider: string;
+  event_type: string;
+  detail: string;
+};

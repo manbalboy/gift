@@ -482,6 +482,41 @@ def test_compensation_commit_scope_isolated_per_node(monkeypatch):
         db.close()
 
 
+def test_compensation_skips_recent_running_nodes():
+    db = SessionLocal()
+    try:
+        workflow = WorkflowDefinition(name="Compensation Recent", description="", graph=PAYLOAD["graph"])
+        db.add(workflow)
+        db.flush()
+
+        workflow_run = WorkflowRun(workflow_id=workflow.id, status="running")
+        db.add(workflow_run)
+        db.flush()
+
+        node = NodeRun(
+            run_id=workflow_run.id,
+            node_id="idea",
+            node_name="Idea",
+            sequence=0,
+            status="running",
+            log="실행 중",
+        )
+        db.add(node)
+        workflow_run.updated_at = datetime.now(timezone.utc)
+        node.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        recovered = workflow_engine.recover_stuck_runs(db, stale_after_seconds=30)
+        assert recovered == 0
+
+        db.refresh(workflow_run)
+        db.refresh(node)
+        assert workflow_run.status == "running"
+        assert node.status == "running"
+    finally:
+        db.close()
+
+
 def test_refresh_run_rolls_back_on_db_lock_timeout(monkeypatch):
     workflow = client.post("/api/workflows", json=PAYLOAD).json()
     run = client.post(f"/api/workflows/{workflow['id']}/runs").json()

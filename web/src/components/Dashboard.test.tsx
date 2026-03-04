@@ -63,9 +63,33 @@ describe('Dashboard', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '파싱 오류 시뮬레이션' }));
-    fireEvent.click(screen.getByRole('button', { name: 'workflow_id 경고 시뮬레이션' }));
+    fireEvent.click(screen.getByRole('button', { name: 'workflow_id 오류 시뮬레이션' }));
 
     expect(onTriggerMalformedWebhook).toHaveBeenCalledTimes(1);
     expect(onTriggerInvalidWorkflowWebhook).toHaveBeenCalledTimes(1);
+  });
+
+  test('Webhook 차단 로그를 표시한다', () => {
+    render(
+      <Dashboard
+        run={runFixture}
+        blockedEvents={[
+          {
+            id: 'evt-1',
+            created_at: '2026-03-04T10:03:00Z',
+            reason: 'invalid_signature',
+            client_ip: '203.0.113.11',
+            provider: 'github',
+            event_type: 'pull_request',
+            detail: 'invalid github signature',
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Webhook 차단 로그')).toBeInTheDocument();
+    expect(screen.getByText('invalid_signature')).toBeInTheDocument();
+    expect(screen.getByText('invalid github signature')).toBeInTheDocument();
+    expect(screen.getByText('github · pull_request · 203.0.113.11')).toBeInTheDocument();
   });
 });

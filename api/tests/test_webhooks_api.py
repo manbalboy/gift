@@ -123,6 +123,13 @@ def test_dev_integration_webhook_rejects_generic_invalid_secret(monkeypatch):
     assert response.status_code == 401
     assert response.json()["detail"] == "invalid webhook secret"
 
+    blocked = client.get("/api/webhooks/blocked-events?limit=1")
+    assert blocked.status_code == 200
+    events = blocked.json()
+    assert len(events) == 1
+    assert events[0]["reason"] == "invalid_secret"
+    assert events[0]["detail"] == "invalid webhook secret"
+
 
 def test_dev_integration_webhook_rejects_unallowed_source_ip(monkeypatch):
     monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
@@ -136,6 +143,13 @@ def test_dev_integration_webhook_rejects_unallowed_source_ip(monkeypatch):
 
     assert response.status_code == 403
     assert response.json()["detail"] == "forbidden webhook source ip"
+
+    blocked = client.get("/api/webhooks/blocked-events")
+    assert blocked.status_code == 200
+    events = blocked.json()
+    assert len(events) >= 1
+    assert events[0]["reason"] == "ip_not_allowed"
+    assert events[0]["detail"] == "forbidden webhook source ip"
 
 
 def test_dev_integration_webhook_allows_source_ip_from_trusted_forwarded_for(monkeypatch):
@@ -288,7 +302,7 @@ def test_dev_integration_webhook_falls_back_when_forwarded_for_is_malformed(monk
     assert second.status_code == 429
 
 
-def test_dev_integration_webhook_logs_invalid_workflow_id(monkeypatch, caplog):
+def test_dev_integration_webhook_rejects_invalid_workflow_id(monkeypatch, caplog):
     monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
     caplog.set_level("WARNING")
 
@@ -298,12 +312,9 @@ def test_dev_integration_webhook_logs_invalid_workflow_id(monkeypatch, caplog):
         json={"provider": "jenkins", "event_type": "ci.completed", "workflow_id": [1, 2]},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["workflow_id"] is None
-    assert body["warning_code"] == "workflow_id_ignored"
-    assert body["warning_message"] == "workflow_id가 유효한 양의 정수가 아니어서 무시되었습니다."
-    assert "Ignored webhook workflow_id due to parse failure" in caplog.text
+    assert response.status_code == 422
+    assert response.json()["detail"] == "workflow_id must be a positive integer"
+    assert "Rejected webhook workflow_id due to parse failure" in caplog.text
 
 
 def test_dev_integration_webhook_parses_string_workflow_id(monkeypatch):
@@ -324,7 +335,7 @@ def test_dev_integration_webhook_parses_string_workflow_id(monkeypatch):
 
 
 @pytest.mark.parametrize("invalid_workflow_id", [-1, 1.0, "-1", "1.0", 0, "0"])
-def test_dev_integration_webhook_ignores_invalid_workflow_id_edge_cases(monkeypatch, invalid_workflow_id):
+def test_dev_integration_webhook_rejects_invalid_workflow_id_edge_cases(monkeypatch, invalid_workflow_id):
     monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
 
     response = client.post(
@@ -333,11 +344,8 @@ def test_dev_integration_webhook_ignores_invalid_workflow_id_edge_cases(monkeypa
         json={"provider": "jenkins", "event_type": "ci.completed", "workflow_id": invalid_workflow_id},
     )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["workflow_id"] is None
-    assert body["warning_code"] == "workflow_id_ignored"
-    assert body["warning_message"] == "workflow_id가 유효한 양의 정수가 아니어서 무시되었습니다."
+    assert response.status_code == 422
+    assert response.json()["detail"] == "workflow_id must be a positive integer"
 
 
 def test_dev_integration_webhook_invalid_json_is_422(monkeypatch):

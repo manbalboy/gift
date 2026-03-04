@@ -151,6 +151,22 @@ def test_workflow_create_rejects_cycle_graph():
     assert response.status_code == 422
 
 
+def test_workflow_create_rejects_multiple_nodes_without_edge():
+    payload = {
+        "name": "No Edge",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "plan", "type": "task", "label": "Plan"},
+            ],
+            "edges": [],
+        },
+    }
+    response = client.post("/api/workflows", json=payload)
+    assert response.status_code == 422
+
+
 def test_workflow_run_rejects_unsafe_node_id_with_400():
     payload = {
         "name": "Unsafe Node",
@@ -293,6 +309,7 @@ def test_validate_workflow_graph_endpoint():
 
 def test_human_gate_approve_requires_token(monkeypatch):
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
     payload = {
         "name": "Human Gate Flow",
         "description": "",
@@ -332,9 +349,24 @@ def test_human_gate_approve_requires_token(monkeypatch):
     assert invalid.status_code == 403
     assert invalid.json()["detail"] == "invalid approver token"
 
+    missing_role = client.post(
+        f"/api/runs/{run_id}/approve?node_id=review",
+        headers={"X-Approver-Token": "secret-approver"},
+    )
+    assert missing_role.status_code == 403
+    assert missing_role.json()["detail"] == "missing approver role"
+
+    insufficient_role = client.post(
+        f"/api/runs/{run_id}/approve?node_id=review",
+        headers={"X-Approver-Token": "secret-approver", "X-Approver-Role": "developer"},
+    )
+    assert insufficient_role.status_code == 403
+    assert insufficient_role.json()["detail"] == "insufficient approver role"
+
 
 def test_human_gate_approve_after_long_pending_resumes_run(monkeypatch):
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
     payload = {
         "name": "Human Gate Resume",
         "description": "",
@@ -369,7 +401,7 @@ def test_human_gate_approve_after_long_pending_resumes_run(monkeypatch):
 
     approved = client.post(
         f"/api/runs/{run_id}/approve?node_id=review",
-        headers={"X-Approver-Token": "secret-approver"},
+        headers={"X-Approver-Token": "secret-approver", "X-Approver-Role": "reviewer"},
     )
     assert approved.status_code == 200
 

@@ -37,6 +37,9 @@ class WorkflowGraph(BaseModel):
             adjacency[edge.source].append(edge.target)
             indegree[edge.target] += 1
 
+        if len(self.nodes) > 1 and len(self.edges) == 0:
+            raise ValueError("workflow graph with multiple nodes requires at least one edge")
+
         queue = [node_id for node_id, degree in indegree.items() if degree == 0]
         visited = 0
         while queue:

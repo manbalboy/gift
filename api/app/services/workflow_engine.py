@@ -179,20 +179,29 @@ class WorkflowEngine:
             if isinstance(raw_edges, list):
                 edges = [edge for edge in raw_edges if isinstance(edge, dict)]
 
-        valid_edge_count = 0
         for edge in edges:
             source = edge.get("source")
             target = edge.get("target")
             if source in node_ids and target in node_ids:
                 predecessors[target].add(source)
-                valid_edge_count += 1
-
-        if valid_edge_count == 0 and len(node_runs) > 1:
-            ordered = sorted(node_runs, key=lambda item: item.sequence)
-            for idx in range(1, len(ordered)):
-                predecessors[ordered[idx].node_id].add(ordered[idx - 1].node_id)
 
         return predecessors
+
+    def health_snapshot(self) -> dict[str, object]:
+        with self._engine_guard:
+            worker_count = len(self._workers)
+            alive_workers = sum(1 for worker in self._workers.values() if worker.is_alive())
+            tracked_cancels = len(self._cancel_events)
+            pending_approval_runs = len(self._approval_events)
+            pending_approval_nodes = sum(len(nodes) for nodes in self._approval_events.values())
+        return {
+            "workers": {"tracked": worker_count, "alive": alive_workers},
+            "runtime_state": {
+                "cancel_events": tracked_cancels,
+                "approval_runs": pending_approval_runs,
+                "approval_nodes": pending_approval_nodes,
+            },
+        }
 
     def _sync_run_status(self, run: WorkflowRun, node_runs: list[NodeRun]) -> str:
         if run.status in {"done", "failed", "cancelled"}:

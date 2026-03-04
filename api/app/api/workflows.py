@@ -247,6 +247,10 @@ def _extract_approver_token(request: Request) -> str:
     return request.headers.get("X-Approver-Token", "").strip()
 
 
+def _extract_approver_role(request: Request) -> str:
+    return request.headers.get("X-Approver-Role", "").strip().lower()
+
+
 @run_router.post("/{run_id}/approve", response_model=WorkflowRunOut)
 def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
     configured_token = settings.human_gate_approver_token.strip()
@@ -258,6 +262,11 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
         raise HTTPException(status_code=401, detail="missing approver token")
     if not hmac.compare_digest(provided_token, configured_token):
         raise HTTPException(status_code=403, detail="invalid approver token")
+    approver_role = _extract_approver_role(request)
+    if not approver_role:
+        raise HTTPException(status_code=403, detail="missing approver role")
+    if approver_role not in settings.allowed_human_gate_roles:
+        raise HTTPException(status_code=403, detail="insufficient approver role")
 
     run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
     if not run:

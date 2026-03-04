@@ -109,12 +109,14 @@ def _docker_health_snapshot() -> dict[str, object]:
 def health():
     limiter_health = workflows_api.reconnect_rate_limiter.health_snapshot()
     agent_runner_health = workflow_engine.agent_runner.health_snapshot()
+    workflow_health = workflow_engine.health_snapshot()
     docker_health = _docker_health_snapshot()
     return {
         "status": "ok",
         "docker_available": docker_health["available"],
         "docker_health": docker_health,
         "agent_runner": agent_runner_health,
+        "workflow_engine": workflow_health,
         "sse_rate_limiter": limiter_health,
     }
 

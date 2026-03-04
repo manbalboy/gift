@@ -2,7 +2,11 @@ import hashlib
 import hmac
 import json
 import logging
+from collections import deque
+from datetime import datetime, timezone
 from ipaddress import ip_address
+from threading import Lock
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -11,13 +15,38 @@ from app.core.config import settings
 from app.api.workflows import engine
 from app.db.session import get_db
 from app.models.workflow import WorkflowDefinition
-from app.schemas.webhook import WebhookEventOut
+from app.schemas.webhook import WebhookBlockedEventOut, WebhookEventOut
 from app.services.rate_limiter import LocalSlidingWindowRateLimiter
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 MAX_WEBHOOK_PAYLOAD_BYTES = 5 * 1024 * 1024
+MAX_BLOCKED_EVENTS = 100
 webhook_rate_limiter = LocalSlidingWindowRateLimiter()
+blocked_events: deque[dict] = deque(maxlen=MAX_BLOCKED_EVENTS)
+blocked_events_lock = Lock()
 logger = logging.getLogger(__name__)
+
+
+def _record_blocked_event(
+    *,
+    reason: str,
+    client_ip: str,
+    provider: str,
+    event_type: str,
+    detail: str,
+) -> None:
+    with blocked_events_lock:
+        blocked_events.appendleft(
+            {
+                "id": str(uuid.uuid4()),
+                "created_at": datetime.now(timezone.utc),
+                "reason": reason,
+                "client_ip": client_ip,
+                "provider": provider or "unknown",
+                "event_type": event_type or "unknown",
+                "detail": detail,
+            }
+        )
 
 
 def _extract_client_key(request: Request) -> str:
@@ -78,6 +107,15 @@ def _parse_workflow_id(value: object) -> int | None:
 
 def reset_webhook_limiter_for_tests() -> None:
     webhook_rate_limiter.reset()
+    with blocked_events_lock:
+        blocked_events.clear()
+
+
+@router.get("/blocked-events", response_model=list[WebhookBlockedEventOut])
+def list_blocked_webhook_events(limit: int = 20):
+    safe_limit = max(1, min(limit, 50))
+    with blocked_events_lock:
+        return list(blocked_events)[:safe_limit]
 
 
 def _normalize_github_event(event_name: str, payload: dict) -> tuple[str, bool, str]:
@@ -127,7 +165,16 @@ def _verify_github_signature(raw_body: bytes, signature_header: str, secret: str
 @router.post("/dev-integration", response_model=WebhookEventOut)
 async def receive_dev_integration_webhook(request: Request, db: Session = Depends(get_db)):
     client_key = _extract_client_key(request)
+    provider_hint = request.headers.get("X-GitHub-Event") and "github" or "generic"
+    event_hint = request.headers.get("X-GitHub-Event", "unknown")
     if not _is_allowed_source_ip(client_key):
+        _record_blocked_event(
+            reason="ip_not_allowed",
+            client_ip=client_key,
+            provider=provider_hint,
+            event_type=event_hint,
+            detail="forbidden webhook source ip",
+        )
         raise HTTPException(status_code=403, detail="forbidden webhook source ip")
 
     allowed = webhook_rate_limiter.allow(
@@ -136,6 +183,13 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
         window_seconds=max(0.2, float(settings.webhook_rate_limit_window_seconds)),
     )
     if not allowed:
+        _record_blocked_event(
+            reason="rate_limited",
+            client_ip=client_key,
+            provider=provider_hint,
+            event_type=event_hint,
+            detail="too many webhook requests",
+        )
         raise HTTPException(status_code=429, detail="too many webhook requests")
 
     content_length = request.headers.get("content-length")
@@ -164,27 +218,67 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
     if github_event:
         github_secret = settings.github_webhook_secret.strip()
         if not github_secret:
+            _record_blocked_event(
+                reason="missing_server_secret",
+                client_ip=client_key,
+                provider="github",
+                event_type=github_event,
+                detail="github webhook secret is not configured",
+            )
             raise HTTPException(status_code=403, detail="github webhook secret is not configured")
         signature = request.headers.get("X-Hub-Signature-256", "").strip()
         if not signature or not signature.startswith("sha256="):
+            _record_blocked_event(
+                reason="missing_signature",
+                client_ip=client_key,
+                provider="github",
+                event_type=github_event,
+                detail="missing github signature",
+            )
             raise HTTPException(status_code=401, detail="missing github signature")
         if not _verify_github_signature(raw_body=raw_body, signature_header=signature, secret=github_secret):
+            _record_blocked_event(
+                reason="invalid_signature",
+                client_ip=client_key,
+                provider="github",
+                event_type=github_event,
+                detail="invalid github signature",
+            )
             raise HTTPException(status_code=401, detail="invalid github signature")
         category, should_trigger, normalized_event = _normalize_github_event(github_event, payload)
     else:
         generic_secret = settings.generic_webhook_secret.strip()
         if not generic_secret:
+            _record_blocked_event(
+                reason="missing_server_secret",
+                client_ip=client_key,
+                provider="generic",
+                event_type="unknown",
+                detail="generic webhook secret is not configured",
+            )
             raise HTTPException(status_code=403, detail="generic webhook secret is not configured")
         provided_secret = _extract_shared_secret(request)
         if not provided_secret:
+            _record_blocked_event(
+                reason="missing_secret",
+                client_ip=client_key,
+                provider="generic",
+                event_type="unknown",
+                detail="missing webhook secret",
+            )
             raise HTTPException(status_code=401, detail="missing webhook secret")
         if not hmac.compare_digest(provided_secret, generic_secret):
+            _record_blocked_event(
+                reason="invalid_secret",
+                client_ip=client_key,
+                provider="generic",
+                event_type="unknown",
+                detail="invalid webhook secret",
+            )
             raise HTTPException(status_code=401, detail="invalid webhook secret")
         category, should_trigger, normalized_event = _normalize_generic_event(payload)
 
     workflow_id_raw = payload.get("workflow_id")
-    workflow_warning_code: str | None = None
-    workflow_warning_message: str | None = None
     if type(workflow_id_raw) is bool:
         logger.warning(
             "Rejected webhook workflow_id with boolean type: provider=%s event_type=%s",
@@ -194,15 +288,14 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
         raise HTTPException(status_code=422, detail="workflow_id must be an integer")
     workflow_id = _parse_workflow_id(workflow_id_raw)
     if workflow_id_raw is not None and workflow_id is None:
-        workflow_warning_code = "workflow_id_ignored"
-        workflow_warning_message = "workflow_id가 유효한 양의 정수가 아니어서 무시되었습니다."
         logger.warning(
-            "Ignored webhook workflow_id due to parse failure: provider=%s event_type=%s raw_type=%s raw_value=%r",
+            "Rejected webhook workflow_id due to parse failure: provider=%s event_type=%s raw_type=%s raw_value=%r",
             provider,
             normalized_event,
             type(workflow_id_raw).__name__,
             workflow_id_raw,
         )
+        raise HTTPException(status_code=422, detail="workflow_id must be a positive integer")
 
     triggered_run_id: int | None = None
     if should_trigger and workflow_id is not None:
@@ -217,8 +310,6 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
         category=category,
         event_type=normalized_event,
         workflow_id=workflow_id,
-        warning_code=workflow_warning_code,
-        warning_message=workflow_warning_message,
         triggered=triggered_run_id is not None,
         triggered_run_id=triggered_run_id,
     )

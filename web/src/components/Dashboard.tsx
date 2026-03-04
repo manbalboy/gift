@@ -1,5 +1,5 @@
 import StatusBadge from './StatusBadge';
-import type { WorkflowRun } from '../types';
+import type { WebhookBlockedEvent, WorkflowRun } from '../types';
 
 function toMs(value: string): number {
   const parsed = Date.parse(value);
@@ -16,12 +16,14 @@ function formatDuration(totalMs: number): string {
 
 export default function Dashboard({
   run,
+  blockedEvents,
   onTriggerMalformedWebhook,
   onTriggerInvalidWorkflowWebhook,
   onApproveHumanGate,
   onCancelRun,
 }: {
   run: WorkflowRun | null;
+  blockedEvents?: WebhookBlockedEvent[];
   onTriggerMalformedWebhook?: () => Promise<void>;
   onTriggerInvalidWorkflowWebhook?: () => Promise<void>;
   onApproveHumanGate?: (nodeId: string) => Promise<void>;
@@ -48,6 +50,7 @@ export default function Dashboard({
 
   const completionRate = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
   const pendingApproval = nodeRuns.find((node) => node.status === 'approval_pending') ?? null;
+  const recentBlockedEvents = blockedEvents ?? [];
 
   return (
     <section className="card">
@@ -135,7 +138,7 @@ export default function Dashboard({
       </section>
       <section className="webhook-actions" aria-label="webhook-feedback-actions">
         <h3>Webhook 피드백 검증</h3>
-        <p>파싱 오류(422)와 workflow_id 예외 경고를 즉시 확인합니다.</p>
+        <p>파싱 오류(422)와 workflow_id 검증 오류를 즉시 확인합니다.</p>
         <div className="webhook-actions-row">
           <button
             className="btn btn-ghost"
@@ -153,9 +156,31 @@ export default function Dashboard({
               void onTriggerInvalidWorkflowWebhook?.();
             }}
           >
-            workflow_id 경고 시뮬레이션
+            workflow_id 오류 시뮬레이션
           </button>
         </div>
+      </section>
+      <section className="webhook-actions" aria-label="webhook-blocked-events">
+        <h3>Webhook 차단 로그</h3>
+        <p>인가되지 않은 접근 또는 서명 오류를 실시간으로 확인합니다.</p>
+        {recentBlockedEvents.length === 0 ? (
+          <p className="empty">최근 차단 이벤트가 없습니다.</p>
+        ) : (
+          <div className="blocked-event-list">
+            {recentBlockedEvents.slice(0, 6).map((event) => (
+              <article key={event.id} className="blocked-event-item">
+                <div className="blocked-event-head">
+                  <strong className="mono">{event.reason}</strong>
+                  <span className="mono">{new Date(event.created_at).toLocaleTimeString('ko-KR', { hour12: false })}</span>
+                </div>
+                <p className="mono">{event.detail}</p>
+                <p className="mono">
+                  {event.provider} · {event.event_type} · {event.client_ip}
+                </p>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </section>
   );

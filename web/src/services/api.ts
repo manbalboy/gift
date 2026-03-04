@@ -1,6 +1,7 @@
 import type {
   ArtifactChunkResponse,
   ConstellationData,
+  WebhookBlockedEvent,
   Workflow,
   WorkflowGraphValidationResult,
   WorkflowRun,
@@ -11,6 +12,7 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3101/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const WEBHOOK_SECRET = import.meta.env.VITE_WEBHOOK_SECRET ?? '';
 const HUMAN_GATE_APPROVER_TOKEN = import.meta.env.VITE_HUMAN_GATE_APPROVER_TOKEN ?? '';
+const HUMAN_GATE_APPROVER_ROLE = import.meta.env.VITE_HUMAN_GATE_APPROVER_ROLE ?? 'reviewer';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -80,7 +82,9 @@ export const api = {
   approveRunNode: (runId: number, nodeId: string) =>
     request<WorkflowRun>(`/runs/${runId}/approve?node_id=${encodeURIComponent(nodeId)}`, {
       method: 'POST',
-      headers: HUMAN_GATE_APPROVER_TOKEN ? { 'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN } : undefined,
+      headers: HUMAN_GATE_APPROVER_TOKEN
+        ? { 'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN, 'X-Approver-Role': HUMAN_GATE_APPROVER_ROLE }
+        : undefined,
     }),
   cancelRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/cancel`, { method: 'POST' }),
   getArtifactChunk: (runId: number, nodeId: string, offset = 0, limit = 16384) =>
@@ -135,4 +139,6 @@ export const api = {
     };
     return () => stream.close();
   },
+  listWebhookBlockedEvents: (limit = 20) =>
+    request<WebhookBlockedEvent[]>(`/webhooks/blocked-events?limit=${Math.max(1, Math.min(limit, 50))}`),
 };
