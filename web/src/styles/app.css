@@ -293,6 +293,25 @@ input {
   height: 240px;
 }
 
+.constellation-link {
+  transition: stroke 180ms ease;
+}
+
+.constellation-link-running {
+  animation: link-pulse 1.2s linear infinite;
+}
+
+@keyframes link-pulse {
+  0% {
+    stroke-dasharray: 2 8;
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dasharray: 2 8;
+    stroke-dashoffset: -20;
+  }
+}
+
 .constellation-label {
   fill: var(--color-text-secondary);
   font-size: 12px;
@@ -350,6 +369,12 @@ input {
 
 .mobile-only {
   display: inline-flex;
+}
+
+@media (max-width: 767px) {
+  .top-actions .btn-primary {
+    height: 44px;
+  }
 }
 
 @media (min-width: 768px) {

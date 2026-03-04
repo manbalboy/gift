@@ -25,13 +25,15 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:7000",
-        "http://127.0.0.1:7000",
+        "http://localhost:3100",
+        "http://127.0.0.1:3100",
+        "http://localhost:3101",
+        "http://127.0.0.1:3101",
         "https://manbalboy.com",
         "http://manbalboy.com",
     ],
     allow_origin_regex=(
-        r"^https?://(?:(?:localhost|127\.0\.0\.1):70\d{2}|(?:[A-Za-z0-9-]+\.)*manbalboy\.com(?::70\d{2})?)$"
+        r"^https?://(?:(?:localhost|127\.0\.0\.1):31\d{2}|(?:[A-Za-z0-9-]+\.)*manbalboy\.com(?::31\d{2})?)$"
     ),
     allow_credentials=True,
     allow_methods=["*"],

@@ -7,6 +7,7 @@ class WorkflowNode(BaseModel):
     id: str
     type: str = 'task'
     label: str
+    command: str | None = None
 
 
 class WorkflowEdge(BaseModel):

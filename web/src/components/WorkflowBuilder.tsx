@@ -25,7 +25,7 @@ function convertToFlow(workflow: Workflow) {
   const nodes: Node[] = workflow.graph.nodes.map((n, idx) => ({
     id: n.id,
     position: { x: idx * 180, y: 70 + (idx % 2) * 50 },
-    data: { label: n.label },
+    data: { label: n.label, command: n.command ?? '' },
     draggable: true,
   }));
 
@@ -50,7 +50,7 @@ export default function WorkflowBuilder({
       nodes: baseNodes.map((node, idx) => ({
         id: node.id,
         position: { x: idx * 180, y: 100 },
-        data: { label: node.label },
+        data: { label: node.label, command: '' },
       })),
       edges: [
         { id: 'e1', source: 'idea', target: 'plan' },
@@ -87,6 +87,11 @@ export default function WorkflowBuilder({
         edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
       },
     };
+    payload.graph.nodes = payload.graph.nodes.map((node) => {
+      const flowNode = nodes.find((item) => item.id === node.id);
+      const command = String(flowNode?.data?.command ?? '').trim();
+      return command ? { ...node, command } : node;
+    });
     await onSave(payload, workflow?.id);
   };
 

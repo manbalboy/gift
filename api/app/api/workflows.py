@@ -1,4 +1,9 @@
+import json
+import time
+from collections.abc import Iterator
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -11,6 +16,42 @@ from app.services.workspace import InvalidNodeIdError
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 run_router = APIRouter(prefix="/runs", tags=["runs"])
 engine = WorkflowEngine()
+active_stream_connections = 0
+
+
+def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks: int) -> Iterator[str]:
+    global active_stream_connections
+    active_stream_connections += 1
+    try:
+        last_data = ""
+        tick_limit = max(1, min(max_ticks, 600))
+        for _ in range(tick_limit):
+            runs = (
+                db.query(WorkflowRun)
+                .filter(WorkflowRun.workflow_id == workflow_id)
+                .order_by(WorkflowRun.id.desc())
+                .limit(20)
+                .all()
+            )
+            payload = {
+                "workflow_id": workflow_id,
+                "runs": [
+                    {
+                        "id": run.id,
+                        "status": run.status,
+                        "updated_at": run.updated_at.isoformat(),
+                    }
+                    for run in runs
+                ],
+            }
+            encoded = json.dumps(payload, ensure_ascii=False)
+            if encoded != last_data:
+                last_data = encoded
+                yield f"event: run_status\ndata: {encoded}\n\n"
+            time.sleep(1.0)
+        yield "event: end\ndata: stream closed\n\n"
+    finally:
+        active_stream_connections = max(0, active_stream_connections - 1)
 
 
 @router.get("", response_model=list[WorkflowOut])
@@ -67,6 +108,19 @@ def create_workflow_run(workflow_id: int, db: Session = Depends(get_db)):
 def list_workflow_runs(workflow_id: int, db: Session = Depends(get_db)):
     runs = db.query(WorkflowRun).filter(WorkflowRun.workflow_id == workflow_id).order_by(WorkflowRun.id.desc()).all()
     return [engine.refresh_run(db, run) for run in runs]
+
+
+@router.get("/{workflow_id}/runs/stream")
+def stream_workflow_runs(workflow_id: int, max_ticks: int = 180, db: Session = Depends(get_db)):
+    workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
+    if not workflow:
+        raise HTTPException(status_code=404, detail="workflow not found")
+
+    return StreamingResponse(
+        _stream_workflow_runs_events(db=db, workflow_id=workflow_id, max_ticks=max_ticks),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @run_router.get("/{run_id}", response_model=WorkflowRunOut)

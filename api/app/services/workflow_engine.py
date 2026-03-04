@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from threading import Lock
+import logging
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 from app.models.workflow import NodeRun, WorkflowDefinition, WorkflowRun
 from app.schemas.agent import AgentTaskRequest
 from app.services.agent_runner import AgentRunner
+from app.services.lock_provider import LockProviderFactory
 from app.services.workspace import InvalidNodeIdError, WorkspaceService, is_safe_node_id
 
 
 DEFAULT_COMPENSATION_TIMEOUT_SECONDS = 120
+logger = logging.getLogger(__name__)
 
 
 def _as_utc(dt: datetime) -> datetime:
@@ -19,20 +21,34 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _extract_node_command(graph: dict | None, node_id: str) -> str | None:
+    if not isinstance(graph, dict):
+        return None
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list):
+        return None
+
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("id") != node_id:
+            continue
+
+        direct = node.get("command")
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+
+        data = node.get("data")
+        if isinstance(data, dict):
+            nested = data.get("command")
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+    return None
+
+
 class WorkflowEngine:
     def __init__(self) -> None:
         self.workspace = WorkspaceService()
         self.agent_runner = AgentRunner()
-        self._lock_guard = Lock()
-        self._run_locks: dict[int, Lock] = {}
-
-    def _get_run_lock(self, run_id: int) -> Lock:
-        with self._lock_guard:
-            lock = self._run_locks.get(run_id)
-            if lock is None:
-                lock = Lock()
-                self._run_locks[run_id] = lock
-            return lock
+        self.lock_provider = LockProviderFactory.create()
 
     def recover_stuck_runs(self, db: Session, stale_after_seconds: int = DEFAULT_COMPENSATION_TIMEOUT_SECONDS) -> int:
         now = datetime.now(timezone.utc)
@@ -46,27 +62,27 @@ class WorkflowEngine:
             .all()
         )
 
-        impacted_run_ids: set[int] = set()
         recovered = 0
         for node in stuck_nodes:
             if _as_utc(node.updated_at) > cutoff:
                 continue
-            node.status = "failed"
-            previous = (node.log or "").strip()
-            prefix = f"[compensation] stale running node recovered at {now.isoformat()}"
-            node.log = f"{prefix}\n{previous}".strip()
-            impacted_run_ids.add(node.run_id)
-            recovered += 1
+            try:
+                locked_node = db.query(NodeRun).filter(NodeRun.id == node.id).with_for_update().first()
+                if not locked_node or locked_node.status != "running" or _as_utc(locked_node.updated_at) > cutoff:
+                    continue
 
-        if impacted_run_ids:
-            runs = db.query(WorkflowRun).filter(WorkflowRun.id.in_(impacted_run_ids)).all()
-            for run in runs:
-                run.status = "failed"
+                workflow_run = db.query(WorkflowRun).filter(WorkflowRun.id == locked_node.run_id).with_for_update().first()
+                if workflow_run and workflow_run.status == "running":
+                    workflow_run.status = "failed"
 
-        if recovered:
-            db.commit()
-        else:
-            db.rollback()
+                locked_node.status = "failed"
+                previous = (locked_node.log or "").strip()
+                prefix = f"[compensation] stale running node recovered at {now.isoformat()}"
+                locked_node.log = f"{prefix}\n{previous}".strip()
+                db.commit()
+                recovered += 1
+            except SQLAlchemyError:
+                db.rollback()
         return recovered
 
     def create_run(self, db: Session, workflow: WorkflowDefinition) -> WorkflowRun:
@@ -107,7 +123,7 @@ class WorkflowEngine:
         )
 
     def refresh_run(self, db: Session, run: WorkflowRun) -> WorkflowRun:
-        run_lock = self._get_run_lock(run.id)
+        run_lock = self.lock_provider.get_run_lock(run.id)
         if not run_lock.acquire(blocking=False):
             latest = db.query(WorkflowRun).filter(WorkflowRun.id == run.id).first()
             return latest or run
@@ -147,15 +163,22 @@ class WorkflowEngine:
             node_id = queued_node.node_id
             node_name = queued_node.node_name
             run_id = locked_run.id
+            workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == locked_run.workflow_id).first()
+            command = _extract_node_command(workflow.graph if workflow else None, node_id)
             db.commit()
 
+            payload: dict[str, str | int] = {"run_id": run_id}
+            if command:
+                payload["command"] = command
             result = self.agent_runner.run(
                 AgentTaskRequest(
                     node_id=node_id,
                     node_name=node_name,
-                    payload={"run_id": run_id},
+                    payload=payload,
                 )
             )
+            if not run_lock.extend():
+                logger.warning("run lock heartbeat failed: run_id=%s", run_id)
 
             locked_run = self._load_locked_run(db, run_id)
             if not locked_run:

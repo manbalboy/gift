@@ -2,6 +2,7 @@ export type WorkflowNode = {
   id: string;
   type: string;
   label: string;
+  command?: string;
 };
 
 export type WorkflowEdge = {

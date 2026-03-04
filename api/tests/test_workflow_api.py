@@ -1,3 +1,7 @@
+import itertools
+
+from app.api import workflows as workflows_api
+
 from .conftest import client
 
 
@@ -32,23 +36,23 @@ def test_workflow_create_and_get():
     assert fetched.json()["name"] == PAYLOAD["name"]
 
 
-def test_cors_allows_manbalboy_subdomain_with_70xx_port():
+def test_cors_allows_manbalboy_subdomain_with_31xx_port():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://ssh.manbalboy.com:7006",
+            "Origin": "http://ssh.manbalboy.com:3106",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:7006"
+    assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:3106"
 
 
-def test_cors_blocks_manbalboy_outside_70xx_port():
+def test_cors_blocks_manbalboy_outside_31xx_port():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://ssh.manbalboy.com:7100",
+            "Origin": "http://ssh.manbalboy.com:3200",
             "Access-Control-Request-Method": "GET",
         },
     )
@@ -59,7 +63,7 @@ def test_cors_blocks_non_manbalboy_domain():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://evil-example.com:7000",
+            "Origin": "http://evil-example.com:3100",
             "Access-Control-Request-Method": "GET",
         },
     )
@@ -70,23 +74,23 @@ def test_cors_blocks_similar_lookalike_domain():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://amanbalboy.com:7001",
+            "Origin": "http://amanbalboy.com:3101",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert response.status_code == 400
 
 
-def test_cors_allows_localhost_70xx():
+def test_cors_allows_localhost_31xx():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://localhost:7008",
+            "Origin": "http://localhost:3108",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "http://localhost:7008"
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3108"
 
 
 def test_workflow_create_rejects_empty_graph():
@@ -129,3 +133,34 @@ def test_workflow_run_rejects_unsafe_node_id_with_400():
     workflow_id = created.json()["id"]
     run = client.post(f"/api/workflows/{workflow_id}/runs")
     assert run.status_code == 400
+
+
+def test_workflow_runs_stream_endpoint_returns_sse(monkeypatch):
+    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    response = client.get(f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert f'"workflow_id": {workflow_id}' in response.text
+
+
+def test_workflow_runs_stream_disconnect_releases_connection(monkeypatch):
+    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    workflows_api.active_stream_connections = 0
+
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    with client.stream("GET", f"/api/workflows/{workflow_id}/runs/stream?max_ticks=5") as response:
+        assert response.status_code == 200
+        iterator = response.iter_lines()
+        first_line = next(itertools.islice(iterator, 1))
+        if isinstance(first_line, bytes):
+            first_line = first_line.decode("utf-8")
+        assert "event: run_status" in first_line
+
+    assert workflows_api.active_stream_connections == 0

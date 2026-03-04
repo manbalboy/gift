@@ -14,9 +14,9 @@ type Props = {
 };
 
 export default function LiveRunConstellation({ data }: Props) {
-  const { points, linkMap } = useMemo(() => {
+  const { points, pointById, linkMap } = useMemo(() => {
     if (!data || data.nodes.length === 0) {
-      return { points: [], linkMap: new Set<string>() };
+      return { points: [], pointById: new Map<string, { status: string }>(), linkMap: new Set<string>() };
     }
 
     const cx = 280;
@@ -29,8 +29,9 @@ export default function LiveRunConstellation({ data }: Props) {
       y: cy + Math.sin(idx * step - Math.PI / 2) * radius,
     }));
 
+    const byId = new Map(p.map((point) => [point.id, point]));
     const map = new Set<string>(data.links.map((link) => `${link.source}:${link.target}`));
-    return { points: p, linkMap: map };
+    return { points: p, pointById: byId, linkMap: map };
   }, [data]);
 
   return (
@@ -52,7 +53,10 @@ export default function LiveRunConstellation({ data }: Props) {
           const next = points[idx + 1];
           if (!next) return null;
           const key = `${point.id}:${next.id}`;
-          const active = linkMap.has(key);
+          const sourceStatus = pointById.get(point.id)?.status ?? "queued";
+          const targetStatus = pointById.get(next.id)?.status ?? "queued";
+          const active = linkMap.has(key) && (targetStatus !== "queued" || sourceStatus !== "queued");
+          const isRunning = sourceStatus === "running" || targetStatus === "running";
           return (
             <line
               key={key}
@@ -60,6 +64,7 @@ export default function LiveRunConstellation({ data }: Props) {
               y1={point.y}
               x2={next.x}
               y2={next.y}
+              className={isRunning ? "constellation-link-running" : "constellation-link"}
               stroke={active ? statusColor[next.status] ?? '#7E8AA3' : '#27324A'}
               strokeWidth={active ? 2.4 : 1.2}
             />

@@ -91,4 +91,25 @@ describe('WorkflowBuilder', () => {
     expect(screen.getByText('running')).toBeInTheDocument();
     expect(screen.getByText('failed')).toBeInTheDocument();
   });
+
+  test('모바일 세로 전환 시 편집이 비활성화되고 안내가 표시된다', () => {
+    const { rerender } = render(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
+
+    expect(screen.getByTestId('minimap')).toBeInTheDocument();
+    expect(screen.getByTestId('edge-count')).toHaveTextContent('1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'connect' }));
+    expect(screen.getByTestId('edge-count')).toHaveTextContent('2');
+
+    rerender(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly />);
+
+    expect(screen.queryByTestId('minimap')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('세로 모바일에서는 모니터링을 우선 제공하며 편집은 가로/태블릿 이상에서 권장됩니다.'),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('edge-count')).toHaveTextContent('2');
+
+    fireEvent.click(screen.getByRole('button', { name: 'connect' }));
+    expect(screen.getByTestId('edge-count')).toHaveTextContent('2');
+  });
 });
