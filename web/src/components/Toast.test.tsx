@@ -134,9 +134,28 @@ describe('Toast', () => {
         value: 640,
       });
       window.dispatchEvent(new Event('resize'));
+      jest.advanceTimersByTime(120);
     });
 
     expect(screen.queryByRole('button', { name: '해당 노드로 이동' })).not.toBeInTheDocument();
+  });
+
+  test('언마운트 시 리사이즈 디바운스 타이머를 정리한다', () => {
+    const item: ToastItem = {
+      id: 'toast-cleanup',
+      level: 'warning',
+      message: 'cleanup',
+    };
+    const clearTimeoutSpy = jest.spyOn(window, 'clearTimeout');
+    const { unmount } = render(<Toast item={item} onClose={jest.fn()} />);
+
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    unmount();
+
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    clearTimeoutSpy.mockRestore();
   });
 
   test('모바일 긴 메시지는 토스트 클릭으로 확장/축소된다', () => {

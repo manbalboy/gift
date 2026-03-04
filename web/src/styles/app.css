@@ -47,7 +47,8 @@ p {
   border-radius: var(--radius-card);
   background: var(--color-bg-surface);
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.32);
-  transition: background-color 180ms ease;
+  transition: background-color 180ms ease, max-height 240ms ease;
+  overflow: hidden;
 }
 
 .toast-accent {
@@ -89,6 +90,7 @@ p {
 
 .toast-expandable {
   cursor: pointer;
+  min-height: 44px;
 }
 
 .toast-action {
@@ -553,6 +555,14 @@ input {
     max-height: 220px;
     white-space: normal;
     word-break: break-word;
+  }
+
+  .toast-expandable {
+    max-height: 108px;
+  }
+
+  .toast-expandable.toast-expanded {
+    max-height: 320px;
   }
 
   .top-actions .btn-primary {

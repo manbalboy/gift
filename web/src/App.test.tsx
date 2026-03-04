@@ -198,6 +198,18 @@ describe('App', () => {
     jest.useRealTimers();
   });
 
+  test('수동 닫기와 신규 알림 수신이 연속 발생해도 dedupeKey는 즉시 재사용된다', async () => {
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
+    fireEvent.click(screen.getByRole('button', { name: '알림 닫기' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a-repeat' }));
+
+    expect(screen.getByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '알림 닫기' })).toHaveLength(1);
+  });
+
   test('fallback 알림은 데스크톱에서 문제 노드 이동 액션 버튼을 표시한다', async () => {
     render(<App />);
     await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));

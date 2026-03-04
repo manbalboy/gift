@@ -23,6 +23,7 @@ export default function Toast({
   onClose: (id: string) => void;
 }) {
   const closedRef = useRef(false);
+  const resizeDebounceTimerRef = useRef<number | null>(null);
   const [isMobileViewport, setIsMobileViewport] = useState<boolean>(
     typeof window !== 'undefined' ? window.innerWidth <= 767 : false,
   );
@@ -43,13 +44,29 @@ export default function Toast({
   }, [closeOnce, durationMs, item.id]);
 
   useEffect(() => {
-    const handleResize = () => {
+    const syncViewport = () => {
       setIsMobileViewport(window.innerWidth <= 767);
     };
 
+    const handleResize = () => {
+      if (resizeDebounceTimerRef.current !== null) {
+        window.clearTimeout(resizeDebounceTimerRef.current);
+      }
+      resizeDebounceTimerRef.current = window.setTimeout(() => {
+        syncViewport();
+        resizeDebounceTimerRef.current = null;
+      }, 120);
+    };
+
     window.addEventListener('resize', handleResize);
-    handleResize();
-    return () => window.removeEventListener('resize', handleResize);
+    syncViewport();
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (resizeDebounceTimerRef.current !== null) {
+        window.clearTimeout(resizeDebounceTimerRef.current);
+        resizeDebounceTimerRef.current = null;
+      }
+    };
   }, []);
 
   const role = item.level === 'error' ? 'alert' : 'status';
@@ -59,7 +76,9 @@ export default function Toast({
 
   return (
     <article
-      className={`toast toast-${item.level} ${canToggleExpand ? 'toast-expandable' : ''}`}
+      className={`toast toast-${item.level} ${canToggleExpand ? 'toast-expandable' : ''} ${
+        canToggleExpand && isExpanded ? 'toast-expanded' : ''
+      }`}
       role={role}
       aria-live="polite"
       aria-expanded={canToggleExpand ? isExpanded : undefined}
