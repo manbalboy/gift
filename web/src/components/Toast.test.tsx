@@ -3,12 +3,24 @@ import Toast, { type ToastItem } from './Toast';
 import { createToastId } from '../utils/toastId';
 
 describe('Toast', () => {
+  const originalInnerWidth = window.innerWidth;
+
   beforeEach(() => {
     jest.useFakeTimers();
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 1024,
+    });
   });
 
   afterEach(() => {
     jest.useRealTimers();
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: originalInnerWidth,
+    });
   });
 
   test('warning/error 타입에 맞는 타이틀을 렌더링한다', () => {
@@ -79,6 +91,75 @@ describe('Toast', () => {
 
     expect(action).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledWith('toast-action');
+  });
+
+  test('모바일 뷰포트에서는 액션 버튼을 숨긴다', () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 640,
+    });
+    const item: ToastItem = {
+      id: 'toast-mobile-action',
+      level: 'warning',
+      message: '모바일 액션 숨김 테스트',
+      action: {
+        label: '해당 노드로 이동',
+        onClick: jest.fn(),
+      },
+    };
+
+    render(<Toast item={item} onClose={jest.fn()} />);
+    expect(screen.queryByRole('button', { name: '해당 노드로 이동' })).not.toBeInTheDocument();
+  });
+
+  test('렌더링 이후 뷰포트 리사이즈에도 액션 버튼 노출이 실시간 반영된다', () => {
+    const item: ToastItem = {
+      id: 'toast-resize',
+      level: 'warning',
+      message: '리사이즈 테스트',
+      action: {
+        label: '해당 노드로 이동',
+        onClick: jest.fn(),
+      },
+    };
+
+    render(<Toast item={item} onClose={jest.fn()} />);
+    expect(screen.getByRole('button', { name: '해당 노드로 이동' })).toBeInTheDocument();
+
+    act(() => {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: 640,
+      });
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    expect(screen.queryByRole('button', { name: '해당 노드로 이동' })).not.toBeInTheDocument();
+  });
+
+  test('모바일 긴 메시지는 토스트 클릭으로 확장/축소된다', () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 640,
+    });
+    const item: ToastItem = {
+      id: 'toast-expand',
+      level: 'error',
+      message: '아주긴메시지'.repeat(20),
+    };
+
+    render(<Toast item={item} onClose={jest.fn()} />);
+    const toast = screen.getByRole('alert');
+    expect(toast).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(toast);
+    expect(toast).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(toast);
+    expect(toast).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('Toast ID 생성기는 연속 호출 시 중복되지 않는다', () => {

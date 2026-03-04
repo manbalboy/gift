@@ -27,3 +27,39 @@ test('Toast가 캔버스 오버레이보다 위 레이어에서 렌더링된다'
   expect(zIndex?.toastZ ?? 0).toBeGreaterThan(zIndex?.controlZ ?? 0);
   expect(zIndex?.toastZ ?? 0).toBeGreaterThan(zIndex?.miniMapZ ?? 0);
 });
+
+test('모바일 뷰포트에서도 Toast가 최상단에 유지되고 레이아웃을 이탈하지 않는다', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  await expect(page.getByLabel('시스템 알림')).toBeVisible();
+  await page.getByRole('button', { name: '파싱 오류 시뮬레이션' }).click();
+  await expect(page.locator('.toast').first()).toBeVisible();
+
+  const layeringAndBounds = await page.evaluate(() => {
+    const toastStack = document.querySelector('.toast-stack');
+    const toast = document.querySelector('.toast');
+    const controls = document.querySelector('.react-flow__controls');
+    if (!toastStack || !toast || !controls) {
+      return null;
+    }
+
+    const toastZ = Number(window.getComputedStyle(toastStack).zIndex || '0');
+    const controlZ = Number(window.getComputedStyle(controls).zIndex || '0');
+    const rect = toast.getBoundingClientRect();
+    return {
+      toastZ,
+      controlZ,
+      left: rect.left,
+      right: rect.right,
+      viewportWidth: window.innerWidth,
+    };
+  });
+
+  expect(layeringAndBounds).not.toBeNull();
+  expect(layeringAndBounds?.toastZ ?? 0).toBeGreaterThan(layeringAndBounds?.controlZ ?? 0);
+  expect(layeringAndBounds?.left ?? -1).toBeGreaterThanOrEqual(0);
+  expect(layeringAndBounds?.right ?? Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(
+    (layeringAndBounds?.viewportWidth ?? 0) + 0.5,
+  );
+});

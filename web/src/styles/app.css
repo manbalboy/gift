@@ -47,6 +47,7 @@ p {
   border-radius: var(--radius-card);
   background: var(--color-bg-surface);
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.32);
+  transition: background-color 180ms ease;
 }
 
 .toast-accent {
@@ -84,6 +85,10 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.toast-expandable {
+  cursor: pointer;
 }
 
 .toast-action {
@@ -530,6 +535,26 @@ input {
 }
 
 @media (max-width: 767px) {
+  .toast {
+    grid-template-columns: 4px minmax(0, 1fr) auto;
+  }
+
+  .toast-message {
+    display: block;
+    max-width: 100%;
+    max-height: 22px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: max-height 240ms ease;
+  }
+
+  .toast-message-expanded {
+    max-height: 220px;
+    white-space: normal;
+    word-break: break-word;
+  }
+
   .top-actions .btn-primary {
     height: 44px;
   }

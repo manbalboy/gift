@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import App from './App';
 import { LAYER_Z_INDEX } from './constants/layers';
@@ -124,6 +124,7 @@ describe('App', () => {
   });
 
   beforeEach(() => {
+    jest.useRealTimers();
     mobilePortrait = false;
     jest.clearAllMocks();
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
@@ -157,6 +158,44 @@ describe('App', () => {
     expect(screen.getAllByRole('button', { name: '알림 닫기' })).toHaveLength(3);
     expect(screen.getByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toBeInTheDocument();
     expect(screen.queryByText('속성 누락 노드 2개가 task 타입으로 폴백되었습니다.')).not.toBeInTheDocument();
+  });
+
+  test('X 버튼으로 수동 닫기 후 동일 dedupeKey 알림을 다시 노출할 수 있다', async () => {
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
+    expect(screen.getByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '알림 닫기' }));
+    expect(screen.queryByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a-repeat' }));
+    expect(screen.getByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toBeInTheDocument();
+  });
+
+  test('타이머 만료와 큐 정리가 겹쳐도 dedupeKey는 해제되어 동일 알림을 다시 노출할 수 있다', async () => {
+    jest.useFakeTimers();
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-b' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-c' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-d' }));
+    expect(screen.getAllByRole('button', { name: '알림 닫기' })).toHaveLength(3);
+
+    act(() => {
+      jest.advanceTimersByTime(3000);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '알림 닫기' })).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a-repeat' }));
+    expect(screen.getByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toBeInTheDocument();
+
+    jest.useRealTimers();
   });
 
   test('fallback 알림은 데스크톱에서 문제 노드 이동 액션 버튼을 표시한다', async () => {

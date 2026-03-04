@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type ToastLevel = 'warning' | 'error';
 
@@ -23,6 +23,12 @@ export default function Toast({
   onClose: (id: string) => void;
 }) {
   const closedRef = useRef(false);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>(
+    typeof window !== 'undefined' ? window.innerWidth <= 767 : false,
+  );
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const isExpandableMessage = useMemo(() => item.message.length > 72, [item.message]);
   const closeOnce = useCallback(() => {
     if (closedRef.current) return;
     closedRef.current = true;
@@ -31,22 +37,48 @@ export default function Toast({
 
   useEffect(() => {
     closedRef.current = false;
+    setIsExpanded(false);
     const timer = window.setTimeout(() => closeOnce(), durationMs);
     return () => window.clearTimeout(timer);
   }, [closeOnce, durationMs, item.id]);
 
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileViewport(window.innerWidth <= 767);
+    };
+
+    window.addEventListener('resize', handleResize);
+    handleResize();
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const role = item.level === 'error' ? 'alert' : 'status';
   const title = item.level === 'error' ? '오류' : '경고';
+  const shouldShowAction = Boolean(item.action) && !isMobileViewport;
+  const canToggleExpand = isMobileViewport && isExpandableMessage;
 
   return (
-    <article className={`toast toast-${item.level}`} role={role} aria-live="polite">
+    <article
+      className={`toast toast-${item.level} ${canToggleExpand ? 'toast-expandable' : ''}`}
+      role={role}
+      aria-live="polite"
+      aria-expanded={canToggleExpand ? isExpanded : undefined}
+      onClick={(event) => {
+        const target = event.target as HTMLElement;
+        if (!canToggleExpand || target.closest('button')) return;
+        setIsExpanded((prev) => !prev);
+      }}
+    >
       <div className="toast-accent" aria-hidden />
       <div className="toast-content">
         <strong>{title}</strong>
-        <p className="toast-message" title={item.message}>
+        <p
+          className={`toast-message ${canToggleExpand && isExpanded ? 'toast-message-expanded' : ''}`}
+          title={item.message}
+        >
           {item.message}
         </p>
-        {item.action && (
+        {shouldShowAction && item.action && (
           <button
             type="button"
             className="toast-action"

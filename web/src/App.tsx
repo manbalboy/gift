@@ -33,6 +33,7 @@ export default function App() {
   const [focusNodeRequest, setFocusNodeRequest] = useState<{ nodeId: string; requestId: number } | null>(null);
   const isMobilePortrait = useIsMobilePortrait();
   const activeRunRef = useRef<WorkflowRun | null>(null);
+  const toastsRef = useRef<ToastItem[]>([]);
   const dedupedToastKeysRef = useRef<Set<string>>(new Set());
 
   const enqueueToast = (
@@ -47,31 +48,31 @@ export default function App() {
       if (dedupedToastKeysRef.current.has(options.dedupeKey)) return;
       dedupedToastKeysRef.current.add(options.dedupeKey);
     }
-    setToasts((prev) => {
-      const next = [
-        ...prev,
-        { id: createToastId(), level, message, dedupeKey: options?.dedupeKey, action: options?.action },
-      ];
-      const overflowCount = Math.max(0, next.length - 3);
-      if (overflowCount > 0) {
-        next.slice(0, overflowCount).forEach((toast) => {
-          if (toast.dedupeKey) {
-            dedupedToastKeysRef.current.delete(toast.dedupeKey);
-          }
-        });
-      }
-      return next.slice(-3);
-    });
+    const next = [
+      ...toastsRef.current,
+      { id: createToastId(), level, message, dedupeKey: options?.dedupeKey, action: options?.action },
+    ];
+    const overflowCount = Math.max(0, next.length - 3);
+    if (overflowCount > 0) {
+      next.slice(0, overflowCount).forEach((toast) => {
+        if (toast.dedupeKey) {
+          dedupedToastKeysRef.current.delete(toast.dedupeKey);
+        }
+      });
+    }
+    const trimmed = next.slice(-3);
+    toastsRef.current = trimmed;
+    setToasts(trimmed);
   };
 
   const closeToast = (id: string) => {
-    setToasts((prev) => {
-      const target = prev.find((toast) => toast.id === id);
-      if (target?.dedupeKey) {
-        dedupedToastKeysRef.current.delete(target.dedupeKey);
-      }
-      return prev.filter((toast) => toast.id !== id);
-    });
+    const target = toastsRef.current.find((toast) => toast.id === id);
+    if (target?.dedupeKey) {
+      dedupedToastKeysRef.current.delete(target.dedupeKey);
+    }
+    const next = toastsRef.current.filter((toast) => toast.id !== id);
+    toastsRef.current = next;
+    setToasts(next);
   };
 
   const loadWorkflows = async () => {
@@ -94,6 +95,15 @@ export default function App() {
   useEffect(() => {
     activeRunRef.current = run;
   }, [run]);
+
+  useEffect(() => {
+    toastsRef.current = toasts;
+    dedupedToastKeysRef.current = new Set(
+      toasts
+        .map((toast) => toast.dedupeKey)
+        .filter((key): key is string => Boolean(key)),
+    );
+  }, [toasts]);
 
   useEffect(() => {
     if (!activeWorkflow) return;
