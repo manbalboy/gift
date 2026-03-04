@@ -440,3 +440,6 @@ gift는 “나중에 확장”으로 Postgres, 멀티 워커/분산 큐, SSE/WS 
         - CORS 허용 대상은 manbalboy.com 계열 또는 localhost 계열로 제한합니다.
         - 허용 origin 정책(기준값): https://manbalboy.com,http://manbalboy.com,https://localhost,http://localhost,https://127.0.0.1,http://127.0.0.1, manbalboy.com 도메인으로 접근한 모든 포트와 서브 도메인들은 통과되어야함
         - PR 본문에는 Docker Preview 정보(컨테이너/포트/URL)를 포함합니다.
+        - Blocked request. This host ("ssh.manbalboy.com") is not allowed.
+To allow this host, add "ssh.manbalboy.com" to `server.allowedHosts` in vite.config.js. 위와 같이 해당 도메인에대한 접근이나 사용하는 형태는 테스트가 되어야함 
+        - 현재 cli ai 가 호출 되고있는지 호출되서 워크플로가 제대로 동작되고있는지 검증하여야함 
