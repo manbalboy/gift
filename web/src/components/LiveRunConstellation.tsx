@@ -72,6 +72,17 @@ export default function LiveRunConstellation({ data }: Props) {
         })}
         {points.map((point) => (
           <g key={point.id}>
+            {(point.status === 'running' || point.status === 'failed') && (
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r="14"
+                fill="none"
+                stroke={statusColor[point.status] ?? '#7E8AA3'}
+                strokeOpacity="0.45"
+                strokeWidth="2"
+              />
+            )}
             <circle cx={point.x} cy={point.y} r="10" fill={statusColor[point.status] ?? '#7E8AA3'} />
             <text x={point.x} y={point.y + 28} textAnchor="middle" className="constellation-label">
               {point.label}
@@ -79,6 +90,12 @@ export default function LiveRunConstellation({ data }: Props) {
           </g>
         ))}
       </svg>
+      <div className="constellation-legend mono" aria-label="상태 범례">
+        <span>queued ○</span>
+        <span>running ▶</span>
+        <span>done ✓</span>
+        <span>failed !</span>
+      </div>
     </section>
   );
 }

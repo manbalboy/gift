@@ -7,6 +7,9 @@ if TEST_DB.exists():
 
 os.environ['DEVFLOW_DB_PATH'] = str(TEST_DB)
 os.environ['DEVFLOW_WORKSPACES_ROOT'] = './api/test_workspaces'
+os.environ['DEVFLOW_RUNNER_BACKEND'] = 'host'
+os.environ['DEVFLOW_ENABLE_HOST_RUNNER'] = 'true'
+os.environ['DEVFLOW_REQUIRE_DOCKER_PING_ON_STARTUP'] = 'false'
 
 from fastapi.testclient import TestClient
 

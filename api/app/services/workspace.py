@@ -16,8 +16,8 @@ def is_safe_node_id(node_id: str) -> bool:
 
 
 class WorkspaceService:
-    def __init__(self) -> None:
-        self.root = Path(settings.workspaces_root).resolve()
+    def __init__(self, root: str | Path | None = None) -> None:
+        self.root = Path(root or settings.workspaces_root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _resolve_under_root(self, path: Path) -> Path:
@@ -37,3 +37,14 @@ class WorkspaceService:
         artifact = self._resolve_under_root(target_dir / f"{node_id}.md")
         artifact.write_text(content, encoding="utf-8")
         return str(artifact)
+
+    def get_task_sandbox_dir(self, run_id: int, node_id: str) -> Path:
+        if not is_safe_node_id(node_id):
+            raise InvalidNodeIdError(f"unsafe node_id: {node_id}")
+        if run_id < 0:
+            raise InvalidNodeIdError(f"unsafe run_id: {run_id}")
+
+        sandbox_dir = self._resolve_under_root(self.root / "main" / "runs" / str(run_id) / "sandbox" / node_id)
+        sandbox_dir.mkdir(parents=True, exist_ok=True)
+        sandbox_dir.chmod(0o777)
+        return sandbox_dir

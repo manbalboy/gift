@@ -1,1 +1,1 @@
-CORS 정규식 보완, Path Traversal 방어, Race Condition DB 락, AgentRunner 실 구동, 스키마 유효성 검사 및 테스트 커버리지 추가
+워크플로우 동시 실행 방지를 위한 분산 락(lock_provider) 추가 및 에이전트 러너 리팩토링

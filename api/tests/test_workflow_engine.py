@@ -9,6 +9,7 @@ from sqlalchemy.exc import OperationalError
 from app.api.workflows import engine as workflow_engine
 from app.db.session import SessionLocal
 from app.models.workflow import NodeRun, WorkflowRun
+from app.core.config import settings
 from app.schemas.agent import AgentTaskRequest, AgentTaskResult
 from app.services.agent_runner import AgentRunner, DockerRunner
 from app.services.lock_provider import LockProviderFactory, RedisLockProvider
@@ -143,6 +144,16 @@ def test_agent_runner_handles_system_exception(monkeypatch):
     assert result.output.get("error") == "permission denied"
 
 
+def test_host_runner_requires_explicit_enable(monkeypatch):
+    monkeypatch.setattr(settings, "enable_host_runner", False)
+    try:
+        AgentRunner(timeout_seconds=1, backend="host")
+    except RuntimeError as exc:
+        assert "HostRunner is disabled" in str(exc)
+    else:
+        raise AssertionError("host runner should be blocked when explicit flag is off")
+
+
 def test_docker_runner_builds_sandboxed_docker_command(monkeypatch, tmp_path):
     captured = {"args": None}
 
@@ -164,17 +175,21 @@ def test_docker_runner_builds_sandboxed_docker_command(monkeypatch, tmp_path):
     monkeypatch.setattr("subprocess.Popen", fake_popen)
 
     runner = DockerRunner(timeout_seconds=1, image="bash:5.2", workspaces_root=str(tmp_path))
+    monkeypatch.setattr(runner, "_docker_ping", lambda: None)
     result = runner.run(
         AgentTaskRequest(
             node_id="plan",
             node_name="Plan",
-            payload={"command": "echo hello-from-docker"},
+            payload={"command": "echo hello-from-docker", "run_id": 7},
         )
     )
 
     assert result.ok is True
     assert captured["args"] is not None
     assert "bash:5.2" in captured["args"]
+    mount_arg = captured["args"][captured["args"].index("-v") + 3]
+    assert mount_arg.endswith(":/workspace/workspaces:rw")
+    assert "/sandbox/plan" in mount_arg
 
 
 def test_docker_runner_timeout_force_cleans_container(monkeypatch, tmp_path):
@@ -207,17 +222,48 @@ def test_docker_runner_timeout_force_cleans_container(monkeypatch, tmp_path):
     monkeypatch.setattr("os.killpg", lambda *_args, **_kwargs: None)
 
     runner = DockerRunner(timeout_seconds=1, image="bash:5.2", workspaces_root=str(tmp_path))
+    monkeypatch.setattr(runner, "_docker_ping", lambda: None)
     result = runner.run(
         AgentTaskRequest(
             node_id="test",
             node_name="Test",
-            payload={"command": "while true; do :; done"},
+            payload={"command": "while true; do :; done", "run_id": 8},
         )
     )
 
     assert result.ok is False
     assert result.output.get("timeout") is True
     assert removed["called"] is True
+
+
+def test_docker_runner_requires_valid_run_id(tmp_path):
+    runner = DockerRunner(timeout_seconds=1, image="bash:5.2", workspaces_root=str(tmp_path))
+    result = runner.run(
+        AgentTaskRequest(
+            node_id="test",
+            node_name="Test",
+            payload={"command": "echo blocked"},
+        )
+    )
+
+    assert result.ok is False
+    assert result.output.get("error") == "invalid run_id"
+
+
+def test_docker_runner_returns_error_when_daemon_is_unavailable(monkeypatch, tmp_path):
+    runner = DockerRunner(timeout_seconds=1, image="bash:5.2", workspaces_root=str(tmp_path))
+    monkeypatch.setattr(runner, "_docker_ping", lambda: (_ for _ in ()).throw(RuntimeError("daemon down")))
+
+    result = runner.run(
+        AgentTaskRequest(
+            node_id="test",
+            node_name="Test",
+            payload={"command": "echo blocked", "run_id": 9},
+        )
+    )
+
+    assert result.ok is False
+    assert "daemon down" in result.log
 
 
 def test_refresh_run_passes_node_command_to_agent_runner(monkeypatch):

@@ -8,6 +8,7 @@ from typing import Protocol
 
 from app.core.config import settings
 from app.schemas.agent import AgentTaskRequest, AgentTaskResult
+from app.services.workspace import WorkspaceService, InvalidNodeIdError
 
 
 DEFAULT_TIMEOUT_SECONDS = 300
@@ -137,8 +138,9 @@ class DockerRunner(BaseRunner):
         super().__init__(timeout_seconds=timeout_seconds)
         self.image = image or settings.docker_image
         self.workspaces_root = str(Path(workspaces_root or settings.workspaces_root).resolve())
+        self.workspace_service = WorkspaceService(root=self.workspaces_root)
 
-    def _build_docker_command(self, container_name: str, script_path: str) -> list[str]:
+    def _build_docker_command(self, container_name: str, script_path: str, task_workspace: str) -> list[str]:
         return [
             "docker",
             "run",
@@ -162,7 +164,7 @@ class DockerRunner(BaseRunner):
             "-v",
             f"{script_path}:/workspace/run.sh:ro",
             "-v",
-            f"{self.workspaces_root}:/workspace/workspaces:rw",
+            f"{task_workspace}:/workspace/workspaces:rw",
             "-w",
             "/workspace",
             self.image,
@@ -185,16 +187,48 @@ class DockerRunner(BaseRunner):
         except Exception as exc:
             return str(exc)
 
+    def _docker_ping(self) -> None:
+        if not settings.require_docker_ping_per_run:
+            return
+        result = subprocess.run(
+            ["docker", "info"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "unknown docker error").strip()
+            raise RuntimeError(f"docker daemon unavailable: {detail}")
+
     def run(self, request: AgentTaskRequest) -> AgentTaskResult:
         command = self._resolve_command(request)
+        run_id = request.payload.get("run_id")
+        if not isinstance(run_id, int) or run_id < 0:
+            return AgentTaskResult(
+                ok=False,
+                log="[agent] exception: invalid run_id for docker sandbox",
+                output={"node_id": request.node_id, "exit_code": None, "error": "invalid run_id"},
+            )
+        try:
+            task_workspace = str(self.workspace_service.get_task_sandbox_dir(run_id=run_id, node_id=request.node_id))
+        except InvalidNodeIdError as exc:
+            return self._handle_exception(request, exc)
+
+        try:
+            self._docker_ping()
+        except Exception as exc:
+            return self._handle_exception(request, exc)
+
         script_path = self._build_script(command)
-        os.chmod(script_path, 0o700)
+        os.chmod(script_path, 0o755)
         container_name = f"devflow-run-{uuid.uuid4().hex[:12]}"
 
         process: subprocess.Popen[str] | None = None
         try:
             process = subprocess.Popen(
-                self._build_docker_command(container_name, script_path),
+                self._build_docker_command(container_name, script_path, task_workspace),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -242,8 +276,14 @@ class AgentRunner:
             self.runner = runner
         elif selected_backend == "docker":
             self.runner = DockerRunner(timeout_seconds=timeout_seconds)
-        else:
+        elif selected_backend == "host":
+            if not settings.enable_host_runner:
+                raise RuntimeError(
+                    "HostRunner is disabled. Set DEVFLOW_ENABLE_HOST_RUNNER=true for local-only development."
+                )
             self.runner = HostRunner(timeout_seconds=timeout_seconds)
+        else:
+            raise RuntimeError(f"Unsupported runner backend: {selected_backend}")
 
     def run(self, request: AgentTaskRequest) -> AgentTaskResult:
         return self.runner.run(request)

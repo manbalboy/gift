@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Dashboard from './components/Dashboard';
 import LiveRunConstellation from './components/LiveRunConstellation';
 import StatusBadge from './components/StatusBadge';
@@ -27,6 +27,7 @@ export default function App() {
   const [constellation, setConstellation] = useState<ConstellationData | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const isMobilePortrait = useIsMobilePortrait();
+  const activeRunRef = useRef<WorkflowRun | null>(null);
 
   const loadWorkflows = async () => {
     const items = await api.listWorkflows();
@@ -41,16 +42,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!run) return;
+    activeRunRef.current = run;
+  }, [run]);
 
-    const timer = setInterval(async () => {
-      const [latestRun, latestConstellation] = await Promise.all([api.getRun(run.id), api.getConstellation(run.id)]);
-      setRun(latestRun);
-      setConstellation(latestConstellation);
-    }, 1500);
+  useEffect(() => {
+    if (!activeWorkflow) return;
 
-    return () => clearInterval(timer);
-  }, [run?.id]);
+    const unsubscribe = api.subscribeWorkflowRuns(activeWorkflow.id, {
+      onRunStatus: async (event) => {
+        const targetRunId = activeRunRef.current?.id ?? event.runs[0]?.id;
+        if (!targetRunId) return;
+        const [latestRun, latestConstellation] = await Promise.all([
+          api.getRun(targetRunId),
+          api.getConstellation(targetRunId),
+        ]);
+        setRun(latestRun);
+        setConstellation(latestConstellation);
+      },
+    });
+
+    return unsubscribe;
+  }, [activeWorkflow?.id]);
 
   const runStatus = useMemo(() => run?.status ?? 'queued', [run?.status]);
   const nodeStatuses = useMemo(

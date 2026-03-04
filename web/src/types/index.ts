@@ -29,6 +29,7 @@ export type NodeRun = {
   sequence: number;
   log: string;
   artifact_path: string | null;
+  updated_at: string;
 };
 
 export type WorkflowRun = {
@@ -45,4 +46,9 @@ export type ConstellationData = {
   status: string;
   nodes: Array<{ id: string; label: string; status: string; sequence: number }>;
   links: Array<{ source: string; target: string }>;
+};
+
+export type WorkflowRunsStreamEvent = {
+  workflow_id: number;
+  runs: Array<{ id: number; status: string; updated_at: string }>;
 };

@@ -2,13 +2,15 @@ import json
 import time
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.workflow import WorkflowDefinition, WorkflowRun
 from app.schemas.workflow import RunEventOut, WorkflowCreate, WorkflowOut, WorkflowRunOut, WorkflowUpdate
+from app.services.rate_limiter import create_sse_reconnect_limiter
 from app.services.workflow_engine import WorkflowEngine
 from app.services.workspace import InvalidNodeIdError
 
@@ -17,6 +19,24 @@ router = APIRouter(prefix="/workflows", tags=["workflows"])
 run_router = APIRouter(prefix="/runs", tags=["runs"])
 engine = WorkflowEngine()
 active_stream_connections = 0
+reconnect_rate_limiter = create_sse_reconnect_limiter()
+
+
+def _extract_client_key(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "").strip()
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _is_reconnect_rate_limited(client_key: str) -> bool:
+    return not reconnect_rate_limiter.allow(
+        key=client_key,
+        limit=max(1, settings.sse_reconnect_limit_per_second),
+        window_seconds=max(1, settings.sse_rate_limit_window_seconds),
+    )
 
 
 def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks: int) -> Iterator[str]:
@@ -111,10 +131,18 @@ def list_workflow_runs(workflow_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{workflow_id}/runs/stream")
-def stream_workflow_runs(workflow_id: int, max_ticks: int = 180, db: Session = Depends(get_db)):
+def stream_workflow_runs(
+    workflow_id: int,
+    request: Request,
+    max_ticks: int = 180,
+    db: Session = Depends(get_db),
+):
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="workflow not found")
+    client_key = _extract_client_key(request)
+    if _is_reconnect_rate_limited(client_key):
+        raise HTTPException(status_code=429, detail="too many reconnect attempts")
 
     return StreamingResponse(
         _stream_workflow_runs_events(db=db, workflow_id=workflow_id, max_ticks=max_ticks),

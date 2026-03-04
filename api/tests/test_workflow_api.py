@@ -1,4 +1,5 @@
 import itertools
+import pytest
 
 from app.api import workflows as workflows_api
 
@@ -24,6 +25,13 @@ PAYLOAD = {
         ],
     },
 }
+
+
+@pytest.fixture(autouse=True)
+def reset_stream_rate_limiter():
+    workflows_api.reconnect_rate_limiter.reset_for_tests()
+    yield
+    workflows_api.reconnect_rate_limiter.reset_for_tests()
 
 
 def test_workflow_create_and_get():
@@ -75,6 +83,17 @@ def test_cors_blocks_similar_lookalike_domain():
         "/api/workflows",
         headers={
             "Origin": "http://amanbalboy.com:3101",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_cors_blocks_manbalboy_without_31xx_port():
+    response = client.options(
+        "/api/workflows",
+        headers={
+            "Origin": "https://manbalboy.com",
             "Access-Control-Request-Method": "GET",
         },
     )
@@ -164,3 +183,18 @@ def test_workflow_runs_stream_disconnect_releases_connection(monkeypatch):
         assert "event: run_status" in first_line
 
     assert workflows_api.active_stream_connections == 0
+
+
+def test_workflow_runs_stream_rate_limit_returns_429(monkeypatch):
+    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.settings, "sse_reconnect_limit_per_second", 1)
+
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    first = client.get(f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1")
+    assert first.status_code == 200
+
+    second = client.get(f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1")
+    assert second.status_code == 429
