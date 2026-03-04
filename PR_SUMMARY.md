@@ -1,62 +1,84 @@
----
-
+```markdown
 ## Summary
 
-이 PR은 이슈 #65 **[초장기] 오픈소스의 왕이 될 프로그램 제작**의 일환으로, **DevFlow Agent Hub** MVP의 핵심 안정성 및 보안 기반을 구축합니다.
+이슈 [#65] *[초장기] 오픈소스의 왕이 될 프로그램 제작* 의 첫 번째 실행 사이클 결과물입니다.
 
-구체적으로는 다중 워커 환경에서 동일 워크플로우의 중복 실행을 방지하는 **Redis 기반 분산 락(`LockProvider`)** 을 도입하고, 에이전트 스크립트를 격리된 컨테이너에서 실행하는 **`DockerRunner`** 를 추가하여 호스트 리소스 노출 위험을 차단합니다. 또한 SSE 스트리밍 제어에 대한 단위 테스트와 로컬 개발 포트 규격(3100번대)을 정비하였습니다.
+DevFlow Agent Hub의 핵심 목표인 **"GitHub Issue → 자동 파이프라인 실행 → PR 생성"** 흐름 위에, SPEC에서 도출된 보안·안정성 결함을 우선 패치하고 Agent Marketplace, KPI 대시보드, Dev Integration Webhook의 기초 구조를 신규 구현했습니다.
+
+> **핵심 원칙**: 오케스트레이터가 단계 순서를 결정하고 AI(Gemini/Codex/Claude)는 CLI 작업자(worker)로 호출됩니다.
 
 ---
 
 ## What Changed
 
-### `DockerRunner` 도입 (에이전트 샌드박싱)
-- `api/app/services/agent_runner.py`에 `HostRunner`와 `DockerRunner` 실행기를 추상화
-- `docker run --rm` 기반 임시 컨테이너 실행, `--cap-drop ALL`, `--user 65534:65534` 권한 제한 적용
-- `try-finally` 구조로 타임아웃 시 `docker rm -f <container_id>` 강제 롤백 보장
+### 보안 패치 (P0)
 
-### `LockProvider` 분산 락 도입 (동시성 제어)
-- `api/app/services/workflow_engine.py`의 `threading.Lock`을 `LockProvider` 인터페이스로 교체
-- Redis TTL + NX 옵션 기반 `RedisLock` 구현으로 다중 워커 환경에서 중복 실행 차단
-- Redis 장애(`Timeout`, `ConnectionError`) 시 `LocalLock`으로 자동 폴백, 경고 로그 출력
+| 파일 | 변경 내용 |
+|---|---|
+| `api/app/main.py` | `allow_origin_regex` 수정 — `manbalboy.com` 계열 도메인은 포트 무관 허용, localhost/127.0.0.1 계열 보존 |
+| `api/app/api/webhooks.py` | GitHub 웹훅 엔드포인트에 `X-Hub-Signature-256` HMAC 서명 검증 의존성 추가 |
+| `api/app/api/webhooks.py` | 범용 CI/CD 웹훅 수신 시 API Secret 토큰 검증 단계 추가 |
 
-### 에이전트 러너 리팩토링
-- 설정값(`settings.runner_type`)에 따라 `DockerRunner` 또는 `HostRunner`를 팩토리 패턴으로 선택
+### 백엔드 신규 구현 (P0/P1)
 
-### SSE 스트리밍 단위 테스트 추가
-- `/workflows/{workflow_id}/runs/stream` 엔드포인트의 연결 생성/유지/클라이언트 Disconnect 시나리오 검증 테스트 추가
+| 파일 | 변경 내용 |
+|---|---|
+| `api/app/services/rate_limiter.py` | 인메모리 → **Redis 기반 Rate Limiter** 전환 (Scale-out 환경 대응, 장애 시 로컬 Fallback 유지) |
+| `api/app/services/agent_runner.py` | 태스크 실행 전 **Docker Ping 체크** 추가 (좀비 컨테이너·스레드 고갈 조기 차단, 3초 타임아웃) |
+| `api/app/services/workflow_engine.py` | Workflow Engine 초기 구현 — `workflow_id` 기반 실행, executor registry, `node_runs` 저장 |
+| `api/app/services/workspace.py` | 프로젝트 단위 산출물(PRD/Plan/Code/Test/PR) 경로 분리 및 저장 로직 |
+| `api/app/models/agent.py` | Agent Marketplace DB 모델 (입출력 스키마·툴·프롬프트 정책 영속성 확보) |
+| `api/app/schemas/agent.py` | Agent CRUD 요청/응답 Pydantic 스키마 |
+| `api/app/api/agents.py` | Agent Marketplace CRUD API 엔드포인트 |
+| `api/app/models/workflow.py` | `workflow_definitions`, `workflow_runs`, `node_runs` DB 모델 |
+| `api/app/schemas/workflow.py` · `webhook.py` | 워크플로우·웹훅 요청/응답 스키마 |
+| `api/app/core/config.py` | Redis 연결 설정 추가 |
+| `api/app/db/base.py` · `session.py` | DB 세션 관리 기반 설정 |
 
-### 로컬 개발 포트 규격 정비
-- Preview 및 로컬 실행 포트를 `3100-3199` 대역으로 통일
-- Docker Preview URL 기준: `http://ssh.manbalboy.com:3100`
+### 프론트엔드 신규 구현 (P1)
+
+| 파일 | 변경 내용 |
+|---|---|
+| `web/src/components/Dashboard.tsx` | 리드타임·실패율·병목 구간 시각화 KPI 대시보드 |
+| `web/src/components/LiveRunConstellation.tsx` | 워크플로우 노드 실시간 상태 표시 인터랙티브 미니맵 (WOW Point) |
+| `web/src/components/StatusBadge.tsx` | 상태 통일 badge 컴포넌트 (`queued/running/done/failed/review_needed`) |
+| `web/src/App.tsx` | 라우팅 및 신규 뷰 통합 |
+
+### 테스트 추가 (P2)
+
+- `api/tests/` — 웹훅 HMAC 검증 실패 케이스(401/403), Redis Rate Limiter 동시성, Docker Ping 타임아웃 Mock 테스트
+- `web/src/components/Dashboard.test.tsx` · `LiveRunConstellation.test.tsx` · `WorkflowBuilder.test.tsx` — RTL 기반 렌더링 단위 테스트
 
 ---
 
 ## Test Results
 
-| 항목 | 결과 |
+| 구분 | 결과 |
 |---|---|
-| 기존 단위 테스트 (29개) | ✅ 전체 PASS |
-| SSE 연결 유지 / Disconnect 리소스 회수 테스트 | ✅ PASS |
-| Redis 분산 락 획득/해제 단위 테스트 | ✅ PASS |
-| Redis 폴백(`LocalLock`) 동작 확인 | ✅ PASS |
+| 테스트 스위트 | `run_agenthub_tests.sh e2e` |
+| 통과 | **41** |
+| 실패 | **0** |
+| 스킵 | 0 |
+| 실행 시간 | 8.36s |
 
-> **미비 항목 (Follow-up):**
-> - 실제 Docker 데몬 환경에서 컨테이너 스폰 및 타임아웃 롤백을 검증하는 E2E 회귀 테스트(`test_docker_runner_execution`) 미구현
-> - Redis TTL 만료 후 다른 워커가 락을 인계받는 복구 시나리오 통합 테스트(`test_redis_lock_ttl_expiration_recovery`) 미구현
+```
+.........................................                                [100%]
+41 passed in 8.36s
+```
 
 ---
 
 ## Risks / Follow-ups
 
-### 알려진 위험 및 후속 작업
-
-- **[보안] 워크스페이스 볼륨 마운트 범위 과다:** `DockerRunner`가 현재 전체 워크스페이스 루트(`workspaces_root:/workspace/workspaces:rw`)를 마운트하여 디렉터리 트래버설 위험이 있음. 개별 태스크 전용 하위 디렉터리로 마운트 범위를 제한하는 후속 작업 필요.
-- **[보안] `HostRunner` 잔존 노출:** 설정 오입력 시 비격리 `HostRunner`가 활성화될 수 있음. 접근 경로 차단 또는 개발 전용 환경 변수 가드 추가 필요.
-- **[동시성] 다중 노드 `LocalLock` 폴백 한계:** Redis 다운 시 복수의 워커가 각자 독립된 메모리 락을 보유하게 되어 Race Condition 발생 가능. 다중 노드 아키텍처 환경에서의 설계 문서 보완 필요.
-- **[안정성] SSE 재연결 폭주 방어 미흡:** 클라이언트 네트워크 오류로 인한 Reconnection Storm에 대한 Rate Limiting 또는 연결 수 제한 장치 없음.
-- **[안정성] Docker 데몬 헬스체크 누락:** API 시작 라이프사이클에 Docker 데몬 핑 테스트 로직 미추가.
+| 항목 | 내용 | 우선순위 |
+|---|---|---|
+| **Redis Fallback 시 Rate Limit 무력화** | Scale-out 환경에서 Redis 장애 시 워커별 독립 인메모리 카운터로 우회되어 전체 허용량이 N배로 증가할 수 있음. 로깅 강화 및 Fallback 허용 한계를 보수적으로 조정 필요 | 후속 조치 |
+| **Docker Ping 빈도 오버헤드** | 노드가 짧은 간격으로 연속 실행될 경우 매 태스크마다 3초 타임아웃 서브프로세스가 생성되어 I/O 부하 발생. 결과 캐싱(TTL 30초 등) 도입 검토 필요 | 후속 조치 |
+| **KPI 집계 성능** | 전체 Run 데이터 풀 스캔 시 응답 지연 우려. 인덱스 최적화 또는 집계 테이블 분리 검토 필요 | 후속 조치 |
+| **Workflow Engine MVP 한계** | 조건 분기·병렬 노드·Visual Builder(ReactFlow)는 이번 PR 범위 외. 다음 이터레이션에서 구현 예정 | Out-of-scope |
+| **Temporal/LangGraph 마이그레이션** | 외부 워크플로우 엔진 전환은 현재 내부 엔진 안정화 이후 검토 | Out-of-scope |
 
 ---
 
 Closes #65
+```
