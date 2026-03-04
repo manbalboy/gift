@@ -10,6 +10,7 @@ import ReactFlow, {
   type Edge,
   type Node,
 } from 'reactflow';
+import StatusBadge from './StatusBadge';
 import type { Workflow } from '../types';
 
 const baseNodes = [
@@ -36,10 +37,12 @@ export default function WorkflowBuilder({
   workflow,
   onSave,
   mobileViewOnly,
+  nodeStatuses,
 }: {
   workflow: Workflow | null;
   onSave: (payload: Omit<Workflow, 'id'>, existingId?: number) => Promise<void>;
   mobileViewOnly: boolean;
+  nodeStatuses?: Record<string, string>;
 }) {
   const initial = useMemo(() => {
     if (workflow) return convertToFlow(workflow);
@@ -107,6 +110,17 @@ export default function WorkflowBuilder({
           <span>설명</span>
           <input value={description} onChange={(e) => setDescription(e.target.value)} />
         </label>
+      </div>
+      <div className="builder-status-list" aria-label="node-status-list">
+        {nodes.map((node) => {
+          const status = nodeStatuses?.[node.id] ?? 'queued';
+          return (
+            <div key={node.id} className="builder-status-item">
+              <span className="mono">{String(node.data?.label ?? node.id)}</span>
+              <StatusBadge status={status} />
+            </div>
+          );
+        })}
       </div>
       <div className="canvas-wrap">
         {mobileViewOnly && <div className="mobile-blocker">세로 모바일에서는 모니터링을 우선 제공하며 편집은 가로/태블릿 이상에서 권장됩니다.</div>}

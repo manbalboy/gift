@@ -77,4 +77,18 @@ describe('WorkflowBuilder', () => {
     expect(payload.graph.edges).toHaveLength(2);
     expect(onSave.mock.calls[0][1]).toBe(10);
   });
+
+  test('노드 상태가 status badge로 매핑되어 렌더링된다', () => {
+    render(
+      <WorkflowBuilder
+        workflow={sampleWorkflow}
+        onSave={jest.fn()}
+        mobileViewOnly={false}
+        nodeStatuses={{ idea: 'running', plan: 'failed' }}
+      />,
+    );
+
+    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('failed')).toBeInTheDocument();
+  });
 });

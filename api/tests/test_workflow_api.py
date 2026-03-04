@@ -32,16 +32,27 @@ def test_workflow_create_and_get():
     assert fetched.json()["name"] == PAYLOAD["name"]
 
 
-def test_cors_allows_manbalboy_subdomain_with_port():
+def test_cors_allows_manbalboy_subdomain_with_70xx_port():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://ssh.manbalboy.com:7000",
+            "Origin": "http://ssh.manbalboy.com:7006",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:7000"
+    assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:7006"
+
+
+def test_cors_blocks_manbalboy_outside_70xx_port():
+    response = client.options(
+        "/api/workflows",
+        headers={
+            "Origin": "http://ssh.manbalboy.com:7100",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 400
 
 
 def test_cors_blocks_non_manbalboy_domain():
@@ -53,6 +64,29 @@ def test_cors_blocks_non_manbalboy_domain():
         },
     )
     assert response.status_code == 400
+
+
+def test_cors_blocks_similar_lookalike_domain():
+    response = client.options(
+        "/api/workflows",
+        headers={
+            "Origin": "http://amanbalboy.com:7001",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_cors_allows_localhost_70xx():
+    response = client.options(
+        "/api/workflows",
+        headers={
+            "Origin": "http://localhost:7008",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:7008"
 
 
 def test_workflow_create_rejects_empty_graph():

@@ -53,6 +53,13 @@ export default function App() {
   }, [run?.id]);
 
   const runStatus = useMemo(() => run?.status ?? 'queued', [run?.status]);
+  const nodeStatuses = useMemo(
+    () =>
+      Object.fromEntries(
+        (run?.node_runs ?? []).map((node) => [node.node_id, node.status]),
+      ),
+    [run?.node_runs],
+  );
 
   const handleSaveWorkflow = async (payload: Omit<Workflow, 'id'>, existingId?: number) => {
     const saved = existingId ? await api.updateWorkflow(existingId, payload) : await api.createWorkflow(payload);
@@ -106,7 +113,12 @@ export default function App() {
         <main className="main-workspace">
           <LiveRunConstellation data={constellation} />
           <Dashboard run={run} />
-          <WorkflowBuilder workflow={activeWorkflow} onSave={handleSaveWorkflow} mobileViewOnly={isMobilePortrait} />
+          <WorkflowBuilder
+            workflow={activeWorkflow}
+            onSave={handleSaveWorkflow}
+            mobileViewOnly={isMobilePortrait}
+            nodeStatuses={nodeStatuses}
+          />
         </main>
 
         <aside className="right-panel">
