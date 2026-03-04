@@ -45,7 +45,26 @@ def _extract_client_key(request: Request) -> str:
         except ValueError:
             logger.warning("Ignoring malformed x-forwarded-for header: host=%s value=%s", client_host, forwarded)
             return client_host
+
+    for candidate in reversed(candidates):
+        is_trusted_proxy = "*" in trusted_proxy_ips or candidate in trusted_proxy_ips
+        if not is_trusted_proxy:
+            return candidate
+
     return candidates[0]
+
+
+def _parse_workflow_id(value: object) -> int | None:
+    if type(value) is int:
+        return value if value > 0 else None
+
+    if type(value) is str:
+        trimmed = value.strip()
+        if trimmed.isdigit():
+            parsed = int(trimmed)
+            return parsed if parsed > 0 else None
+
+    return None
 
 
 def reset_webhook_limiter_for_tests() -> None:
@@ -159,7 +178,7 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
             normalized_event,
         )
         raise HTTPException(status_code=422, detail="workflow_id must be an integer")
-    workflow_id = int(workflow_id_raw) if type(workflow_id_raw) is int or str(workflow_id_raw).isdigit() else None
+    workflow_id = _parse_workflow_id(workflow_id_raw)
     if workflow_id_raw is not None and workflow_id is None:
         logger.warning(
             "Ignored webhook workflow_id due to parse failure: provider=%s event_type=%s raw_type=%s raw_value=%r",

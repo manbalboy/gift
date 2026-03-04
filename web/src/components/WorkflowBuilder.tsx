@@ -26,7 +26,11 @@ function convertToFlow(workflow: Workflow) {
   const nodes: Node[] = workflow.graph.nodes.map((n, idx) => ({
     id: n.id,
     position: { x: idx * 180, y: 70 + (idx % 2) * 50 },
-    data: { label: n.label, command: n.command ?? '', nodeType: n.type },
+    data: {
+      label: String(n.label ?? n.id),
+      command: n.command ?? '',
+      nodeType: String(n.type ?? 'task'),
+    },
     draggable: true,
   }));
 
@@ -108,6 +112,10 @@ export default function WorkflowBuilder({
     setSelectedNodeId(node.id);
   }, []);
 
+  const onPaneClick = useCallback(() => {
+    setSelectedNodeId(null);
+  }, []);
+
   return (
     <section className="card builder-card">
       <div className="card-header builder-header">
@@ -149,6 +157,7 @@ export default function WorkflowBuilder({
           onEdgesChange={mobileViewOnly ? undefined : onEdgesChange}
           onConnect={mobileViewOnly ? undefined : onConnect}
           onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
           fitView
         >
           <Background gap={20} size={1} color="#27324A" />

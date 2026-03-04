@@ -6,7 +6,7 @@ jest.mock('reactflow', () => {
   const React = require('react');
   return {
     __esModule: true,
-    default: ({ nodes, edges, onConnect, onNodeClick, children }: any) => (
+    default: ({ nodes, edges, onConnect, onNodeClick, onPaneClick, children }: any) => (
       <div>
         <div data-testid="node-count">{nodes.length}</div>
         <div data-testid="edge-count">{edges.length}</div>
@@ -18,6 +18,9 @@ jest.mock('reactflow', () => {
         </button>
         <button type="button" onClick={() => onNodeClick?.({}, nodes[0])}>
           select-first
+        </button>
+        <button type="button" onClick={() => onPaneClick?.({})}>
+          pane-click
         </button>
         {children}
       </div>
@@ -56,6 +59,16 @@ const sampleWorkflow: Workflow = {
     edges: [{ id: 'e1', source: 'idea', target: 'plan' }],
   },
 };
+
+const incompleteWorkflow = {
+  id: 11,
+  name: 'Incomplete Flow',
+  description: '불완전 노드 테스트',
+  graph: {
+    nodes: [{ id: 'broken-node', label: 'Broken' }],
+    edges: [],
+  },
+} as unknown as Workflow;
 
 describe('WorkflowBuilder', () => {
   test('워크플로우를 렌더링하고 모바일 세로에서는 mini-map을 숨긴다', () => {
@@ -125,6 +138,24 @@ describe('WorkflowBuilder', () => {
     expect(screen.getByText('ID')).toBeInTheDocument();
     expect(screen.getByText('idea')).toBeInTheDocument();
     expect(screen.getByText('Type')).toBeInTheDocument();
+    expect(screen.getByText('task')).toBeInTheDocument();
+  });
+
+  test('캔버스 바탕 클릭 시 노드 선택이 해제된다', () => {
+    render(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'select-first' }));
+    expect(screen.getByText('idea')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'pane-click' }));
+    expect(screen.getByText('캔버스에서 노드를 선택하면 ID와 Type을 확인할 수 있습니다.')).toBeInTheDocument();
+  });
+
+  test('불완전 노드 데이터가 들어와도 task 타입으로 fallback 렌더링된다', () => {
+    render(<WorkflowBuilder workflow={incompleteWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'select-first' }));
+    expect(screen.getByText('broken-node')).toBeInTheDocument();
     expect(screen.getByText('task')).toBeInTheDocument();
   });
 });
