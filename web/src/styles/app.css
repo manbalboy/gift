@@ -66,6 +66,7 @@ p {
 .toast-content {
   display: grid;
   gap: var(--space-4);
+  min-width: 0;
 }
 
 .toast-content strong {
@@ -77,6 +78,25 @@ p {
   font-size: 14px;
   line-height: 22px;
   color: var(--color-text-secondary);
+}
+
+.toast-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast-action {
+  justify-self: start;
+  margin-top: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-status-running) 55%, transparent);
+  background: color-mix(in srgb, var(--color-status-running) 22%, transparent);
+  color: var(--color-text-primary);
+  border-radius: 8px;
+  padding: 0 var(--space-8);
+  height: 28px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .toast-close {

@@ -56,16 +56,16 @@ def test_cors_allows_manbalboy_subdomain_with_31xx_port():
     assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:3106"
 
 
-def test_cors_allows_manbalboy_outside_31xx_port():
+def test_cors_allows_manbalboy_preview_70xx_port():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://ssh.manbalboy.com:3200",
+            "Origin": "http://ssh.manbalboy.com:7008",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:3200"
+    assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:7008"
 
 
 def test_cors_blocks_non_manbalboy_domain():
@@ -90,7 +90,7 @@ def test_cors_blocks_similar_lookalike_domain():
     assert response.status_code == 400
 
 
-def test_cors_allows_manbalboy_without_31xx_port():
+def test_cors_allows_manbalboy_without_port():
     response = client.options(
         "/api/workflows",
         headers={
@@ -112,6 +112,17 @@ def test_cors_allows_localhost_31xx():
     )
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3108"
+
+
+def test_cors_blocks_manbalboy_unsupported_port():
+    response = client.options(
+        "/api/workflows",
+        headers={
+            "Origin": "http://ssh.manbalboy.com:7200",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 400
 
 
 def test_workflow_create_rejects_empty_graph():

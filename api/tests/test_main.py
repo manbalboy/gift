@@ -11,12 +11,13 @@ from .conftest import client
     [
         "http://localhost",
         "https://localhost",
-        "http://localhost:9999",
+        "http://localhost:3999",
         "http://127.0.0.1",
-        "https://127.0.0.1:6553",
+        "https://127.0.0.1:3101",
+        "https://127.0.0.1:7099",
         "https://manbalboy.com",
-        "http://manbalboy.com:8080",
-        "http://ssh.manbalboy.com:3200",
+        "http://manbalboy.com:3001",
+        "http://ssh.manbalboy.com:7005",
     ],
 )
 def test_cors_allows_expected_origins(origin: str):
@@ -34,6 +35,9 @@ def test_cors_allows_expected_origins(origin: str):
         "http://evil-example.com:3100",
         "http://manbalboy.com.evil.com:3100",
         "http://amanbalboy.com:3101",
+        "http://localhost:2999",
+        "http://127.0.0.1:7100",
+        "http://ssh.manbalboy.com:7200",
     ],
 )
 def test_cors_blocks_untrusted_origins(origin: str):

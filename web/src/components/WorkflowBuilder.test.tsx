@@ -7,25 +7,33 @@ jest.mock('reactflow', () => {
   const React = require('react');
   return {
     __esModule: true,
-    default: ({ nodes, edges, onConnect, onNodeClick, onPaneClick, children }: any) => (
-      <div>
-        <div data-testid="node-count">{nodes.length}</div>
-        <div data-testid="edge-count">{edges.length}</div>
-        <button
-          type="button"
-          onClick={() => onConnect?.({ source: nodes[0]?.id ?? 'idea', target: nodes[1]?.id ?? 'plan' })}
-        >
-          connect
-        </button>
-        <button type="button" onClick={() => onNodeClick?.({}, nodes[0])}>
-          select-first
-        </button>
-        <button type="button" onClick={() => onPaneClick?.({})}>
-          pane-click
-        </button>
-        {children}
-      </div>
-    ),
+    default: ({ nodes, edges, onConnect, onNodeClick, onPaneClick, onInit, children }: any) => {
+      React.useEffect(() => {
+        onInit?.({
+          fitView: jest.fn(),
+          setCenter: jest.fn(),
+        });
+      }, [onInit]);
+      return (
+        <div>
+          <div data-testid="node-count">{nodes.length}</div>
+          <div data-testid="edge-count">{edges.length}</div>
+          <button
+            type="button"
+            onClick={() => onConnect?.({ source: nodes[0]?.id ?? 'idea', target: nodes[1]?.id ?? 'plan' })}
+          >
+            connect
+          </button>
+          <button type="button" onClick={() => onNodeClick?.({}, nodes[0])}>
+            select-first
+          </button>
+          <button type="button" onClick={() => onPaneClick?.({})}>
+            pane-click
+          </button>
+          {children}
+        </div>
+      );
+    },
     Background: () => null,
     Controls: ({ style }: any) => <div data-testid="controls" style={style} />,
     MiniMap: ({ style }: any) => <div data-testid="minimap" style={style} />,
@@ -166,7 +174,7 @@ describe('WorkflowBuilder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'select-first' }));
     expect(screen.getByText('broken-node')).toBeInTheDocument();
     expect(screen.getByText('task')).toBeInTheDocument();
-    expect(onNodeFallback).toHaveBeenCalledWith({ count: 1, signature: '11:broken-node' });
+    expect(onNodeFallback).toHaveBeenCalledWith({ count: 1, signature: '11:broken-node', nodeIds: ['broken-node'] });
   });
 
   test('ReactFlow 오버레이 위젯은 지정된 레이어 z-index로 렌더링된다', () => {

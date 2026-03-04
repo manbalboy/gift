@@ -30,6 +30,7 @@ export default function App() {
   const [constellation, setConstellation] = useState<ConstellationData | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [focusNodeRequest, setFocusNodeRequest] = useState<{ nodeId: string; requestId: number } | null>(null);
   const isMobilePortrait = useIsMobilePortrait();
   const activeRunRef = useRef<WorkflowRun | null>(null);
   const dedupedToastKeysRef = useRef<Set<string>>(new Set());
@@ -39,17 +40,38 @@ export default function App() {
     message: string,
     options?: {
       dedupeKey?: string;
+      action?: ToastItem['action'];
     },
   ) => {
     if (options?.dedupeKey) {
       if (dedupedToastKeysRef.current.has(options.dedupeKey)) return;
       dedupedToastKeysRef.current.add(options.dedupeKey);
     }
-    setToasts((prev) => [...prev, { id: createToastId(), level, message }].slice(-3));
+    setToasts((prev) => {
+      const next = [
+        ...prev,
+        { id: createToastId(), level, message, dedupeKey: options?.dedupeKey, action: options?.action },
+      ];
+      const overflowCount = Math.max(0, next.length - 3);
+      if (overflowCount > 0) {
+        next.slice(0, overflowCount).forEach((toast) => {
+          if (toast.dedupeKey) {
+            dedupedToastKeysRef.current.delete(toast.dedupeKey);
+          }
+        });
+      }
+      return next.slice(-3);
+    });
   };
 
   const closeToast = (id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    setToasts((prev) => {
+      const target = prev.find((toast) => toast.id === id);
+      if (target?.dedupeKey) {
+        dedupedToastKeysRef.current.delete(target.dedupeKey);
+      }
+      return prev.filter((toast) => toast.id !== id);
+    });
   };
 
   const loadWorkflows = async () => {
@@ -171,7 +193,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <div className="toast-stack" style={{ zIndex: LAYER_Z_INDEX.toast }} aria-label="시스템 알림">
+      <div className="toast-stack" data-testid="toast-stack" style={{ zIndex: LAYER_Z_INDEX.toast }} aria-label="시스템 알림">
         {toasts.map((item) => (
           <Toast key={item.id} item={item} onClose={closeToast} />
         ))}
@@ -221,11 +243,24 @@ export default function App() {
             onSave={handleSaveWorkflow}
             mobileViewOnly={isMobilePortrait}
             nodeStatuses={nodeStatuses}
-            onNodeFallback={({ count, signature }) => {
+            onNodeFallback={({ count, signature, nodeIds }) => {
+              const action = isMobilePortrait
+                ? undefined
+                : {
+                    label: '해당 노드로 이동',
+                    onClick: () => {
+                      const [firstNodeId] = nodeIds;
+                      if (!firstNodeId) return;
+                      setFocusNodeRequest({ nodeId: firstNodeId, requestId: Date.now() });
+                    },
+                  };
               enqueueToast('warning', `속성 누락 노드 ${count}개가 task 타입으로 폴백되었습니다.`, {
                 dedupeKey: signature,
+                action,
               });
             }}
+            focusNodeRequest={focusNodeRequest}
+            onFocusNodeHandled={() => setFocusNodeRequest(null)}
           />
         </main>
 

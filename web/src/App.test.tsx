@@ -22,13 +22,41 @@ jest.mock('./components/StatusBadge', () => ({
 
 jest.mock('./components/WorkflowBuilder', () => ({
   __esModule: true,
-  default: ({ onNodeFallback }: { onNodeFallback?: (payload: { count: number; signature: string }) => void }) => (
+  default: ({
+    onNodeFallback,
+  }: {
+    onNodeFallback?: (payload: { count: number; signature: string; nodeIds: string[] }) => void;
+  }) => (
     <section>
       <button
         type="button"
-        onClick={() => onNodeFallback?.({ count: 1, signature: 'wf-1:fallback-node-1' })}
+        onClick={() => onNodeFallback?.({ count: 1, signature: 'wf-1:fallback-node-a', nodeIds: ['fallback-node-a'] })}
       >
-        fallback-toast
+        fallback-a
+      </button>
+      <button
+        type="button"
+        onClick={() => onNodeFallback?.({ count: 2, signature: 'wf-1:fallback-node-b', nodeIds: ['fallback-node-b'] })}
+      >
+        fallback-b
+      </button>
+      <button
+        type="button"
+        onClick={() => onNodeFallback?.({ count: 3, signature: 'wf-1:fallback-node-c', nodeIds: ['fallback-node-c'] })}
+      >
+        fallback-c
+      </button>
+      <button
+        type="button"
+        onClick={() => onNodeFallback?.({ count: 4, signature: 'wf-1:fallback-node-d', nodeIds: ['fallback-node-d'] })}
+      >
+        fallback-d
+      </button>
+      <button
+        type="button"
+        onClick={() => onNodeFallback?.({ count: 1, signature: 'wf-1:fallback-node-a', nodeIds: ['fallback-node-a'] })}
+      >
+        fallback-a-repeat
       </button>
     </section>
   ),
@@ -75,12 +103,15 @@ const workflowsFixture: Workflow[] = [
   },
 ];
 
+const mobileMediaQuery = '(max-width: 767px) and (orientation: portrait)';
+let mobilePortrait = false;
+
 describe('App', () => {
   beforeAll(() => {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
-      value: (query: string) => ({
-        matches: false,
+      value: jest.fn().mockImplementation((query: string) => ({
+        matches: query === mobileMediaQuery ? mobilePortrait : false,
         media: query,
         onchange: null,
         addEventListener: jest.fn(),
@@ -88,11 +119,12 @@ describe('App', () => {
         addListener: jest.fn(),
         removeListener: jest.fn(),
         dispatchEvent: jest.fn(),
-      }),
+      })),
     });
   });
 
   beforeEach(() => {
+    mobilePortrait = false;
     jest.clearAllMocks();
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
     (api.subscribeWorkflowRuns as jest.Mock).mockReturnValue(() => undefined);
@@ -102,10 +134,46 @@ describe('App', () => {
     render(<App />);
     await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByRole('button', { name: 'fallback-toast' }));
-    fireEvent.click(screen.getByRole('button', { name: 'fallback-toast' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a-repeat' }));
 
     expect(screen.getAllByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toHaveLength(1);
+  });
+
+  test('Toast는 최대 3개만 유지하고 밀려난 dedupeKey는 재사용 가능하다', async () => {
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-b' }));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-c' }));
+    expect(screen.getAllByRole('button', { name: '알림 닫기' })).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-d' }));
+    expect(screen.getAllByRole('button', { name: '알림 닫기' })).toHaveLength(3);
+    expect(screen.queryByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a-repeat' }));
+    expect(screen.getAllByRole('button', { name: '알림 닫기' })).toHaveLength(3);
+    expect(screen.getByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toBeInTheDocument();
+    expect(screen.queryByText('속성 누락 노드 2개가 task 타입으로 폴백되었습니다.')).not.toBeInTheDocument();
+  });
+
+  test('fallback 알림은 데스크톱에서 문제 노드 이동 액션 버튼을 표시한다', async () => {
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
+
+    expect(screen.getByRole('button', { name: '해당 노드로 이동' })).toBeInTheDocument();
+  });
+
+  test('모바일 세로에서는 문제 노드 이동 액션 버튼을 숨긴다', async () => {
+    mobilePortrait = true;
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'fallback-a' }));
+
+    expect(screen.queryByRole('button', { name: '해당 노드로 이동' })).not.toBeInTheDocument();
   });
 
   test('Toast 레이어는 캔버스 위젯보다 높은 z-index를 사용한다', async () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -6,6 +6,7 @@ import ReactFlow, {
   addEdge,
   useEdgesState,
   useNodesState,
+  type ReactFlowInstance,
   type Connection,
   type Edge,
   type Node,
@@ -28,6 +29,7 @@ function convertToFlow(workflow: Workflow): {
   edges: Edge[];
   fallbackCount: number;
   fallbackSignature: string | null;
+  fallbackNodeIds: string[];
 } {
   let fallbackCount = 0;
   const fallbackNodeIds: string[] = [];
@@ -57,7 +59,7 @@ function convertToFlow(workflow: Workflow): {
     fallbackNodeIds.length > 0
       ? `${workflow.id}:${fallbackNodeIds.sort((a, b) => a.localeCompare(b)).join(',')}`
       : null;
-  return { nodes, edges, fallbackCount, fallbackSignature };
+  return { nodes, edges, fallbackCount, fallbackSignature, fallbackNodeIds };
 }
 
 export default function WorkflowBuilder({
@@ -66,12 +68,16 @@ export default function WorkflowBuilder({
   mobileViewOnly,
   nodeStatuses,
   onNodeFallback,
+  focusNodeRequest,
+  onFocusNodeHandled,
 }: {
   workflow: Workflow | null;
   onSave: (payload: Omit<Workflow, 'id'>, existingId?: number) => Promise<void>;
   mobileViewOnly: boolean;
   nodeStatuses?: Record<string, string>;
-  onNodeFallback?: (payload: { count: number; signature: string }) => void;
+  onNodeFallback?: (payload: { count: number; signature: string; nodeIds: string[] }) => void;
+  focusNodeRequest?: { nodeId: string; requestId: number } | null;
+  onFocusNodeHandled?: () => void;
 }) {
   const initial = useMemo(() => {
     if (workflow) return convertToFlow(workflow);
@@ -89,6 +95,7 @@ export default function WorkflowBuilder({
       ],
       fallbackCount: 0,
       fallbackSignature: null,
+      fallbackNodeIds: [],
     };
   }, [workflow]);
 
@@ -97,6 +104,8 @@ export default function WorkflowBuilder({
   const [title, setTitle] = useState(workflow?.name ?? 'Level 1 SDLC Pipeline');
   const [description, setDescription] = useState(workflow?.description ?? 'Idea에서 PR까지의 기본 파이프라인');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
+  const flowRef = useRef<ReactFlowInstance | null>(null);
 
   useEffect(() => {
     setTitle(workflow?.name ?? 'Level 1 SDLC Pipeline');
@@ -108,9 +117,40 @@ export default function WorkflowBuilder({
 
   useEffect(() => {
     if (initial.fallbackCount > 0 && initial.fallbackSignature) {
-      onNodeFallback?.({ count: initial.fallbackCount, signature: initial.fallbackSignature });
+      onNodeFallback?.({ count: initial.fallbackCount, signature: initial.fallbackSignature, nodeIds: initial.fallbackNodeIds });
     }
-  }, [initial.fallbackCount, initial.fallbackSignature, onNodeFallback]);
+  }, [initial.fallbackCount, initial.fallbackNodeIds, initial.fallbackSignature, onNodeFallback]);
+
+  useEffect(() => {
+    if (!focusNodeRequest || !flowRef.current) return;
+    const target = nodes.find((node) => node.id === focusNodeRequest.nodeId);
+    if (!target) {
+      onFocusNodeHandled?.();
+      return;
+    }
+    setSelectedNodeId(target.id);
+    const x = target.position.x + 90;
+    const y = target.position.y + 40;
+    flowRef.current.setCenter(x, y, { duration: 420, zoom: 1.15 });
+    onFocusNodeHandled?.();
+  }, [focusNodeRequest, nodes, onFocusNodeHandled]);
+
+  useEffect(() => {
+    const target = canvasWrapRef.current;
+    if (!target || !flowRef.current) return;
+
+    const syncViewport = () => {
+      if (!flowRef.current) return;
+      flowRef.current.fitView({ duration: 240, padding: mobileViewOnly ? 0.16 : 0.2 });
+    };
+
+    const observer = new ResizeObserver(() => {
+      window.requestAnimationFrame(syncViewport);
+    });
+    observer.observe(target);
+    syncViewport();
+    return () => observer.disconnect();
+  }, [mobileViewOnly]);
 
   const onConnect = useCallback(
     (params: Edge | Connection) => setEdges((eds) => addEdge({ ...params, id: `edge-${Date.now()}` }, eds)),
@@ -180,9 +220,12 @@ export default function WorkflowBuilder({
           );
         })}
       </div>
-      <div className="canvas-wrap">
+      <div className="canvas-wrap" ref={canvasWrapRef}>
         {mobileViewOnly && <div className="mobile-blocker">세로 모바일에서는 모니터링을 우선 제공하며 편집은 가로/태블릿 이상에서 권장됩니다.</div>}
         <ReactFlow
+          onInit={(instance) => {
+            flowRef.current = instance;
+          }}
           nodes={nodes}
           edges={edges}
           onNodesChange={mobileViewOnly ? undefined : onNodesChange}
