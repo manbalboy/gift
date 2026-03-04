@@ -3,17 +3,17 @@
 - Job: `c1f5f30c-a8df-4ce0-bd66-de3acf0908fc`
 - Issue: `#65`
 - Stage: `summarize_code_changes`
-- Generated at: `2026-03-04T20:47:53.569440+00:00`
+- Generated at: `2026-03-04T21:03:41.831711+00:00`
 
 ## Changed Files
 | Status | Path | Added | Deleted |
 |---|---|---:|---:|
 | `M` | `COMMIT_MESSAGE_COMMIT_FIX.txt` | `1` | `1` |
-| `M` | `web/src/App.test.tsx` | `26` | `1` |
-| `M` | `web/src/components/Toast.test.tsx` | `35` | `0` |
-| `M` | `web/src/components/Toast.tsx` | `6` | `1` |
-| `M` | `web/src/styles/app.css` | `11` | `0` |
-| `M` | `web/tests/e2e/toast-layering.spec.ts` | `36` | `0` |
+| `M` | `web/src/App.test.tsx` | `12` | `0` |
+| `M` | `web/src/components/Toast.test.tsx` | `19` | `0` |
+| `M` | `web/src/components/Toast.tsx` | `23` | `4` |
+| `M` | `web/src/styles/app.css` | `11` | `1` |
+| `M` | `web/tests/e2e/toast-layering.spec.ts` | `45` | `0` |
 
 ## Notes
 - 본 문서는 구현 직후 변경 파일을 빠르게 검토하기 위한 자동 요약입니다.
