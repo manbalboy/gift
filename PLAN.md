@@ -2,68 +2,83 @@
 
 ## 1. Task breakdown with priority
 
-### [P0] 버그 픽스 및 보안 강화 (REVIEW.md 반영)
-- **상태 동기화 및 메모리 누수 해결**: `web/src/App.tsx` 내 Toast의 렌더링 사이클과 Ref 데이터 불일치 해결. `web/src/components/Toast.tsx`의 리사이즈 이벤트 클린업 보완.
-- **XSS 취약점 검증 및 제거**: 앱 전반에 걸쳐 외부 데이터 렌더링 무결성을 확보하고 `dangerouslySetInnerHTML` 사용 원천 배제 확인.
+### Priority 0 (Critical: 안정성 확보 및 버그 픽스 - REVIEW.md 기반)
+- **상태 동기화 및 최적화 (`web/src/App.tsx`, `web/src/components/Toast.tsx`)**
+  - Toast 렌더링 상태와 `dedupedToastKeysRef` 동기화 및 큐(Queue) 로직 안정성 확보.
+  - 윈도우 리사이즈 이벤트에 디바운스(Debounce)/쓰로틀(Throttle) 적용 및 명확한 언마운트 클린업.
+- **모바일 사용성 및 UI 개선 (`web/src/styles/app.css`)**
+  - 모바일 뷰포트에서 긴 텍스트 알림 확장 시 레이아웃 점핑을 방지하는 부드러운 `transition` 및 `max-height` 애니메이션 적용.
+  - 여러 개의 알림이 누적되었을 때 시야 확보를 위한 '일괄 닫기(Clear All)' 기능 구현.
+- **보안 검증**
+  - 전체 소스 코드에서 XSS 위험이 있는 `dangerouslySetInnerHTML` 사용을 검증하고 원천 배제 조치.
+- **테스트 커버리지 보강 (`web/tests/`, `web/src/`)**
+  - `App.test.tsx`에 `jest.useFakeTimers()`를 도입하여 동시성 웹훅 유입에 대한 단위 테스트 추가.
+  - `Toast.test.tsx`에 뷰포트 모킹을 통한 모바일 화면 동작(말줄임, 분기 등) 테스트 구현.
+  - 포트 3100 타겟(`npm run dev -- --port 3100`) 환경에서 Playwright 기반 시각적 회귀 및 리사이징 테스트(`toast-layering.spec.ts`) 시나리오 강화.
 
-### [P1] 사용성 및 UI/UX 개선 (REVIEW.md 반영)
-- **리사이즈 이벤트 최적화**: `web/src/components/Toast.tsx`에 리사이즈 디바운스/쓰로틀 로직을 적용하여 연속적인 크기 조절 시 과도한 리렌더링 및 UI 멈춤 현상 방지.
-- **모바일 애니메이션 및 레이아웃 개선**: `web/src/styles/app.css` (또는 토큰 CSS) 수정. 모바일 뷰포트에서 텍스트 확장(Expand) 탭 조작 시 부드러운 전환을 위해 `max-height` 및 `transition` 애니메이션 적용, 레이아웃 깨짐(Jumping) 해결.
+### Priority 1 (DevFlow 핵심 아키텍처 구성 - SPEC.md 기반)
+- **Workflow Engine 고도화 (API)**
+  - 기존 고정 파이프라인을 `workflow_id` 기반 실행 엔진으로 전환.
+  - `node_runs` 실행 이력을 저장하여 재시도, 재개(Resume), Human-in-the-loop 관측 기반 마련.
+- **Visual Workflow Builder (Web)**
+  - React Flow를 도입하여 노드 팔레트, 드래그 앤 드롭 연결, 노드 속성 패널을 갖춘 시각적 편집 UI 구현.
+- **Workspace 데이터 저장소 정규화 (API/DB)**
+  - JSON/SQLite 구조에서 확장하여 Postgres 기반(또는 초기 파일 기반 정규화)으로 Run, Artifacts 스키마 저장.
 
-### [P2] 테스트 커버리지 확보 (REVIEW.md 반영)
-- **상태 경합 단위 테스트**: `web/src/App.test.tsx` 보강. `jest.useFakeTimers()`를 활용하여 동시성 이벤트 및 `dedupeKey`를 통한 상태 경합(Race Condition) 방어 로직 검증.
-- **모바일 뷰포트 단위 테스트**: `web/src/components/Toast.test.tsx` 보강. 뷰포트 크기 모킹을 통해 텍스트 말줄임 조건 및 렌더링 무결성 관련 분기 테스트 추가.
-- **E2E 테스트 구현**: 포트 3100 타겟팅. Playwright를 활용하여 동적 브라우저 리사이징 및 모바일 화면의 시각적 반응성 결함을 교차 검증하는 `web/tests/e2e/toast-layering.spec.ts` 시나리오 보강.
-
-### [P3] 고도화 플랜 (인접 기능 추가)
-- **Toast 알림 일괄 닫기(Clear All) 기능 추가**: 현재 개별 알림 닫기만 가능하나, 여러 알림이 쌓였을 때 사용자 경험을 개선하는 일괄 닫기 로직 및 UI 요소 추가 (`web/src/App.tsx`, `web/src/components/Toast.tsx`).
-- **근거 및 경계**: 기존 Toast 알림의 상태(Queue) 관리 로직을 리팩토링하는 과정에서 상태 동기화 개선과 직접적으로 연결되는 기능입니다. 별도의 도메인 확장이 아니며, 최소한의 렌더링 사이클로 UI 편의성을 높일 수 있습니다.
+### Priority 2 (Agent 추상화 및 생태계 확장)
+- **Agent SDK 및 Marketplace 패키징**
+  - Planner, Coder, Reviewer 등 에이전트 역할을 분리하고 입출력 스키마, 툴셋, 프롬프트를 표준 명세화.
+- **Dashboard 메트릭 고도화**
+  - 리드타임, 재작업률, 실패율 등 KPI 지표 추가 및 SSE/WebSocket 기반 실시간 로그 스트림 연결.
 
 ## 2. MVP scope / out-of-scope
 
 ### MVP Scope
-- `REVIEW.md`에 나열된 Functional bugs, Security concerns, Edge cases의 근본적 해결.
-- `web/src/App.tsx`, `web/src/components/Toast.tsx`, `web/src/styles/app.css`를 중심으로 한 프론트엔드 상태 및 스타일 리팩토링.
-- Jest 기반 단위 테스트 및 Playwright 기반 E2E 테스트(포트 3100) 보완.
-- Toast 알림 일괄 닫기 액션 기능 추가.
+- `REVIEW.md`에 명시된 Web 화면 내 Toast 컴포넌트의 모든 렌더링 버그 수정 및 최적화, 보안 이슈 제거.
+- 테스트 환경(포트 3100 기반 E2E 및 Fake Timers 기반 유닛 테스트) 완비.
+- 알림 편의성을 위한 '일괄 닫기' UI 제공.
+- 백엔드의 FastAPI 기반 노드 실행 이력(`node_runs`) 관리 API.
+- 웹의 React Flow 기반 단일 워크플로우 Visual Builder (노드 배치 및 설정 패널 기초 구현).
 
 ### Out-of-scope
-- 백엔드 API (FastAPI) 로직, 워크플로우 엔진, 에이전트 마켓플레이스 영역 수정.
-- Toast 알림 시스템 이외의 대시보드 UI/UX 전면 개편.
-- 경고(Warning) 및 오류(Error) 외 새로운 알림 레벨(Info, Success 등) 추가 도입.
+- Temporal 또는 LangGraph 같은 완전한 외부 분산 오케스트레이션 엔진 전면 교체 (현재는 기존 Worker 연장선에서 구현).
+- GitHub 외 Linear 연동 등 복잡한 서드파티 통합.
+- 다중 사용자 권한 모델 (Role-Based Access Control).
 
 ## 3. Completion criteria
-- `web/src/App.tsx`에서 Toast 상태와 `dedupedToastKeysRef` 간의 데이터 불일치가 발생하지 않으며, 알림 최대 개수(3개) 초과 시 큐 로직이 안정적으로 동작함.
-- 창 크기 연속 조절 시 디바운스 처리로 렌더링 지연이 발생하지 않고 메모리 누수가 없음.
-- 모바일 뷰포트에서 확장 탭 터치 시 부자연스러운 점핑 없이 부드러운 애니메이션(Transition)이 정상 적용됨.
-- 소스 코드 전체에서 `dangerouslySetInnerHTML` 사용 내역이 발견되지 않음.
-- 추가/보강된 Jest 단위 테스트와 Playwright E2E 테스트가 포트 3100 로컬 환경에서 모두 통과함.
+- 모든 TODO 항목(리사이징 최적화, 애니메이션 부드러움, `dangerouslySetInnerHTML` 배제)이 적용되고 수동 테스트 시 레이아웃 깨짐 현상이 없어야 함.
+- Playwright E2E 테스트가 로컬 포트 3100 환경에서 동적 리사이즈 및 초고속 이벤트 발생 시나리오를 100% 통과해야 함.
+- React Flow 에디터에서 워크플로우 노드를 생성하고 연결 데이터를 JSON으로 안정적으로 추출/저장할 수 있어야 함.
 
 ## 4. Risks and test strategy
-
-### Risks
-- 다수의 웹훅 이벤트가 밀리초 단위로 동시에 유입될 경우, 렌더링 사이클에 묶여 기존 상태 경합(Race Condition) 문제가 재발할 가능성.
-- E2E 테스트 시 렌더링 지연이나 모바일 뷰포트 전환 중 플래키(Flaky) 테스트 발생 우려.
-
-### Test Strategy
-- **상태 모킹 로직 검증**: Jest의 `useFakeTimers`와 `act`를 적극 활용, 극한의 알림 발생 시나리오에서도 상태 큐(Queue)가 꼬이지 않는지 단언(Assert) 중심 테스트 수행.
-- **이벤트 라이프사이클 검증**: 컴포넌트 마운트 및 언마운트 과정을 반복하여 이벤트 리스너(resize)의 완벽한 해제 여부 검증.
-- **E2E 시각적 회귀 방어**: 포트 3100을 지정한 개발 서버 환경(`npm run dev -- --port 3100`)을 타겟으로, 데스크톱/모바일 뷰포트를 오가며 상태 동기화 및 애니메이션 변화를 검증.
+- **위험 요소**: 
+  - 밀리초 단위로 웹훅 알림 다수 유입 시 React 생명주기 경합으로 인한 메모리 누수나 UI 프리징 위험.
+  - Visual Builder 도입 시, 상태 트리(노드/엣지 데이터) 관리가 비대해져 성능 저하 발생 가능성.
+- **테스트 전략**:
+  - **단위 테스트**: `jest.useFakeTimers()`를 통한 이벤트 큐 밀어내기 및 경합 조건 극한 모의(Mocking) 테스트 병행.
+  - **E2E 테스트**: Playwright 스크립트로 3100 포트를 겨냥해 뷰포트 사이즈를 쉴 새 없이 변경하는 브라우저 조작을 수행하며 렌더링 붕괴 및 시각적 회귀를 검증.
 
 ## 5. Design intent and style direction
-- **기획 의도**: 워크플로우 과정에서 발생하는 알림을 사용자에게 안정적이고 직관적으로 전달하여 상황 인지와 문제 해결을 돕는 핵심 경험 제공.
-- **디자인 풍**: 모던 대시보드형의 미니멀한 레이어드 카드형(Layered Card) 스타일.
-- **시각 원칙**:
-  - 컬러: Error는 명확한 붉은색 계열, Warning은 주황/노랑 계열을 통해 즉각적인 주의 환기.
-  - 패딩/마진: 과도한 텍스트 뭉침을 피하기 위해 카드 내부 요소 간 일관된 여백 적용.
-  - 타이포: 시스템 메시지에 부합하는 가독성 높은 산세리프(Sans-serif) 폰트 유지 및 헤더 볼드 처리.
-- **반응형 원칙**: 모바일 우선(Mobile-first) 규칙 적용. 767px 이하 화면에서는 너비에 맞게 배치되고 긴 텍스트는 말줄임 처리되며, 터치 시 부드럽게 세로로 확장되는 인터랙션 제공.
+- **기획 의도**: 워크플로우 진행 상태와 시스템 에러/성공 피드백을 사용자에게 실시간으로 직관적이고 끊김 없이 전달하여, 자동화 시스템에 대한 신뢰감을 형성합니다.
+- **디자인 풍**: 개발자 친화적인 모던 대시보드형 (노드 에디터 중심, 명확한 정보 위계의 카드형 배너).
+- **시각 원칙**: 
+  - 다크/라이트 모드 대응이 자연스러운 무채색 기반 중립적 컬러 구성.
+  - 여유로운 패딩/마진(최소 16px 이상)으로 밀집도 완화 및 가독성 확보.
+  - 알림 및 상태 노드에 명확한 시스템 컬러(Info, Success, Warning, Error)를 포인트로 적용.
+- **반응형 원칙**: 
+  - 모바일 우선(Mobile-First) 디자인 원칙 준수. 화면 크기 축소 시 컨텐츠는 수직 스택으로 재배열되며, 텍스트 확장 등의 인터랙션 시 반드시 부드러운 애니메이션을 동반합니다.
 
 ## 6. Technology ruleset
-- **플랫폼 분류**: web
-- **기반 기술**: React (TypeScript 적용, Vite 환경)
-- **상태 관리 및 로직**: React Hooks (`useState`, `useEffect`, `useRef` 등) 및 함수형 컴포넌트 구조 유지.
-- **스타일링**: 순수 CSS 기반 토큰 방식 (`web/src/styles/app.css` 등) 사용.
-- **실행 및 테스트 가이드**: 
-  - 개발 서버 및 E2E 테스트 타겟 포트는 `3100` 고정 (`npm run dev -- --port 3100`).
-  - 테스트 프레임워크: Jest (Unit/Integration), Playwright (E2E).
+- **플랫폼 분류**: web, api
+- **web**: React 기반(Vite 번들러 빌드), 워크플로우 에디터를 위해 React Flow 활용. 스타일링은 기존 CSS 체계 사용.
+- **api**: FastAPI 기반으로 기존 워커 프로세스와 연동 구조 유지.
+
+## 7. 고도화 플랜 (REVIEW 반영)
+기존 버그 수정(상태 관리 문제, 모바일 레이아웃 개선)과 자연스럽게 연결되는 인접 편의 기능들을 고도화 플랜으로 제안합니다.
+
+- **알림 스와이프 투 디스미스(Swipe to dismiss) 제스처 지원**
+  - **근거**: 모바일 환경에서 '일괄 닫기(Clear All)' 버튼을 누르기 전, 원하지 않는 특정 알림만 개별적으로 닫고 싶을 때 버튼 클릭보다 좌우 스와이프 제스처가 훨씬 직관적인 사용자 경험을 제공합니다.
+  - **구현 경계**: 모바일 뷰포트에서 터치 시작/이동/종료 이벤트를 감지하여 특정 임계치(Threshold) 이상 이동 시 해당 Toast 컴포넌트를 언마운트 처리.
+- **이벤트/알림 필터링 토글 UI**
+  - **근거**: 다중 에이전트 작업 시 초고속 다중 알림 발생이라는 엣지 케이스를 컴포넌트 내부 렌더링 최적화뿐 아니라 논리적으로도 방어하기 위해, 중요하지 않은 중간 진행 단계 이벤트 등을 사용자가 직접 끄고 켤 수 있게 합니다.
+  - **구현 경계**: 대시보드 환경설정 영역에 간단한 스위치 컴포넌트를 배치하여 특정 타입(예: info, debug)의 Toast를 노출하지 않도록 클라이언트 측 렌더링 로직에서 필터링 적용.
