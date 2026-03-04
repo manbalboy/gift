@@ -1,63 +1,57 @@
+```markdown
 # PLAN
 
 ## 1. Task breakdown with priority
-
-- **[P0] Toast 큐 상태 관리 및 식별자(dedupeKey) 누수 해결**
-  - **대상 파일**: `web/src/App.tsx`
-  - **작업 내용**: `enqueueToast` 호출 시 배열을 `.slice(-3)`으로 자르면서 큐에서 밀려난 이전 Toast들의 `dedupeKey`를 `dedupedToastKeysRef`에서 삭제하는 로직 추가.
-- **[P0] 모바일 상호작용 충돌 개선 및 오버플로우 방어**
-  - **대상 파일**: `web/src/components/Toast.tsx`, `web/src/styles/app.css`
-  - **작업 내용**: 모바일 뷰포트에서 `mobile-blocker`와 충돌하는 '노드로 이동' 액션 버튼 렌더링을 제한하고, 텍스트가 뷰포트를 벗어나지 않도록 말줄임 처리 클래스(`text-overflow: ellipsis`) 추가.
-- **[P1] 전역 상태 통합 단위 테스트 추가**
-  - **대상 파일**: `web/src/App.test.tsx` (신규)
-  - **작업 내용**: Toast 최대 3개 유지 검증, 밀려난 항목의 `dedupeKey` 해제 확인용 단위 테스트 작성.
-- **[P1] Z-Index E2E 테스트 보강**
-  - **대상 파일**: `web/tests/e2e/toast-layering.spec.ts`
-  - **작업 내용**: 시스템 알림 요소 렌더링 시 발생 상태를 실제로 트리거하여 `z-index` 속성을 정확히 검증.
+- **[P0] Toast 알림 큐 식별자 누수 수정 (Bug Fix)**
+  - 대상 파일: `web/src/App.tsx`
+  - 작업 내용: `enqueueToast` 함수 내에서 알림 큐를 `slice(-3)`으로 자를 때, 큐에서 제거되어 밀려나는 이전 Toast들의 `dedupeKey`를 `dedupedToastKeysRef`에서 `delete`하여 누수를 막고 동일 알림 무시 현상을 해결.
+- **[P1] 모바일 뷰포트 UI 오버플로우 및 상호작용 개선 (UI/UX)**
+  - 대상 파일: `web/src/components/Toast.tsx`, `web/src/styles/app.css`
+  - 작업 내용:
+    - 좁은 화면(모바일 뷰포트)에서 긴 텍스트가 뷰포트를 벗어나지 않도록 `app.css`에 `text-overflow: ellipsis`를 적용하는 모바일 전용 미디어 쿼리 추가.
+    - 모바일 뷰포트 감지 시 Toast 내부의 액션 버튼('노드로 이동' 등) 렌더링을 제한하거나 숨겨 `mobile-blocker`와의 상호작용 충돌을 방지.
+- **[P1] Toast 알림 큐 관리 단위 테스트 보강 (Testing)**
+  - 대상 파일: `web/src/App.test.tsx`
+  - 작업 내용: 모의 타이머(Fake Timers)를 활용하여 3개를 초과하는 알림 발생 시 큐 밀어내기가 올바르게 동작하는지, 그리고 제거된 항목의 `dedupeKey`가 정상 해제되는지 검증하는 단위 테스트 추가.
+- **[P2] Z-Index 및 렌더링 계층 E2E 테스트 보강 (Testing)**
+  - 대상 파일: `web/tests/e2e/toast-layering.spec.ts`
+  - 작업 내용: 모바일 뷰포트 크기를 시뮬레이션하여 시스템 알림이 항상 최상단에 노출되는지(Z-Index 검증) 확인하고, UI 요소 간 겹침 문제를 점검하는 Playwright E2E 테스트 보강.
+- **[P3] DevFlow 기반 안정적 알림 상태 연동 준비 (고도화 플랜)**
+  - 대상 범위: Web 프론트엔드
+  - 작업 내용: 향후 서버(FastAPI)에서 전달될 다양한 상태(review_needed, retrying 등) 이벤트를 Toast에서 병목 없이 소화할 수 있도록 현재의 큐 로직을 견고하게 최적화.
 
 ## 2. MVP scope / out-of-scope
-
-- **MVP scope**:
-  - `web/src/App.tsx` 내 Toast 큐 밀어내기 시 메모리 릭(`dedupeKey` 누수) 방지 처리.
-  - 좁은 화면(모바일)에서 Toast 액션 버튼 제한 및 텍스트 넘침 현상 해결(CSS 기반).
-  - 해당 결함을 커버하기 위한 `App.test.tsx` 테스트 추가 및 기존 E2E 테스트 보강.
+- **MVP Scope**:
+  - `web/src/App.tsx` 내 Toast 알림 큐 관리 로직 안정화 (`dedupeKey` 해제 로직).
+  - 모바일 환경에서의 Toast UI 말줄임 처리 및 액션 버튼 숨김.
+  - 개선된 로직을 방어하기 위한 프론트엔드 단위 테스트(`App.test.tsx`) 및 E2E 테스트(`toast-layering.spec.ts`) 작성.
 - **Out-of-scope**:
-  - 상태 관리 라이브러리(Zustand, Redux 등)로의 전면적인 구조 변경. (기존 React 상태 및 `useRef` 구조 유지)
-  - CORS 관련 정규표현식 변경. (현재 SPEC 요구사항을 충족하므로 MVP 작업에서 제외)
+  - `SPEC.md`에 명시된 장기 과제(Temporal/LangGraph 엔진 도입, 대규모 워크플로우 백엔드 개편)는 본 MVP 구현 범위에 포함하지 않음.
+  - CORS 허용 도메인 정책 정규식은 운영 환경 호환을 위해 당장 수정하지 않으며, 보안 백로그로 이관.
 
 ## 3. Completion criteria
-
-- Toast 알림이 4번 연속 호출될 때, 큐에서 제거된 첫 번째 Toast의 `dedupeKey`가 정상적으로 해제되어 동일한 알림이 다시 표시될 수 있음.
-- `web/src/App.test.tsx` 내 단위 테스트 및 `web/tests/e2e/toast-layering.spec.ts` E2E 테스트가 모두 통과함.
-- 브라우저를 모바일 크기로 줄였을 때, 긴 Toast 메시지가 UI를 이탈하지 않고 `...` 처리되며 액션 버튼이 비활성화되거나 숨겨짐.
+- 로컬 개발 서버(예: `http://localhost:3000`) 접속 후, 동일한 경고 알림을 4번 이상 트리거 했을 때 첫 번째로 큐에서 제거된 알림이 재호출 시 무시되지 않고 정상적으로 렌더링되어야 함.
+- 브라우저 폭을 모바일 해상도로 조정 시 Toast 텍스트가 말줄임 처리되어 레이아웃을 이탈하지 않아야 함.
+- 모바일 해상도에서 Toast 내 액션 버튼이 숨겨져 `mobile-blocker`와의 클릭 겹침 문제가 발생하지 않아야 함.
+- `web/src/App.test.tsx` 테스트 실행 시 `dedupeKey` 누수 방지 검증 케이스가 모두 PASS 해야 함.
+- `web/tests/e2e/toast-layering.spec.ts` E2E 테스트 실행 시 모바일 해상도 기준 Z-Index가 정상 적용되어 통과해야 함.
 
 ## 4. Risks and test strategy
-
 - **Risks**:
-  - `slice(-3)` 과정에서의 큐 정리와 기존 `setTimeout` 기반의 `closeToast` 타이머 동작이 겹칠 경우 발생할 수 있는 잠재적 Race Condition.
-  - 모바일 CSS 분기점(Breakpoint)이 기존 캔버스 `mobile-blocker`와 일치하지 않아 예외 해상도에서 액션 버튼이 오작동할 위험.
-- **Test strategy**:
-  - `App.test.tsx`에서 모의 타이머(Fake Timers)와 큐 조작을 혼합해 `dedupeKey` 누수 발생 조건을 재현 및 검증.
-  - E2E 테스트에서 뷰포트 크기를 모바일 수준으로 조정하고 강제로 오류 알림을 발생시켜 UI 가시성과 버튼 노출 여부 점검.
-  - 로컬 테스트 구동 시 포트 충돌 방지를 위해 `3000`번대 포트를 사용해 프리뷰 환경 검증.
+  - 기존 `setTimeout` 기반의 타이머 상태 제거 시점과 `slice(-3)`을 통한 배열 강제 정리가 겹치며 레이스 컨디션(Race Condition)이 발생하여 React 상태 업데이트 에러가 발생할 가능성.
+  - 특정 태블릿 등 예외적인 뷰포트에서 미디어 쿼리(Breakpoint)가 겹쳐 버튼이 반쯤 가려지는 UI 오작동 발생 위험.
+- **Test Strategy**:
+  - 단위 테스트(`App.test.tsx`)에서 Fake Timers를 사용해 시간 만료와 새로운 알림 푸시를 동시에 발생시키는 레이스 컨디션 엣지 케이스를 구현하고 방어.
+  - E2E 테스트(`toast-layering.spec.ts`)에서 모바일 및 태블릿의 경계 해상도를 명시적으로 주입하여 렌더링 계층(Z-Index)과 요소의 가시성(Visibility)을 단언(Assert).
 
 ## 5. Design intent and style direction
-
-- **기획 의도**: DevFlow Agent Hub 내 Workflow 실행 중 발생하는 각종 상태나 Fallback을 사용자에게 즉각적이고 안정적으로 전달. 특히 모바일 환경 등 제약이 많은 뷰포트에서 불필요한 오류 경험 방지.
-- **디자인 풍**: 대시보드형의 미니멀 및 모던 스타일.
-- **시각 원칙**: 잦은 알림에도 가독성을 해치지 않게 말줄임표로 길이를 제약하며, Z-index를 통해 겹침 오류 없이 항상 최상단에 정보가 렌더링되도록 구성.
-- **반응형 원칙**: 모바일 우선 규칙. 화면 너비가 좁을 시 복잡한 캔버스 이동 액션 등을 원천 제한하여 인지 부조화를 방지.
+- **기획 의도**: DevFlow 플랫폼의 다양한 워크플로우 상태(에러, 워크플로우 진행 등)를 사용자에게 알리는 과정에서, 알림이 누락되거나 메인 작업 화면을 가려 흐름을 방해하지 않는 안정적이고 깔끔한 알림 경험을 제공.
+- **디자인 풍**: 모던하고 직관적인 대시보드형 팝업(카드형 알림) 스타일.
+- **시각 원칙**: 시스템 상태(성공, 경고, 에러)에 부합하는 명확한 컬러 사용. 좁은 화면에서도 가독성을 잃지 않도록 텍스트 여백을 최적화하고 오버플로우를 정돈된 타이포그래피로 제어.
+- **반응형 원칙**: 모바일 우선(Mobile First). 모바일 뷰포트에서는 화면 공간을 차지하는 불필요한 액션 버튼을 생략하고 핵심 메시지에 집중.
 
 ## 6. Technology ruleset
-
 - **플랫폼 분류**: web
-- **기술 스택**: web 기능 고도화이므로 React(Vite 기반) 프레임워크 유지 및 활용.
-
-## 7. 고도화 플랜 단계 (REVIEW 반영)
-
-1. **Toast 큐 및 식별자(dedupeKey) 누수 오류 해결**
-   - **근거**: REVIEW.md의 버그 리포트. 큐에서 3개 초과로 탈락한 이전 Toast의 식별자가 제거되지 않아 신규 알림이 무시되는 치명적 버그 발생.
-   - **구현 경계**: `web/src/App.tsx`의 `enqueueToast` 상태 업데이트 로직 안에서, 새로 구성된 배열에 포함되지 못한 이전 상태들의 `dedupeKey`를 식별하고 `dedupedToastKeysRef`에서 `delete` 하는 코드만 최소한으로 추가.
-2. **Toast 모바일 상호작용 예외 처리 및 오버플로우 방어**
-   - **근거**: REVIEW.md에서 모바일 화면의 시야 차단(mobile-blocker) 중 액션 클릭 오류와 Fallback 메시지 초과 문제를 지적함.
-   - **구현 경계**: `web/src/components/Toast.tsx`에 전달되는 옵션에 따라 혹은 `web/src/styles/app.css` 내 미디어 쿼리를 사용하여 텍스트 길이를 잘라내는 CSS(`text-overflow: ellipsis`)를 적용하고 모바일 환경에서는 액션 요소 렌더링을 제한함.
+- **기술 스택**: web 플랫폼 환경이므로 React(Vite 기반) 중심으로 구현.
+- **테스트 도구**: 단위 테스트는 Jest, E2E 렌더링 계층 테스트는 Playwright를 기반으로 계획.
+```
