@@ -1,35 +1,35 @@
 # REVIEW
 
-현재 저장소 상태, `SPEC.md`, `PLAN.md`를 바탕으로 한 리뷰 결과입니다. 계획상 P0(우선순위 높음) 항목들은 대부분 완료 처리되었으나, P1 및 P2에 해당하는 UI 개선, 안정성 확보, 테스트 강화 작업이 아직 남아있습니다.
+#### Functional bugs
+- **Visual Workflow Builder 연동 오류 위험**: `PLAN.md`에 명시된 프론트엔드(ReactFlow) 데이터 구조와 백엔드(`validate_workflow`) API 간 페이로드 불일치로 인해 워크플로우 저장 및 드라이런 시 데이터 누락 혹은 에러가 발생할 위험이 있습니다.
+- **Toast 알림 중첩 및 화면 가림 문제**: 워크플로우 실패 시 노드 알림이 폭주하여 화면 전체를 덮거나 `durationMs` 음수 값 입력으로 인해 알림이 소멸되지 않고 UI를 망가뜨리는 치명적인 버그가 존재할 수 있습니다.
+- **대용량 아티팩트 처리로 인한 브라우저 크래시**: 수십 MB 크기의 로그나 스크린샷 렌더링 시 메모리 초과로 탭이 강제 종료될 가능성이 있습니다. 렌더링 최적화(Chunk loading 등)가 적용되지 않으면 심각한 기능 장애를 유발합니다.
 
-### Functional bugs
-- **Workflow Builder 상태 동기화**: `Visual Workflow Builder` 기능이 미완료 상태로 남아있습니다. ReactFlow 캔버스에서 노드를 추가하거나 엣지를 연결한 후 서버 측 `validate_workflow` API를 호출할 때, 페이로드 구조 불일치로 인한 저장 실패 버그가 발생할 가능성이 높습니다.
-- **Toast UI 컴포넌트 오류**: `PLAN.md`에서 지적된 바와 같이, 알림 컴포넌트에 음수 `durationMs` 값이 전달될 경우 즉시 언마운트되거나 타이머 렌더링에 버그가 발생할 수 있습니다.
-- **SSE 스트림 동기화 누수**: Threading Lock이 적용되었다고 하나, 클라이언트가 비정상적으로 연결을 종료할 경우 `active_stream_connections` 카운터가 어긋나 리소스 누수로 이어질 잠재적 버그가 존재합니다.
+#### Security concerns
+- **Human Gate 권한 검증 누락 위험**: 승인(Approve) 및 재개(Resume) API 호출 시 작업자의 권한을 체크하는 로직이 미비할 경우 악의적인 승인 우회가 발생할 수 있습니다.
+- **Webhook IP/HMAC 서명 검증 취약점**: 외부 시스템(GitHub, CI 등)으로부터 수신되는 Webhook 요청 헤더의 HMAC 암호화 서명 검증 및 IP Spoofing 차단 로직이 완벽히 적용되지 않으면 인가되지 않은 외부 요청이 임의의 워크플로우를 실행시킬 수 있습니다.
 
-### Security concerns
-- **IP Spoofing 및 Trusted Proxy 검증**: 클라이언트 IP 추출 로직에 방어 기제가 추가되었지만, 다중 리버스 프록시(예: 로컬 테스트 시 `http://localhost:3100` 포워딩 환경)를 통과하는 `X-Forwarded-For` 헤더에 대한 정밀한 파싱 및 검증이 우회될 가능성이 있습니다.
-- **Webhook 페이로드 변조**: `test_webhooks_api.py`가 존재하지만, GitHub 등 외부 연동에서 들어오는 이벤트 웹훅의 서명(Signature) 검증 로직이 불충분할 경우 악의적인 파이프라인 트리거가 발생할 수 있습니다.
-- **권한 우회 (Human Gate)**: 승인/수정/거절(approval) API가 구현되었으나, 권한이 없는 사용자가 임의의 `run_id`에 대해 resume API를 호출할 수 있는 접근 제어(Authorization) 누락 우려가 있습니다.
+#### Missing tests / weak test coverage
+- **Frontend E2E 테스트 부족**: 순환 연결 시 에러 방어, 캔버스 드래그 시뮬레이션 및 대용량 실패 메시지 폭주 상황을 검증하는 E2E 시나리오(`web/tests/e2e/workflow-builder.spec.ts`) 보강이 필요합니다.
+- **SSE Stream 누수 테스트 부재**: 다중 연결/해제 시 백엔드 단에서 `active_stream_connections`가 해제되지 않고 누수되는 현상을 재현하고 방어하기 위한 로컬 부하 테스트(Load Test) 커버리지가 미흡할 수 있습니다.
+- **Webhook 방어 단위 테스트 누락**: 유효하지 않은 HMAC 서명이나 비인가 IP 접근에 대해 정상적으로 401/403 응답을 반환하는지 확인하는 Mock 기반의 단위 테스트 확인이 요구됩니다.
 
-### Missing tests / weak test coverage
-- **프론트엔드 E2E 커버리지 부족**: `workflow-builder.spec.ts`가 추가되어 있으나, 복잡한 드래그 앤 드롭 동작, 노드 순환(Cycle) 연결 시도에 대한 브라우저 렌더링 락커 에러, 드라이런(Dry-run) 시뮬레이션 등에 대한 E2E 커버리지가 부족합니다.
-- **에지 케이스 단위 테스트 누락**: 객체 직렬화 오류 시의 UI Fallback, 긴 에러 메시지 반환 시의 UI 렌더링에 대한 컴포넌트 단위 테스트(`App.test.tsx`, `Toast.test.tsx`) 커버리지를 강화해야 합니다.
-- **데이터 무결성 통합 테스트**: 실행 이력이 있는 `workflow_id`에 대한 수정(PUT) 차단 로직이 구현되었으나, 동시에 여러 수정을 시도하는 경쟁 조건(Race Condition)에 대한 백엔드 부하 테스트가 누락되어 있습니다.
-
-### Edge cases
-- **초대형 아티팩트 처리 지연**: 아티팩트(리포트, 스크린샷 등) 레지스트리 구축 시, 수십 MB에 달하는 로그나 결과물이 반환될 때 객체 스토어에서 프론트엔드로 전달되는 과정의 메모리 초과 현상이 일어날 수 있습니다.
-- **다중 Toast 알림 폭주**: 실패 노드가 연쇄적으로 발생하여 화면에 수십 개의 에러 알림이 동시에 뜰 경우, UI를 완전히 가리거나 브라우저 성능이 크게 저하될 수 있습니다. (최대 개수 제한 및 큐잉 로직 필요)
-- **비정상 워크플로우 재개 (Resume)**: Human Gate에서 대기 중인(`pending`) 작업이 오랜 시간 방치되어 기반 데이터가 변경된 후 뒤늦게 승인(approve)될 경우, 컨텍스트 불일치로 인한 워커 실행 실패 엣지 케이스가 존재합니다.
+#### Edge cases
+- **장기 대기 상태(Approval Pending) 후 재개 실패**: 휴먼 게이트(Human Gate)에서 `approval_pending` 상태로 매우 오랜 시간 대기 후 승인할 때, 워크플로우 엔진이 상태나 실행 컨텍스트를 잃어버려 Resume이 실패하는 엣지 케이스를 테스트해야 합니다.
+- **모바일 환경에서의 Toast 알림 레이아웃 파괴**: 데스크톱 기준의 긴 에러 메시지가 모바일 디바이스에서 화면을 넘어가거나 스와이프/터치 경험을 방해하는 현상이 발생할 수 있습니다.
+- **포트 충돌 방어**: 로컬 환경에서 프론트엔드 E2E 테스트 등을 실행할 때 프로세스 간섭을 막기 위해 실행 예시처럼 `3100` 포트를 고정으로 사용하여 E2E 워크플로우 빌더 테스트가 충돌 없이 구동되는지 점검이 필요합니다. (예: `PORT=3100 npx playwright test`)
 
 ---
 
 # TODO
 
-- [ ] `web/src/components/Toast.tsx`에 `durationMs` 음수 방어 로직 및 긴 텍스트 줄바꿈(`word-break: break-all`) CSS 적용
-- [ ] 노드 알림 폭주 방지를 위한 Toast 알림 큐잉(Queueing) 스케줄러 구현
-- [ ] `web/tests/e2e/workflow-builder.spec.ts`에 ReactFlow 캔버스 드래그 및 서버 검증 실패(에러 응답) 시나리오 E2E 테스트 추가 (로컬 테스트 환경 포트 예: `3100` 기준 작성)
-- [ ] Visual Workflow Builder의 프론트엔드-백엔드 데이터 구조 연동 및 캔버스 저장 통합 구현 완료
-- [ ] 로컬 부하 테스트 스크립트를 작성하여 SSE 스트림 다중 연결/해제 시 `active_stream_connections` 누수 여부 검증
-- [ ] Human Gate API의 승인 처리 시 기반 아티팩트/컨텍스트 정합성 체크 로직 추가
-- [ ] Webhook 수신부 헤더의 HMAC 암호화 서명 검증 로직 점검 및 단위 테스트 보강
+- [ ] `web/src/components/Toast.tsx`에 `durationMs` 음수 방어 로직 및 긴 텍스트 UI 깨짐 방지를 위한 `word-break: break-all` CSS 속성 추가
+- [ ] 노드 실패 알림 폭주 시 다중 메시지를 순차적으로 보여주기 위한 Toast 큐잉(Queueing) 스케줄러 및 동시 노출 개수 제한 로직 구현
+- [ ] ReactFlow 캔버스의 노드/엣지 데이터 구조를 백엔드 `validate_workflow` API 페이로드 규격에 맞춰 동기화하고 저장 로직 연동
+- [ ] Human Gate API 승인 처리 시 권한 검증 로직 및 워크플로우 워커 실행 컨텍스트 정합성 체크 로직 추가
+- [ ] 수신 Webhook API에 대해 IP 검증 및 요청 헤더의 HMAC 암호화 서명 검증 로직 구현
+- [ ] 유효하지 않은 HMAC 서명 및 비정상 IP 접근을 차단하고 401/403 응답을 반환하는 Webhook 단위 테스트 작성
+- [ ] 로컬 부하 테스트 스크립트를 작성하여 다수 연결/강제 종료 시 SSE 스트림의 `active_stream_connections` 누수 여부 확인
+- [ ] 대용량 로그/아티팩트를 프론트엔드에서 렌더링할 때 브라우저 메모리 초과를 막기 위한 뷰어 성능 최적화(Chunk loading) 적용
+- [ ] 로컬 테스트 포트 `3100`을 활용하여 Workflow Builder 캔버스 드래그, 순환 연결 에러 및 드라이런 시뮬레이션을 검증하는 Playwright E2E 스크립트 작성
+- [ ] 장시간 `approval_pending` 대기 후 Human Gate를 승인했을 때 다음 노드로 정상 이행(Resume)되는지 확인하는 통합 테스트 작성
