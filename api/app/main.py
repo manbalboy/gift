@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 import subprocess
+import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import workflows as workflows_api
 from app.api.agents import router as agents_router
 from app.api.webhooks import router as webhooks_router
 from app.api.workflows import router as workflows_router
@@ -11,6 +13,9 @@ from app.api.workflows import run_router, engine as workflow_engine
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
+
+_docker_health_cache_until = 0.0
+_docker_health_cached = False
 
 
 def ensure_docker_daemon_available() -> None:
@@ -54,7 +59,7 @@ app.add_middleware(
         "http://manbalboy.com:3101",
     ],
     allow_origin_regex=(
-        r"^https?://(?:(?:localhost|127\.0\.0\.1):31\d{2}|(?:[A-Za-z0-9-]+\.)*manbalboy\.com:31\d{2})$"
+        r"^https?://(?:(?:localhost|127\.0\.0\.1)(?::\d{1,5})?|(?:[A-Za-z0-9-]+\.)*manbalboy\.com(?::\d{1,5})?)$"
     ),
     allow_credentials=True,
     allow_methods=["*"],
@@ -64,9 +69,36 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 
+def _docker_daemon_available_cached() -> bool:
+    global _docker_health_cache_until
+    global _docker_health_cached
+    now = time.monotonic()
+    if now < _docker_health_cache_until:
+        return _docker_health_cached
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=1,
+        )
+        _docker_health_cached = result.returncode == 0
+    except Exception:
+        _docker_health_cached = False
+    _docker_health_cache_until = time.monotonic() + 3
+    return _docker_health_cached
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    limiter_health = workflows_api.reconnect_rate_limiter.health_snapshot()
+    return {
+        "status": "ok",
+        "docker_available": _docker_daemon_available_cached(),
+        "sse_rate_limiter": limiter_health,
+    }
 
 
 app.include_router(workflows_router, prefix=settings.api_prefix)

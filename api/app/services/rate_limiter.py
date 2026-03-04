@@ -97,24 +97,69 @@ class SSEReconnectRateLimiter:
         self._local = LocalSlidingWindowRateLimiter()
         self._redis: RedisSlidingWindowRateLimiter | None = None
         self._backend = (backend or settings.sse_rate_limit_backend).lower()
+        self._redis_guard = threading.Lock()
+        self._redis_fallback_until = 0.0
+        self._redis_fallback_error = ""
 
         if self._backend == "redis":
             try:
                 self._redis = RedisSlidingWindowRateLimiter(settings.redis_url)
             except Exception as exc:
-                logger.warning("Redis SSE rate limiter disabled, using local fallback: %s", exc)
+                ratio = max(0.1, min(1.0, float(settings.sse_local_fallback_limit_ratio)))
+                logger.warning(
+                    "Redis SSE rate limiter disabled, using local fallback with conservative ratio=%.2f: %s",
+                    ratio,
+                    exc,
+                )
                 self._redis = None
 
     def allow(self, key: str, limit: int, window_seconds: float) -> bool:
+        fallback_ratio = max(0.1, min(1.0, float(settings.sse_local_fallback_limit_ratio)))
+        fallback_limit = max(1, int(limit * fallback_ratio))
         if self._backend == "redis" and self._redis is not None:
-            try:
-                return self._redis.allow(key=key, limit=limit, window_seconds=window_seconds)
-            except RedisError as exc:
-                logger.warning("Redis SSE rate limiter failed, using local fallback: %s", exc)
-        return self._local.allow(key=key, limit=limit, window_seconds=window_seconds)
+            with self._redis_guard:
+                now = time.monotonic()
+                if now < self._redis_fallback_until:
+                    return self._local.allow(key=key, limit=fallback_limit, window_seconds=window_seconds)
+                try:
+                    allowed = self._redis.allow(key=key, limit=limit, window_seconds=window_seconds)
+                    self._redis_fallback_until = 0.0
+                    self._redis_fallback_error = ""
+                    return allowed
+                except RedisError as exc:
+                    fallback_ttl = max(0.5, float(settings.sse_redis_fallback_ttl_seconds))
+                    self._redis_fallback_until = time.monotonic() + fallback_ttl
+                    self._redis_fallback_error = str(exc)
+                    logger.warning(
+                        "Redis SSE rate limiter failed, fallback enabled for %.1fs: key=%s requested_limit=%s effective_limit=%s window=%ss error=%s",
+                        fallback_ttl,
+                        key,
+                        limit,
+                        fallback_limit,
+                        window_seconds,
+                        exc,
+                    )
+        return self._local.allow(key=key, limit=fallback_limit, window_seconds=window_seconds)
 
     def reset_for_tests(self) -> None:
         self._local.reset()
+        with self._redis_guard:
+            self._redis_fallback_until = 0.0
+            self._redis_fallback_error = ""
+
+    def health_snapshot(self) -> dict[str, object]:
+        now = time.monotonic()
+        with self._redis_guard:
+            fallback_remaining = max(0.0, self._redis_fallback_until - now)
+            fallback_active = fallback_remaining > 0
+            fallback_error = self._redis_fallback_error if fallback_active else ""
+        return {
+            "backend": self._backend,
+            "redis_enabled": self._redis is not None,
+            "fallback_active": fallback_active,
+            "fallback_remaining_seconds": round(fallback_remaining, 3),
+            "fallback_error": fallback_error,
+        }
 
 
 def create_sse_reconnect_limiter(backend: str | None = None) -> SSEReconnectRateLimiter:

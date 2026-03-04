@@ -2,6 +2,9 @@ import os
 import signal
 import subprocess
 import tempfile
+import logging
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Protocol
@@ -12,6 +15,7 @@ from app.services.workspace import WorkspaceService, InvalidNodeIdError
 
 
 DEFAULT_TIMEOUT_SECONDS = 300
+logger = logging.getLogger(__name__)
 
 
 class ScriptRunner(Protocol):
@@ -139,6 +143,12 @@ class DockerRunner(BaseRunner):
         self.image = image or settings.docker_image
         self.workspaces_root = str(Path(workspaces_root or settings.workspaces_root).resolve())
         self.workspace_service = WorkspaceService(root=self.workspaces_root)
+        self._docker_ping_ttl = max(0.0, float(settings.docker_ping_cache_ttl_seconds))
+        self._docker_ping_negative_ttl = max(0.0, float(settings.docker_ping_negative_cache_ttl_seconds))
+        self._docker_ping_cache_until = 0.0
+        self._docker_ping_negative_cache_until = 0.0
+        self._docker_ping_last_error = "docker daemon unavailable"
+        self._docker_ping_guard = threading.Lock()
 
     def _build_docker_command(self, container_name: str, script_path: str, task_workspace: str) -> list[str]:
         return [
@@ -190,17 +200,41 @@ class DockerRunner(BaseRunner):
     def _docker_ping(self) -> None:
         if not settings.require_docker_ping_per_run:
             return
-        result = subprocess.run(
-            ["docker", "info"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=3,
-        )
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "unknown docker error").strip()
-            raise RuntimeError(f"docker daemon unavailable: {detail}")
+        now = time.monotonic()
+        if self._docker_ping_ttl > 0 and now < self._docker_ping_cache_until:
+            logger.debug("docker ping cache hit")
+            return
+        if self._docker_ping_negative_ttl > 0 and now < self._docker_ping_negative_cache_until:
+            logger.debug("docker ping negative cache hit")
+            raise RuntimeError(self._docker_ping_last_error)
+
+        with self._docker_ping_guard:
+            now = time.monotonic()
+            if self._docker_ping_ttl > 0 and now < self._docker_ping_cache_until:
+                logger.debug("docker ping cache hit (locked)")
+                return
+            if self._docker_ping_negative_ttl > 0 and now < self._docker_ping_negative_cache_until:
+                logger.debug("docker ping negative cache hit (locked)")
+                raise RuntimeError(self._docker_ping_last_error)
+
+            result = subprocess.run(
+                ["docker", "info"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout or "unknown docker error").strip()
+                self._docker_ping_last_error = f"docker daemon unavailable: {detail}"
+                if self._docker_ping_negative_ttl > 0:
+                    self._docker_ping_negative_cache_until = time.monotonic() + self._docker_ping_negative_ttl
+                raise RuntimeError(self._docker_ping_last_error)
+            self._docker_ping_cache_until = time.monotonic() + self._docker_ping_ttl
+            self._docker_ping_negative_cache_until = 0.0
+            self._docker_ping_last_error = ""
+            logger.debug("docker ping refreshed (ttl=%.1fs)", self._docker_ping_ttl)
 
     def run(self, request: AgentTaskRequest) -> AgentTaskResult:
         command = self._resolve_command(request)

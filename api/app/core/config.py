@@ -23,7 +23,13 @@ class Settings:
         os.getenv("DEVFLOW_REQUIRE_DOCKER_PING_PER_RUN"),
         default=True,
     )
+    docker_ping_cache_ttl_seconds: float = float(os.getenv("DEVFLOW_DOCKER_PING_CACHE_TTL_SECONDS", "15"))
+    docker_ping_negative_cache_ttl_seconds: float = float(
+        os.getenv("DEVFLOW_DOCKER_PING_NEGATIVE_CACHE_TTL_SECONDS", "4")
+    )
     docker_image: str = os.getenv("DEVFLOW_DOCKER_IMAGE", "bash:5.2")
+    github_webhook_secret: str = os.getenv("DEVFLOW_GITHUB_WEBHOOK_SECRET", "")
+    generic_webhook_secret: str = os.getenv("DEVFLOW_GENERIC_WEBHOOK_SECRET", "")
 
     lock_backend: str = os.getenv("DEVFLOW_LOCK_BACKEND", "local")
     redis_url: str = os.getenv("DEVFLOW_REDIS_URL", "redis://localhost:6379/0")
@@ -32,6 +38,8 @@ class Settings:
     sse_reconnect_limit_per_second: int = int(os.getenv("DEVFLOW_SSE_RECONNECT_LIMIT_PER_SECOND", "2"))
     sse_rate_limit_backend: str = os.getenv("DEVFLOW_SSE_RATE_LIMIT_BACKEND", "redis")
     sse_rate_limit_window_seconds: int = int(os.getenv("DEVFLOW_SSE_RATE_LIMIT_WINDOW_SECONDS", "1"))
+    sse_local_fallback_limit_ratio: float = float(os.getenv("DEVFLOW_SSE_LOCAL_FALLBACK_LIMIT_RATIO", "0.5"))
+    sse_redis_fallback_ttl_seconds: float = float(os.getenv("DEVFLOW_SSE_REDIS_FALLBACK_TTL_SECONDS", "4"))
 
     @property
     def database_url(self) -> str:
