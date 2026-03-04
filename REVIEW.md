@@ -1,25 +1,31 @@
 # REVIEW
 
 ## Functional bugs
-- **API CORS 정규식 범위 오류**: `api/app/main.py` 파일의 CORS 설정 중 `allow_origin_regex`가 `31\d{2}`와 같이 3100번대 포트를 강제하고 있습니다. SPEC 문서에서는 `manbalboy.com` 도메인(서브도메인 포함)일 경우 포트가 달라도 허용해야 한다고 명시되어 있습니다. 현재 구현상으로는 기본 프로덕션 포트(80, 443 등)를 사용하는 정상적인 프론트엔드 호스트 접근이 CORS 오류로 차단되는 기능적 결함이 발생합니다.
+- **CORS 정규식 정책 불일치**:
+  `api/app/main.py`의 `allow_origin_regex`에서 `localhost` 및 `127.0.0.1`에 대해 `31\d{2}` 패턴을 강제하고 있어, 지정된 특정 포트(예: 3100, 3101 등)로만 접근이 제한됩니다. SPEC.md에서는 `https://localhost`, `http://localhost` 등 포트에 제약받지 않는 도메인 정책을 명시하고 있으므로, 정규식을 완화하여 요구사항에 맞는 유연한 접근을 허용해야 합니다.
 
 ## Security concerns
-- **GitHub Webhook 서명 검증 누락**: `api/app/api/webhooks.py`의 `receive_dev_integration_webhook` 엔드포인트에 `X-Hub-Signature-256` 기반의 HMAC 검증 로직이 없습니다. 기존 SPEC에서 GitHub Issues 웹훅 기반으로 트리거 시 HMAC 서명을 검증하던 철학이 누락되었습니다. 누구나 임의의 페이로드로 웹훅 API를 호출하여 컨테이너 환경에서 워크플로우 엔진을 트리거할 수 있는 중대한 RCE/보안 취약점이 존재합니다.
-- **Generic 웹훅 엔드포인트 인증 부재**: GitHub 이벤트가 아닌 커스텀 CI/CD 등 범용적인 이벤트의 경우에도 아무런 인증(API 토큰 등) 절차 없이 `workflow_id`만 전달하면 파이프라인이 실행됩니다. 이는 악의적인 공격자에 의한 시스템 리소스 고갈(DoS) 공격에 매우 취약합니다.
+- **Webhook Payload Memory Exhaustion (DoS)**:
+  `api/app/api/webhooks.py` 내의 `receive_dev_integration_webhook` 엔드포인트에서 서명을 검증하기 위해 `raw_body = await request.body()`를 호출하여 외부 요청 전체를 메모리에 로드하고 있습니다. 악의적인 공격자가 기가바이트 단위의 거대한 페이로드를 전송할 경우 메모리 고갈(OOM)로 인한 서비스 거부(DoS) 상태가 유발될 수 있습니다. 애플리케이션 레벨에서 허용 가능한 최대 Payload 크기를 사전에 검증하는 방어 로직이 필요합니다.
 
 ## Missing tests / weak test coverage
-- **웹훅 보안 및 무결성 검증 테스트 누락**: `api/tests/test_webhooks_api.py` 등에 유효하지 않은 HMAC 서명을 전달하거나 서명이 아예 없는 악의적 요청을 보냈을 때 접근이 차단(401/403 등)되는지 확인하는 보안 중심의 단위 테스트가 부족합니다.
-- **Docker Ping 실패 시나리오 테스트 미흡**: Docker 데몬에 문제가 발생해 `docker info` 명령이 행(Hang)에 걸릴 경우를 대비해 3초 타임아웃을 주었으나, 실제 타임아웃 예외가 발생했을 때 프로세스가 좀비 상태가 되지 않고 워커가 안전하게 실패를 기록하는지에 대한 Mocking 기반 예외 테스트 코드가 부족합니다.
-- **Redis Rate Limiter 동시성 Fallback 테스트**: Redis가 다운되었을 때 예외를 잡고 로컬 인메모리 처리로 넘어가는 로직에 대해, 다수의 요청이 동시에 몰릴 경우 제대로 제어가 이루어지는지 검증하는 스트레스성 테스트 커버리지가 취약합니다.
+- **CORS 및 Middleware 정책 검증 단위 테스트 부재**:
+  `test_webhooks_api.py`와 `test_rate_limit.py` 등 보안 인증과 관련된 테스트는 구현되었으나, `main.py`에 적용된 복잡한 `allow_origin_regex` 및 `allow_origins` 설정이 정상적으로 인바운드 트래픽을 필터링하는지 확인하는 통합 테스트 파일(예: `test_main.py`)이 누락되어 있습니다.
+- **Rate Limiter의 Fallback 전환에 대한 부하/스트레스 테스트 한계**:
+  Redis 장애 발생 시 로컬 시스템으로 대체(Fallback)되는 로직의 기능 테스트는 존재하나, 장애가 지속되는 상황에서 다량의 동시 요청이 발생할 경우 성능 저하 및 소켓 타임아웃 오버헤드가 적절히 통제되는지를 검증하는 스트레스 테스트 커버리지가 부족합니다.
 
 ## Edge cases
-- **Redis 장애 시 로컬 Fallback으로 인한 글로벌 Rate Limit 무력화**: `api/app/services/rate_limiter.py`에서 Redis 통신 장애 시 즉시 `LocalSlidingWindowRateLimiter`로 우회하도록 구성한 점은 훌륭합니다. 그러나 다중 워커(Scale-out)로 운영되는 프로덕션 환경에서 Redis 장애가 발생하면, 모든 워커가 각각 독립적인 로컬 인메모리 카운터를 유지하므로 전체 Rate Limit 허용량이 워커 대수(N배)만큼 일시적으로 늘어나 클라이언트 폭주를 완전히 방어하지 못하는 엣지 케이스가 존재합니다.
-- **매 작업마다 실행되는 Docker Ping 부하**: `agent_runner.py`의 `_docker_ping()`이 태스크 단위(run)로 매번 3초 타임아웃 서브프로세스를 생성하며 데몬 상태를 점검합니다. 1개의 워크플로우 내에서 초 단위로 노드가 짧게 여러 개 실행될 경우 불필요한 시스템 I/O 오버헤드를 유발하여 전체 워크플로우 처리 속도와 효율을 떨어뜨릴 수 있습니다.
+- **Boolean 타입의 workflow_id 파싱**:
+  웹훅 페이로드 파싱 시 `isinstance(workflow_id_raw, int)`를 통해 정수 여부를 판별하고 있습니다. 파이썬에서 `bool` 타입은 `int`를 상속받기 때문에, JSON 페이로드로 `{"workflow_id": true}`가 수신될 경우 값이 `1`로 잘못 캐스팅되어 의도치 않게 1번 워크플로우가 트리거될 위험이 존재합니다.
+- **Docker Ping 실패 시의 연속 지연(Negative Cache 부재)**:
+  `AgentRunner`의 `_docker_ping()`은 상태 검증에 성공했을 때만 `_docker_ping_cache_until`을 갱신합니다. 만약 Docker 데몬 프로세스가 다운된 상태라면 캐시가 갱신되지 않으므로 워커가 할당받은 매 태스크마다 3초(timeout)의 대기를 거치게 되며, 이는 전체 워커 시스템의 쓰레드 고갈 및 장기적인 병목을 초래합니다.
+- **Redis 장애 시 반복적인 타임아웃 누적**:
+  `SSEReconnectRateLimiter`는 Redis 연결 실패 시 Local Fallback을 반환하지만, 에러 상태를 유지하지 않아 이어지는 다음 요청에서도 다시 0.2초의 Redis 소켓 연결 타임아웃을 겪게 됩니다. 짧은 시간에 트래픽이 몰리는 상황일 경우 서킷 브레이커(Circuit Breaker) 구조가 없어 심각한 응답 지연을 야기할 수 있습니다.
 
 ## TODO
-- [ ] `api/app/main.py`의 `allow_origin_regex`를 수정하여 `manbalboy.com` 도메인 그룹에 대해서는 3100번대 포트 제한 없이 허용하도록 정규 표현식 개선.
-- [ ] `api/app/api/webhooks.py`에 GitHub 웹훅을 위한 `X-Hub-Signature-256` HMAC 헤더 검증 로직(미들웨어 또는 의존성 기반) 필수 추가.
-- [ ] 범용 Webhook(`generic`, `ci` 등) 이벤트 수신 시 인증을 보장할 수 있는 최소한의 API Secret 토큰 검증 단계 추가 구현.
-- [ ] 웹훅 검증 실패 사례(서명 불일치, 토큰 누락 등)에 대한 실패 단위 테스트(401/403 반환 검증) 추가 작성.
-- [ ] 매 태스크마다 실행되는 Docker Ping의 빈도를 조정하거나 일정 시간 내에 결과를 캐싱(Cache)하여 프로세스 I/O 병목 완화 로직 검토 및 반영.
-- [ ] 워커 인스턴스 Scale-out 환경을 감안하여 Redis 오류로 인한 Local Fallback이 동작할 때 경고 로깅을 보다 상세화하고 Rate Limit 허용 범위를 보수적으로 가져가도록 보완.
+- [ ] `api/app/main.py`의 CORS `allow_origin_regex`를 수정하여 `localhost` 및 `127.0.0.1`에 대한 포트 제한을 완화(예: 3100, 3101 등 특정 포트에 국한되지 않게 수정)하고 SPEC.md 사양에 맞게 반영.
+- [ ] Webhook 수신 엔드포인트(`api/app/api/webhooks.py`)에 `raw_body`를 로드하기 전이나 도중 최대 사이즈(예: 5MB)를 초과하지 않도록 검사하는 안전 장치 추가.
+- [ ] `workflow_id` 파싱 로직에서 `type(workflow_id_raw) is int` 구문 등을 사용하여 Boolean 타입 데이터가 입력되는 Edge Case 방어.
+- [ ] `AgentRunner._docker_ping()` 로직에서 Docker 상태 체크 실패 시 짧은 시간(예: 3~5초) 동안의 Negative Cache를 두어 연속된 타임아웃 병목을 회피하도록 개선.
+- [ ] `SSEReconnectRateLimiter` 내부에 서킷 브레이커 패턴이나 일정 기간 Fallback 상태를 유지하는 로직을 추가하여 반복적인 Redis 호출 지연 방지.
+- [ ] CORS 규칙과 도메인 허용 설정의 유효성을 꼼꼼하게 검증할 수 있도록 `api/tests/test_main.py` 통합 테스트 작성.
