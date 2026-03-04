@@ -2,26 +2,29 @@
 
 - Stage: `test_after_fix`
 - Tester: `gemini`
-- Status: `FAIL`
-- Exit code: `1`
-- Duration: `0.01s`
+- Status: `PASS`
+- Exit code: `0`
+- Duration: `1.87s`
 - Command: `/home/docker/agentHub/workspaces/main/scripts/run_agenthub_tests.sh e2e`
 
 ## 통과한 항목
-- 출력에서 명시적인 통과 카운트를 찾지 못했습니다.
+- 테스트 명령이 종료코드 0으로 완료되었습니다.
+- 통과된 테스트 수를 감지했습니다: 3
 
 ## 통과하지 못한 항목
-- 테스트 명령이 종료코드 1로 실패했습니다.
+- 출력에서 명시적인 실패 카운트를 찾지 못했습니다.
 
 ## 요약 카운트
-- passed: `0`
+- passed: `3`
 - failed: `0`
 - skipped: `0`
 - errors: `0`
 
 ## stdout (tail)
 ```text
-[agenthub-test] no executable e2e/test command found in /home/docker/agentHub/workspaces/new-mind/manbalboy__agent-hub
+[agenthub-test] running pytest
+...                                                                      [100%]
+3 passed in 0.14s
 ```
 
 ## stderr (tail)
