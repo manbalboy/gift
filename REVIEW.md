@@ -1,33 +1,23 @@
 # REVIEW
 
-본 리뷰는 `SPEC.md`와 `PLAN.md`에 명시된 요구사항을 바탕으로 현재 저장소 상태를 분석한 결과입니다.
-
 ## Functional bugs
-- 현재 주요 기능 버그는 발견되지 않았습니다. 
-  - `WorkflowEngine.refresh_run` 내 노드 실행 커맨드 파싱(`_extract_node_command`)이 정상적으로 반영되어, 폴백이 아닌 실제 `command`가 `AgentTaskRequest`에 제대로 전달되고 있습니다.
-  - `WorkflowEngine.recover_stuck_runs` 데몬에서 트랜잭션 롤백 스코프 개선(반복문 내 개별 `db.commit()` 수행 및 예외 처리)이 성공적으로 반영되어, 단일 노드 복구 실패가 다른 노드의 상태 갱신에 영향을 주지 않습니다.
-- 프론트엔드 React Flow(Visual Builder) 테스트 역시 정상적으로 통과하여 기능상 결함은 발견되지 않았습니다.
-- 추가 고도화 플랜이었던 상태 실시간 스트리밍(SSE) 엔드포인트 `/workflows/{workflow_id}/runs/stream` 역시 구현되어 작동 준비가 완료되었습니다.
+- 현재 테스트 파이프라인에서 명시적으로 실패하는 단위 기능 결함은 발견되지 않았으나, 호스트 환경에 Docker 데몬이 실행 중이지 않거나 애플리케이션에 접근 권한이 없는 경우(예: 사용자가 `docker` 그룹에 속하지 않음), `DockerRunner` 초기화 과정에서 내부 `subprocess` 예외가 발생하며 워크플로우 태스크가 그대로 멈추거나 실패 상태로 고착될 수 있는 취약한 예외 처리 구간이 존재합니다.
 
 ## Security concerns
-- `AgentRunner`가 `subprocess.Popen`을 사용해 호스트 환경에서 직접 셸 스크립트를 실행하고 있어 원격 코드 실행(RCE)에 대한 근본적인 위험이 남아 있습니다.
-- `docs/security/container-sandbox-plan.md`를 통해 컨테이너 기반 샌드박싱 도입 계획이 문서화되어 있으나, 코드로 적용되지 않은 상태입니다. 향후 운영 환경으로의 배포를 고려할 때 Docker를 활용한 스크립트 실행 격리가 필수적입니다.
-- Preview 환경이나 로컬 환경 설정 시 외부 노출 포트 및 CORS 규칙은 보안 통제가 필요합니다. 특히 로컬 테스트 실행 및 재현 예시 등에서는 3100번대 포트로 엄격히 관리해야 합니다.
+- **워크스페이스 격리 붕괴 (심각):** `DockerRunner`의 볼륨 마운트 설정을 보면 `f"{self.workspaces_root}:/workspace/workspaces:rw"` 형태로 전체 프로젝트 워크스페이스의 루트 경로를 컨테이너 내부에 읽기/쓰기 모드로 통째로 마운트하고 있습니다. 이로 인해 악의적이거나 버그가 있는 에이전트 스크립트가 자신이 속한 실행 단위(Run)의 경로를 벗어나 다른 사용자의 프로젝트나 민감한 코드를 탈취하고 변조할 수 있는 심각한 디렉터리 트래버설(Directory Traversal) 및 권한 상승 위험이 있습니다.
+- `HostRunner` 클래스가 `agent_runner.py`에 여전히 남아있어, 시스템 환경 설정(`settings`)의 오입력으로 인해 샌드박싱 환경인 `DockerRunner` 대신 `HostRunner`가 활성화될 경우 호스트 머신의 리소스가 스크립트 실행에 무방비로 노출될 위험이 존재합니다.
 
 ## Missing tests / weak test coverage
-- 백엔드 `AgentRunner.run` 실행 시 발생할 수 있는 권한 부족 및 시스템 예외(`PermissionError` 등) 브랜치에 대한 Mocking 테스트 코드(`test_agent_runner_handles_system_exception`)가 성공적으로 확보되어 있습니다.
-- 트랜잭션 롤백 방지를 검증하는 복구 데몬 통합 테스트(`test_compensation_commit_scope_isolated_per_node`)가 구현되어 백엔드 커버리지는 양호합니다.
-- 프론트엔드 `WorkflowBuilder.tsx`에 대한 주요 캔버스 조작 시나리오(엣지 연결, 상태 뱃지 렌더링, 모바일 뷰 전환 등) 테스트 4건이 통과하는 것을 확인했습니다.
-- **향후 보완 필요성**: SSE 스트리밍 엔드포인트(`stream_workflow_runs`)의 비동기 연결에 대한 테스트 코드가 누락되어 있습니다. 향후 Redis 분산 락 로직이 구현될 때 다중 워커의 락 경합 시나리오에 대한 통합 테스트 보강이 필요합니다.
+- **Docker 격리 환경 E2E 테스트 부재:** 기존 29개의 단위 테스트(Unit Test)는 모두 정상 통과되었으나, 실제 Docker 컨테이너를 스폰하여 권한 제어(`--cap-drop ALL`, `--user 65534:65534`)가 완벽하게 적용되었는지, 그리고 프로세스 타임아웃 시 좀비 컨테이너 없이 `docker rm -f` 롤백이 완수되는지 검증하는 E2E 회귀 테스트(`test_docker_runner_execution`)가 구현되어 있지 않습니다.
+- **Redis TTL 만료 시나리오 누락:** Redis를 이용한 분산 락 모듈(`LockProvider`)은 도입되었으나, 임의의 워커 프로세스가 비정상 종료되어 락을 해제하지 못한 상황에서 TTL이 강제 만료되었을 때, 다른 워커가 락을 획득하고 이어서 워크플로우를 진행할 수 있는지 증명하는 모킹(Mocking) 기반의 복구 통합 테스트(`test_redis_lock_ttl_expiration_recovery`)가 빠져 있습니다.
 
 ## Edge cases
-- 현재 `WorkflowEngine`의 락 구조가 `threading.Lock` 기반으로 작성되어 있어 단일 프로세스에서는 문제가 없으나, Gunicorn 등 다중 프로세스/다중 워커 환경 확장 시 중복 실행 및 교착 상태가 발생할 수 있는 엣지 케이스가 존재합니다. (`docs/architecture/redis-distributed-lock-plan.md` 계획 문서 기반으로 향후 보완 필요)
-- DB Lock(`with_for_update()`) 사용 시 Lock Timeout이 발생하는 경우 롤백 처리 후 세션을 정상화하는 기본 예외 처리는 되어 있으나, 트래픽 급증 시의 Lock 경합 해소를 위한 재시도 지연(Backoff) 전략 최적화가 요구됩니다.
-- SSE 연결 중 클라이언트의 네트워크 단절이나 비정상 종료 시 서버 자원이 안전하게 회수되는지에 대한 명시적인 검증 절차가 요구됩니다.
+- **다중 워커 LocalLock 폴백(Fallback) 모순:** Redis 서버 네트워크 단절 등 예외 발생 시 `LocalLock`으로 우회하여 단일 워커의 생존성을 보장하도록 설계되었으나, 다수의 별개 서버(워커)들이 동시에 동작 중일 때 Redis가 다운되면 각 워커가 독립적인 로컬 메모리 락을 가지게 되므로 중복 실행(Race Condition)을 차단하지 못하는 동시성 제어 한계점이 발생합니다.
+- **스트리밍 클라이언트 재연결 폭주:** 클라이언트가 `Disconnect` 했을 때 자원을 회수하는 기능은 테스트로 검증되었으나, 프론트엔드(포트 3100)나 서드파티 클라이언트 측 네트워크 오류로 인해 SSE 스트림 재연결이 비정상적으로 폭주(Reconnection Storm)할 경우 이를 방어하는 타임아웃 또는 연결 수 제한(Rate Limiting) 장치가 없습니다.
 
-## TODO
-- [x] `AgentRunner`에 `DockerRunner` 구조를 도입하여 임시 스크립트 실행 환경 샌드박싱 (Phase 1 적용)
-- [x] 다중 워커 확장을 대비하여 Redis 기반 분산 락(`LockProvider`)을 `WorkflowEngine` 로직에 반영
-- [x] 실시간 상태 스트리밍(SSE) API 엔드포인트에 대한 스트림 연결/종료 단위 테스트 작성
-- [x] 개발 및 로컬 테스트 환경 문서의 포트 안내를 3100번대 규격으로 일괄 점검 및 업데이트
-- [x] `docs/security/container-sandbox-plan.md` 및 `docs/architecture/redis-distributed-lock-plan.md` 기획안에 맞춘 마일스톤 티켓/이슈 생성
+## TODO checklist
+- [ ] `DockerRunner`의 마운트 경로를 전체 워크스페이스 루트가 아닌, 개별 태스크에 할당된 샌드박스 전용 하위 디렉터리로 엄격하게 제한 (`-v {task_specific_dir}:/workspace/workspaces:rw`).
+- [ ] 실제 Docker 데몬 환경 위에서 컨테이너 스폰, 스크립트 실행 격리, 타임아웃 롤백을 검증하는 Integration Test Code 추가.
+- [ ] Redis 다운 시 `LocalLock`으로 폴백되는 상황에서, 단일 인스턴스가 아닌 다중 노드 아키텍처일 경우 발생할 수 있는 동시성 락 충돌 방지 대책 아키텍처 설계 문서에 반영.
+- [ ] `HostRunner`의 접근 경로를 차단하거나 오직 로컬 개발 전용 환경 변수를 켰을 때만 명시적으로 사용할 수 있도록 방어 코드 추가.
+- [ ] 실행 오류 방지를 위해 시작 시점에 Docker 데몬 핑(Ping) 테스트를 수행하는 헬스체크 로직을 API 시작 라이프사이클에 추가.
