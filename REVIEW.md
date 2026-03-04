@@ -21,11 +21,16 @@
 
 ## TODO
 
-- [ ] `web/src/App.tsx` 내 Toast 렌더링 상태와 `dedupedToastKeysRef` 간의 데이터 동기화 문제 해결 및 큐(Queue) 안정성 확보.
-- [ ] `web/src/components/Toast.tsx`의 윈도우 리사이즈 이벤트에 디바운스(Debounce) 또는 쓰로틀(Throttle) 로직 적용 및 마운트/언마운트 시 명확한 클린업 구현.
-- [ ] `web/src/styles/app.css`를 수정하여 모바일 뷰포트 기준 알림 확장 시 부드러운 `transition` 및 `max-height` 애니메이션 적용.
-- [ ] 전체 소스 코드에서 `dangerouslySetInnerHTML` 사용 내역 확인 및 완전 배제 조치.
-- [ ] 여러 개의 알림이 누적되었을 때 사용자 경험을 개선하는 '일괄 닫기(Clear All)' 기능 추가.
-- [ ] `web/src/App.test.tsx`에 `jest.useFakeTimers()`를 도입하여 동시성 웹훅 이벤트 유입 시나리오에 대한 단위 테스트 보강.
-- [ ] `web/src/components/Toast.test.tsx`에 뷰포트 크기를 모킹하여 모바일 화면에서의 컴포넌트 동작을 검증하는 테스트 추가.
-- [ ] 로컬 포트 3100 타겟(`npm run dev -- --port 3100`)으로 Playwright E2E 테스트(`web/tests/e2e/toast-layering.spec.ts`) 시나리오 보강 및 모바일 화면에서의 시각적 회귀 방어 확인.
+- [x] `web/src/App.tsx` 내 Toast 렌더링 상태와 `dedupedToastKeysRef` 간의 데이터 동기화 문제 해결 및 큐(Queue) 안정성 확보.
+- [x] `web/src/components/Toast.tsx`의 윈도우 리사이즈 이벤트에 디바운스(Debounce) 또는 쓰로틀(Throttle) 로직 적용 및 마운트/언마운트 시 명확한 클린업 구현.
+- [x] `web/src/styles/app.css`를 수정하여 모바일 뷰포트 기준 알림 확장 시 부드러운 `transition` 및 `max-height` 애니메이션 적용.
+- [x] 전체 소스 코드에서 `dangerouslySetInnerHTML` 사용 내역 확인 및 완전 배제 조치.
+- [x] 여러 개의 알림이 누적되었을 때 사용자 경험을 개선하는 '일괄 닫기(Clear All)' 기능 추가.
+- [x] `web/src/App.test.tsx`에 `jest.useFakeTimers()`를 도입하여 동시성 웹훅 이벤트 유입 시나리오에 대한 단위 테스트 보강.
+- [x] `web/src/components/Toast.test.tsx`에 뷰포트 크기를 모킹하여 모바일 화면에서의 컴포넌트 동작을 검증하는 테스트 추가.
+- [x] 로컬 포트 3100 타겟(`npm run dev -- --port 3100`)으로 Playwright E2E 테스트(`web/tests/e2e/toast-layering.spec.ts`) 시나리오 보강 및 모바일 화면에서의 시각적 회귀 방어 확인.
+
+## Verification
+
+- 단위 테스트: `cd web && npm test` 통과 (5 suites, 34 tests)
+- E2E 테스트: `cd web && npm run test:e2e` 통과 (3 tests, Playwright, port 3100)
