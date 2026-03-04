@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useViewport } from '../hooks/useViewport';
-import { sanitizeToastText } from '../utils/escapeHtml';
 
 export type ToastLevel = 'warning' | 'error';
 
 export type ToastItem = {
   id: string;
   level: ToastLevel;
-  message: string;
+  message?: string | null;
   dedupeKey?: string;
   action?: {
     label: string;
@@ -37,7 +36,7 @@ export default function Toast({
   const [isExpandableMessage, setIsExpandableMessage] = useState(false);
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
   const { isMobile } = useViewport();
-  const safeMessage = useMemo(() => sanitizeToastText(item.message), [item.message]);
+  const message = typeof item.message === 'string' ? item.message : '';
 
   const closeOnce = useCallback(() => {
     if (closedRef.current) return;
@@ -52,7 +51,7 @@ export default function Toast({
     }
 
     const node = messageRef.current;
-    if (!node || node.clientWidth <= 0) {
+    if (!node || node.clientWidth <= 10) {
       setIsExpandableMessage(false);
       return;
     }
@@ -145,10 +144,20 @@ export default function Toast({
     }
   }, [isExpanded, isMobile]);
 
+  useEffect(() => {
+    if (isMobile) return;
+    touchStartRef.current = null;
+    isSwipingRef.current = false;
+    swipeTriggeredRef.current = false;
+    swipeOffsetRef.current = 0;
+    setSwipeOffsetX(0);
+  }, [isMobile]);
+
   const role = item.level === 'error' ? 'alert' : 'status';
   const title = item.level === 'error' ? '오류' : '경고';
   const shouldShowAction = Boolean(item.action) && !isMobile;
   const canToggleExpand = isMobile && isExpandableMessage;
+  const messageId = `toast-message-${item.id}`;
   const swipeProgress = Math.min(Math.abs(swipeOffsetX) / SWIPE_DISMISS_THRESHOLD, 1);
 
   const toastStyle = useMemo(
@@ -169,13 +178,9 @@ export default function Toast({
       aria-expanded={canToggleExpand ? isExpanded : undefined}
       style={toastStyle}
       onClick={(event) => {
-        const target = event.target as HTMLElement;
         if (swipeTriggeredRef.current) {
           swipeTriggeredRef.current = false;
-          return;
         }
-        if (!canToggleExpand || target.closest('button')) return;
-        setIsExpanded((prev) => !prev);
       }}
       onTouchStart={(event) => {
         if (!isMobile) return;
@@ -247,11 +252,24 @@ export default function Toast({
       <div className="toast-content">
         <strong>{title}</strong>
         <p
+          id={messageId}
           ref={messageRef}
           className={`toast-message ${canToggleExpand && isExpanded ? 'toast-message-expanded' : ''}`}
-          title={item.message}
-          dangerouslySetInnerHTML={{ __html: safeMessage }}
-        />
+          title={message}
+        >
+          {message}
+        </p>
+        {canToggleExpand && (
+          <button
+            type="button"
+            className="toast-expand-toggle"
+            aria-controls={messageId}
+            aria-expanded={isExpanded}
+            onClick={() => setIsExpanded((prev) => !prev)}
+          >
+            {isExpanded ? '접기' : '펼치기'}
+          </button>
+        )}
         {shouldShowAction && item.action && (
           <button
             type="button"

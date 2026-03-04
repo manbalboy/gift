@@ -118,7 +118,7 @@ describe('Toast', () => {
     expect(screen.queryByRole('button', { name: '해당 노드로 이동' })).not.toBeInTheDocument();
   });
 
-  test('모바일에서 메시지가 실제로 넘치면 탭으로 확장/축소할 수 있다', () => {
+  test('모바일에서 메시지가 실제로 넘치면 펼치기/접기 버튼으로 확장 제어할 수 있다', () => {
     mockedUseViewport.mockReturnValue({
       width: 390,
       height: 844,
@@ -138,13 +138,17 @@ describe('Toast', () => {
 
     render(<Toast item={item} onClose={jest.fn()} />);
     const toast = screen.getByRole('alert');
+    const toggle = screen.getByRole('button', { name: '펼치기' });
     expect(toast).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
-    fireEvent.click(toast);
+    fireEvent.click(toggle);
     expect(toast).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: '접기' })).toHaveAttribute('aria-expanded', 'true');
 
-    fireEvent.click(toast);
+    fireEvent.click(screen.getByRole('button', { name: '접기' }));
     expect(toast).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: '펼치기' })).toHaveAttribute('aria-expanded', 'false');
 
     scrollHeightSpy.mockRestore();
     clientHeightSpy.mockRestore();
@@ -204,7 +208,7 @@ describe('Toast', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  test('메시지는 HTML 이스케이프 처리되어 스크립트가 렌더링되지 않는다', () => {
+  test('메시지는 React 기본 텍스트 렌더링으로 출력되어 스크립트가 렌더링되지 않는다', () => {
     const item: ToastItem = {
       id: 'toast-xss',
       level: 'error',
@@ -214,6 +218,76 @@ describe('Toast', () => {
 
     expect(container.querySelector('img')).not.toBeInTheDocument();
     expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument();
+  });
+
+  test('message가 null/undefined면 빈 문자열로 안전하게 처리한다', () => {
+    const onClose = jest.fn();
+    const { rerender, container } = render(
+      <Toast item={{ id: 'toast-null', level: 'warning', message: null }} onClose={onClose} />,
+    );
+
+    const getMessage = () => container.querySelector('.toast-message');
+    expect(getMessage()).toHaveTextContent('');
+    expect(screen.queryByText('null')).not.toBeInTheDocument();
+
+    rerender(<Toast item={{ id: 'toast-undefined', level: 'error', message: undefined }} onClose={onClose} />);
+    expect(getMessage()).toHaveTextContent('');
+    expect(screen.queryByText('undefined')).not.toBeInTheDocument();
+  });
+
+  test('모바일 스와이프 중 데스크톱 전환 시 스와이프 오프셋을 초기화한다', () => {
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
+    });
+    const item: ToastItem = {
+      id: 'toast-viewport-switch',
+      level: 'warning',
+      message: '뷰포트 전환 테스트',
+    };
+
+    const { rerender } = render(<Toast item={item} onClose={jest.fn()} />);
+    const toast = screen.getByRole('status');
+
+    fireEvent.touchStart(toast, { touches: [{ clientX: 200, clientY: 200 }] });
+    fireEvent.touchMove(toast, { touches: [{ clientX: 260, clientY: 204 }], cancelable: true });
+    expect(toast).toHaveClass('toast-swipe-active');
+    expect(toast.style.transform).toBe('translateX(60px)');
+
+    mockedUseViewport.mockReturnValue({
+      width: 1280,
+      height: 800,
+      isMobile: false,
+      isPortrait: false,
+      isLandscape: true,
+    });
+    rerender(<Toast item={item} onClose={jest.fn()} />);
+
+    expect(toast).not.toHaveClass('toast-swipe-active');
+    expect(toast.style.transform).toBe('');
+  });
+
+  test('오버플로우 측정 시 clientWidth가 10 이하면 펼치기 버튼을 노출하지 않는다', () => {
+    mockedUseViewport.mockReturnValue({
+      width: 390,
+      height: 844,
+      isMobile: true,
+      isPortrait: true,
+      isLandscape: false,
+    });
+    const scrollHeightSpy = jest.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(44);
+    const clientHeightSpy = jest.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(22);
+    const clientWidthSpy = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(10);
+
+    render(<Toast item={{ id: 'toast-width-guard', level: 'warning', message: '오버플로우 측정 가드' }} onClose={jest.fn()} />);
+    expect(screen.queryByRole('button', { name: '펼치기' })).not.toBeInTheDocument();
+
+    scrollHeightSpy.mockRestore();
+    clientHeightSpy.mockRestore();
+    clientWidthSpy.mockRestore();
   });
 
   test('document.fonts 미지원 환경에서도 폴백 타이머로 오버플로우를 재측정한다', () => {
@@ -240,6 +314,7 @@ describe('Toast', () => {
 
     const { rerender } = render(<Toast item={item} onClose={jest.fn()} />);
     expect(screen.getByRole('status')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: '펼치기' })).toBeInTheDocument();
 
     act(() => {
       jest.advanceTimersByTime(520);
