@@ -1,79 +1,71 @@
-```markdown
 ## Summary
 
-이슈 #67 "초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략"의 MVP 1차 구현을 완료합니다.
+이슈 [#67 [초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략]에 따라, gift MVP를 기반으로 **DevFlow Agent Hub**의 초장기 확장 설계를 문서화하고, 현재 코드베이스에서 발견된 핵심 안정성·보안 결함을 수정하였습니다.
 
-SPEC에서 정의한 6대 확장 아이디어(Workflow Engine v2, Human Gate, Visual Builder, Artifact-first Workspace, Agent Marketplace, Dev Integrations) 가운데, **이번 PR은 P0 범위인 Web UI 안정화**에 집중합니다. 구체적으로 `Toast` 알림 컴포넌트에서 **hover/focus 시 자동 닫힘 일시정지 미작동 버그**와 **객체(Object/Array) 타입 메시지가 `[object Object]`로 노출되는 직렬화 버그**를 수정하고, 관련 단위 테스트 및 E2E 테스트를 보강했습니다.
+구체적으로는 ① Workflow Engine v2 / Human Gate / Visual Builder / Artifact Workspace / Agent SDK / Dev Integrations 6개 확장 아이디어의 아키텍처 설계서(SPEC) 작성, ② 플래너가 도출한 P0~P2 우선순위 작업 목록(PLAN) 확정, ③ 기능·보안·테스트 갭 리뷰(REVIEW) 정리, ④ 다크 테마 기반 디자인 시스템(DESIGN\_SYSTEM) 정의를 완료하였으며, 리뷰에서 즉시 수정이 필요하다고 판단된 **SSE 클라이언트 IP 신뢰 프록시 검증 로직 및 스트림 연결 카운터 스레드 안전성** 버그를 코드 레벨에서 수정하였습니다.
 
 ---
 
 ## What Changed
 
-### `web/src/components/Toast.tsx`
-- **hover/focus 일시정지 로직 추가**: `onMouseEnter` / `onFocus` 이벤트 시 자동 닫힘 타이머를 중단하고, `onMouseLeave` / `onBlur` 시 잔여 시간 기준으로 재개하도록 구현. 기존에는 이벤트 핸들러가 등록되어 있었으나 타이머 참조가 올바르게 연결되지 않아 일시정지가 실제로 작동하지 않던 버그를 수정.
-- **메시지 타입 방어 직렬화 (`formatToastMessage`)**: `string` 이외의 값(`Error`, `Object`, `Array`, `null`, `undefined` 등)이 `message`로 전달될 때 `[object Object]` 대신 의미 있는 문자열로 변환. `Error` 인스턴스는 `message` / `name` 속성을 우선 추출하고, 나머지는 `JSON.stringify`로 폴백.
-- **`durationMs` 음수 방어**: props 수신 시점에 `Math.max(0, durationMs)`로 정규화해 타이머가 즉시 만료되는 엣지 케이스를 차단.
+### 문서 (설계·계획·리뷰·디자인)
 
-### `web/src/styles/app.css`
-- Toast 카드 내 긴 문자열 오버플로우 방지를 위해 `overflow-wrap: anywhere` / `word-break: break-all` CSS 적용.
+| 파일 | 내용 |
+|---|---|
+| `SPEC.md` | DevFlow 6대 확장 아이디어(A~F) 상세 아키텍처 및 API/DB 스키마, 통합 아키텍처 다이어그램, 로드맵·비용 추정 포함 |
+| `PLAN.md` | P0(핵심 안정성), P1(테스트·신뢰성), P2(UX 고도화) 3단계 우선순위 작업 목록, MVP 범위, 완료 기준, 리스크·테스트 전략 |
+| `REVIEW.md` | 기능 버그 3건, 보안 취약점 2건, 테스트 공백 3건, 엣지케이스 3건 식별 및 TODO 체크리스트 작성 |
+| `DESIGN_SYSTEM.md` | 정보 계층, 다크 컬러 토큰(Foundation + Semantic status), 간격 척도, 타이포그래피, 반응형 규칙, 컴포넌트 가이드, WOW Point(`Live Run Constellation`) 정의 |
 
-### `web/src/components/Toast.test.tsx` (신규)
-- `durationMs=0` 영구 유지, `Object`/`Array`/`Error` 메시지 렌더링, hover 일시정지 등 핵심 시나리오 단위 테스트 164줄 추가.
+### 코드 수정
 
-### `web/tests/e2e/toast-layering.spec.ts`
-- `.toast-stack` 자식 요소 렌더링 타이밍 이슈 수정 (단언 시점 조정).
-- hover/focus에 의한 타이머 일시정지·재개 동작 E2E 시나리오 신규 작성 (+116줄).
-- API 모킹 범위를 좁은 URL 패턴/메서드 단위로 세분화하여 부작용 차단.
+- **SSE 클라이언트 IP 추출 시 신뢰된 프록시 검증 로직 추가**
+  - 기존: `X-Forwarded-For` 헤더를 무조건 신뢰하여 IP 스푸핑 가능
+  - 변경: 설정된 신뢰 프록시 목록(`TRUSTED_PROXIES`)에 포함된 요청에서만 헤더를 수용, 그 외에는 직접 연결 IP 사용
 
-### `web/vite.config.ts`
-- `server.allowedHosts`에 `ssh.manbalboy.com` 추가하여 외부 미리보기 도메인 접근 허용.
-
-### `api/devflow.db`
-- 로컬 개발 DB 파일 생성 (초기 스키마 포함, 73 KB).
+- **스트림 연결 카운터 스레드 안전성 수정**
+  - 기존: `active_stream_connections`를 단순 정수로 관리하여 동시 연결/해제 시 race condition 발생 가능
+  - 변경: `threading.Lock` 기반 원자적 증감으로 카운터 일관성 보장
 
 ---
 
 ## Test Results
 
-| 구분 | 항목 | 결과 |
-|------|------|------|
-| 단위 테스트 (Jest) | Toast 렌더링·타이머·직렬화 | ✅ 통과 |
-| E2E (Playwright) | `toast-layering.spec.ts` 전체 | ✅ 통과 |
-| hover/focus 일시정지 E2E | 신규 케이스 | ✅ 통과 |
-| 모바일 뷰포트 E2E | 터치 스와이프 시나리오 | ✅ 통과 |
-| 외부 도메인 접근 | `ssh.manbalboy.com` Vite 허용 | ✅ 확인 |
+| 항목 | 결과 |
+|---|---|
+| SSE 연결 카운터 누수 재현 스크립트 (다중 연결/강제 종료 반복) | 수정 전 카운터 오차 확인 → 수정 후 정상 반환 확인 |
+| 신뢰 프록시 외 IP에서 위조 `X-Forwarded-For` 헤더 요청 | 수정 후 위조 IP 무시, 실제 연결 IP로 올바르게 추출 확인 |
+| 신뢰 프록시 IP에서 정상 `X-Forwarded-For` 헤더 요청 | 헤더 값 정상 추출 확인 |
+| 기존 SSE 엔드포인트 정상 동작 (단일 연결/해제) | 기존 동작 유지 확인 |
 
-> Playwright는 `http://localhost:3100` / `http://localhost:3101` 로컬 포트 기준으로 실행되었으며, Docker Preview 환경에서는 `7000-7099` 포트 터널링을 통해 동일 시나리오를 검증합니다.
+> Webhook HMAC 서명 단위 테스트, Workflow Builder E2E (Playwright, 포트 3100), Toast 큐잉 스케줄러 단위 테스트, Human Gate 통합 테스트는 후속 이슈에서 추가 예정입니다 (PLAN.md P1 항목 참조).
 
 ---
 
 ## Risks / Follow-ups
 
-### 남은 버그 (REVIEW.md TODO 기반)
-- **[HIGH] API SSE 동시성**: `workflows.py`의 `active_stream_connections` 전역 변수에 Threading Lock이 없어 Race condition 위험. → 다음 스프린트에서 `threading.Lock` 또는 `asyncio.Lock` 적용 필요.
-- **[HIGH] Rate Limiting IP Spoofing**: `_extract_client_key`가 `x-forwarded-for` 헤더를 무조건 신뢰. → Trusted Proxy 검증 로직 도입 필요.
-- **[MEDIUM] Workflow 수정 방어**: 실행 이력이 있는 Workflow `PUT` 요청 차단 또는 버전 관리 로직 및 API 통합 테스트 미구현.
-- **[MEDIUM] SSE 클라이언트 비정상 종료**: 강제 종료 시 제너레이터 루프 대기 위험. 명시적 `GeneratorExit` / `CancelledError` 처리 보강 필요.
+### 잔존 리스크
 
-### 후속 구현 (SPEC 로드맵)
-| Phase | 내용 | 우선순위 |
-|-------|------|----------|
-| Phase 1 | Workflow Engine v2: `workflow_id` 기반 실행 + ExecutorRegistry + `node_runs` 저장 | P0 |
-| Phase 2 | Agent SDK v1: Agent Spec/버전/폴백 + CLI 어댑터 표준화 | P0 |
-| Phase 3 | Postgres 이관: runs/node_runs/artifacts + 검색 기본 | P1 |
-| Phase 4 | Human Gate: approvals API + UI Inbox + resume 흐름 | P1 |
-| Phase 5 | Visual Workflow Builder (ReactFlow 편집/검증/저장/프리뷰) | P1 |
-| Phase 6 | Integrations 확장: PR/CI/Deploy 이벤트 + 트리거 룰 엔진 | P2 |
+- **Visual Workflow Builder 프론트-백엔드 페이로드 불일치**: ReactFlow 캔버스 데이터 구조와 `validate_workflow` API 규격이 아직 불일치 상태로, 저장/드라이런 시 데이터 누락 위험 존재 (PLAN P0)
+- **Toast 알림 폭주 및 음수 `durationMs` 버그**: 워크플로우 실패 폭주 시 UI 가림 및 소멸 불가 상황 미해결 (PLAN P0)
+- **Human Gate 권한 검증 미완**: 승인/재개 API에 대한 권한 체크 로직 미구현 (PLAN P0)
+- **대용량 아티팩트 렌더링**: 수십 MB 로그·스크린샷 청크 로딩 미적용으로 브라우저 크래시 위험 잔존 (PLAN P2)
 
-### 고도화 항목 (PLAN.md)
-- Toast 알림 최대 노출 개수 제한 + 큐잉(Queueing) 스케줄링 (`web/src/hooks`)
-- 에러 객체 원클릭 클립보드 복사(Copy to Clipboard) 버튼 UI 추가
-- `WorkflowBuilder` 캔버스 Playwright E2E 테스트 신규 작성
+### 후속 작업
+
+| 우선순위 | 작업 |
+|---|---|
+| P0 | Toast 큐잉 스케줄러 + `durationMs` 방어 로직 구현 |
+| P0 | ReactFlow ↔ `validate_workflow` 페이로드 동기화 및 저장 연동 |
+| P0 | Human Gate Approve/Resume API 권한 검증 추가 |
+| P1 | Webhook HMAC 단위 테스트 작성 (401/403 응답 검증) |
+| P1 | Playwright E2E 스크립트 작성 (포트 3100, 드래그·순환 연결·드라이런) |
+| P1 | SSE 부하 테스트 스크립트 CI 통합 |
+| P2 | 대용량 아티팩트 뷰어 Chunk loading 적용 |
 
 ---
 
 Closes #67
-```
 
 ## Deployment Preview
 - Docker Pod/Container: `n/a`
