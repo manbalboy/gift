@@ -438,5 +438,5 @@ gift는 “나중에 확장”으로 Postgres, 멀티 워커/분산 큐, SSE/WS 
         - Preview 외부 노출 포트는 7000-7099 범위를 사용합니다.
         - Preview 외부 기준 도메인/호스트: http://ssh.manbalboy.com:7000
         - CORS 허용 대상은 manbalboy.com 계열 또는 localhost 계열로 제한합니다.
-        - 허용 origin 정책(기준값): https://manbalboy.com,http://manbalboy.com,https://localhost,http://localhost,https://127.0.0.1,http://127.0.0.1
+        - 허용 origin 정책(기준값): https://manbalboy.com,http://manbalboy.com,https://localhost,http://localhost,https://127.0.0.1,http://127.0.0.1, manbalboy.com 도메인으로 접근한 모든 포트와 서브 도메인들은 통과되어야함
         - PR 본문에는 Docker Preview 정보(컨테이너/포트/URL)를 포함합니다.
