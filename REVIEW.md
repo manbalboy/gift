@@ -1,27 +1,25 @@
 # REVIEW
 
 ## Functional bugs
-- **Toast 알림 중복 렌더링 이슈**: `web/src/components/WorkflowBuilder.tsx`의 `useEffect` 훅에서 `onNodeFallback`이 호출될 때, 컴포넌트 마운트 및 React Strict Mode의 이중 렌더링 과정에서 의도치 않게 동일한 경고 알림이 여러 번 중복 발생할 수 있는 잠재적 문제가 있습니다. 식별자(`signature`)를 넘겨 완화를 시도했으나, 최상단 상태 큐(Queue)나 상위 컴포넌트 측에서 확실한 상태 제어(Flag)가 이루어지지 않으면 연속된 팝업이 UI를 가릴 수 있습니다.
-- **포트 충돌 점검 스크립트 부재**: `web/vite.config.ts` 파일 내에 `strictPort: true`와 `port: 3100`이 정상적으로 반영되어 지정된 포트로만 실행되도록 강제된 상태입니다. 그러나 포트가 이미 점유 중일 때 프로세스가 무뚝뚝하게 다운될 뿐, 사전에 충돌을 감지하고 개발자에게 친절한 안내 메시지를 출력하여 빠른 대처를 돕는 사전 검사(Pre-check) 스크립트가 아직 구현되지 않았습니다.
+- **Toast 큐 및 식별자(dedupeKey) 누수 오류**: `web/src/App.tsx` 내 `enqueueToast` 로직에서 Toast 배열을 `.slice(-3)`으로 자르고 있습니다. 이로 인해 화면에 4개 이상의 Toast가 연속으로 발생하여 기존 Toast가 배열에서 밀려나 렌더링에서 제외될 경우, `closeToast`가 정상적으로 호출되지 않습니다. 결과적으로 큐에서 강제로 탈락한 Toast의 `dedupeKey`가 `dedupedToastKeysRef`에 영구적으로 남아, 이후 동일한 식별자를 가진 Toast가 영원히 노출되지 않는 버그가 발생합니다.
 
 ## Security concerns
-- **CORS 및 허용 Origin 정책 미적용**: SPEC.md에 명시된 보안 요구사항에 따라 외부 API 연동 시 허용된 Origin(`manbalboy.com`, `localhost` 등)만 접근할 수 있도록 제한해야 합니다. 현재 프론트엔드 환경 구성 단계이며, 백엔드 및 웹 서버 설정에서 이러한 엄격한 도메인 화이트리스트 및 프리뷰 포트 정책이 완벽히 적용 및 검증되었는지 확인이 필요합니다.
-- **XSS 취약점 대비 부족**: 워크플로우 캔버스 내 노드 타이틀, `WorkflowBuilder`의 이름(`title`)과 설명(`description`)을 사용자가 자유롭게 입력할 때, 특수 문자 및 스크립트 태그에 대한 이스케이프 처리가 렌더링 단계에서 안전하게 보장되는지 검증 로직이 추가로 필요합니다.
+- **CORS 정규표현식 점검**: `api/app/main.py`의 `allow_origin_regex`에 작성된 정규표현식(`rf"^https?://{_CORS_ALLOWED_HOST_PATTERN}{_CORS_PORT_PATTERN}$"`)은 SPEC 요구사항(`manbalboy.com`, `localhost`, `127.0.0.1`, 포트 대역 등)을 충족하여 의도대로 구현되었습니다. 단, `http://`와 `https://` 모두를 허용하고 있으므로, 추후 프로덕션 단계에서는 HTTPS를 강제하는 방향으로 HSTS 등의 추가 보안 조치가 필요할 수 있습니다. 
 
 ## Missing tests / weak test coverage
-- **프론트엔드 Z-index 시각 충돌 테스트 부재**: ReactFlow의 `MiniMap`, `Controls` 요소에 `LAYER_Z_INDEX.canvasOverlay`를 적용하여 캔버스 레이어를 구성하였으나, 전역에서 발생하는 `Toast` 컴포넌트와의 뷰 계층 겹침을 방지하기 위한 E2E/시각 테스트 스크립트가 누락되어 있습니다.
-- **Toast 식별자 발급 및 컴포넌트 생명주기 테스트 부족**: `utils/toastId.ts`를 통해 순차적 ID가 발급되도록 변경되었지만, `Toast.test.tsx`에서 다수의 에러가 동시에 푸시되었을 때 식별자 충돌이 발생하지 않고 타이머(`durationMs`)에 의해 독립적으로 정상 소멸하는지 보장하는 단위 테스트가 부족합니다.
-- **포트 바인딩 및 예외 상황 검증 누락**: 로컬 구동 시 3100 포트 외의 접근 시도나 충돌 시나리오를 고의로 발생시켜, 시스템이 예상된 에러를 뿜고 안전하게 종료되는지를 확인하는 자동화된 검증 절차가 없습니다.
+- **Toast 전역 큐 상태 관리 단위 테스트 부재**: `web/src/components/Toast.test.tsx`에서 컴포넌트 내부 생명주기 관련 테스트는 충실히 작성되었으나, `App.tsx` 레벨에서의 큐 상태 관리(최대 3개 유지 등) 및 중복 방지 키(`dedupeKey`) 라이프사이클을 검증하는 통합 단위 테스트가 누락되어 있습니다.
+- **Z-Index E2E 테스트의 한계**: `web/tests/e2e/toast-layering.spec.ts`에서 시스템 알림 래퍼(`.toast-stack`)의 Z-index 레이어를 검증하고 있지만, 실제 에러 상황을 트리거하여 실제 Toast 항목 요소(`.toast-content`)가 노출되었을 때의 렌더링을 완전히 포착하지 않습니다. 실제 Toast 발생 시나리오 기반의 E2E로 보강이 필요합니다.
 
 ## Edge cases
-- **다중 노드 환경 브라우저 병목 및 과부하**: 기획된 SDLC 레벨 3 이상의 방대하고 복잡한 워크플로우 그래프를 불러오거나 다수의 연결 엣지(`Edge`)가 형성될 경우, 캔버스의 확대/축소 및 노드 드래그 시 렌더링 프레임 저하(Jank)가 발생할 수 있습니다.
-- **모바일/데스크톱 뷰포트 전환 시 레이아웃 경합**: `mobileViewOnly` 속성에 따라 모바일 뷰에서는 편집 블로커(`mobile-blocker`)가 렌더링되는데, 사용자가 브라우저 창 크기를 실시간으로 조절하거나 태블릿에서 화면 방향을 전환할 경우 ReactFlow의 `fitView` 로직과 화면 제어 상태가 충돌하여 일시적으로 캔버스가 깨져 보일 수 있습니다.
-- **알림 닫기 로직의 경합 조건(Race Condition)**: 사용자가 `Toast` 컴포넌트의 닫기 버튼을 클릭하는 순간과 `setTimeout`에 의한 자동 소멸 타이머가 동시에 만료되는 시점이 겹치면, 이미 삭제된 컴포넌트 상태를 다시 참조하려 시도하면서 런타임 에러가 발생할 위험이 있습니다.
+- **모바일 환경 레이아웃 및 상호작용 충돌**: 뷰포트가 좁은 모바일(세로 방향) 환경일 때 `mobile-blocker`가 캔버스를 가리고 편집을 제한합니다. 이때 경고 Toast의 "해당 노드로 이동" 액션 버튼을 클릭하게 되면 내부적으로 캔버스의 `setCenter`가 호출되나, 사용자의 시야는 여전히 블로커 화면에 막혀 있어 시각적 피드백의 인지 부조화가 발생할 수 있습니다. 모바일 상태일 경우 해당 액션 버튼의 노출을 숨기거나 작동 방식을 다르게 처리하는 방안이 필요합니다.
+- **다수 노드 Fallback 시의 메시지 오버플로우**: 워크플로우 로드 시 Fallback되는 노드가 지나치게 많을 경우, Toast 내 메시지가 너무 길어져 뷰포트를 벗어나거나 UI가 깨질 위험이 존재합니다. 텍스트 말줄임(text-overflow) 처리 또는 메시지 가이드의 간소화가 권장됩니다.
 
-## TODO
-- [ ] `web/package.json` 시작 스크립트(`dev`) 전단에 3100번 포트 점유 여부를 검사하고, 선점 시 "이미 3100 포트를 점유 중인 프로세스가 있습니다."라는 에러 메시지를 출력 후 종료하는 가벼운 노드 CLI 도구(Pre-check) 작성.
-- [ ] 상위 컴포넌트(`App.tsx` 등)의 Toast 상태 관리 로직에 식별자(`signature`) 기반의 Flag를 추가하여, Fallback 경고 메시지가 중복으로 렌더링되는 현상 완벽 차단.
-- [ ] `Toast` 컴포넌트의 인터페이스를 확장하여 선택적 액션 버튼(Action Callback)을 추가하고, 클릭 시 ReactFlow의 특정 문제 노드 위치로 화면을 부드럽게 이동(`fitView` 혹은 `setCenter` 활용)시키는 UX 강화 로직 구현.
-- [ ] E2E 통합 테스트 프레임워크(Playwright 등)를 활용하여, ReactFlow 캔버스 오버레이 요소와 Toast 알림 간의 Z-index 렌더링 충돌 여부를 검증하는 시나리오 추가.
-- [ ] API 서버 및 웹 서비스 전반의 CORS 설정이 SPEC.md의 요구사항(manbalboy.com 및 127.0.0.1 허용, 3100 포트 통신)에 맞게 올바르게 적용되도록 점검.
-- [ ] `Toast.test.tsx`를 고도화하여 ID 발급 무결성과 타이머 자동 닫기 간의 경합 조건을 방어하는 단위 테스트 케이스 추가.
+---
+
+## TODO (Checklist for Coder)
+
+- [ ] `web/src/App.tsx` 내 Toast 큐 밀어내기(`.slice(-3)`) 시 제거되는 항목의 `dedupeKey`를 `dedupedToastKeysRef`에서 안전하게 삭제하는 로직(useEffect 또는 커스텀 훅 활용) 추가 구현.
+- [ ] `web/src/App.test.tsx` 등을 생성하여 최대 3개의 Toast 유지 동작과 중복 식별자(dedupeKey) 관리 및 해제에 대한 통합 단위 테스트 작성.
+- [ ] 모바일 모드(세로)에서는 Toast 알림의 '노드 이동 액션'을 비활성화 하거나 클릭 시 `mobile-blocker` 우회 안내 텍스트를 제공하는 조건부 렌더링 로직 추가.
+- [ ] 워크플로우에 심각한 Fallback이 일어날 경우를 대비해 Toast 알림 내부 텍스트에 `overflow: hidden; text-overflow: ellipsis;` 등 긴 문자열 처리용 CSS 클래스 보완.
+- [ ] `web/tests/e2e/toast-layering.spec.ts` 내 테스트 스텝에 실제로 버튼 클릭이나 훅을 트리거하여 Toast 알림 아이템이 등장한 직후의 Z-index 겹침을 확정 검증하는 절차 추가.
