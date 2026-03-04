@@ -1,67 +1,96 @@
+## [#67] 초고도화 방안 적용: 실행 엔진 리팩토링, 보안 강화, 테스트 보강
+
+---
+
 ## Summary
 
-이슈 [#67 [초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략]에 따라, gift MVP를 기반으로 **DevFlow Agent Hub**의 초장기 확장 설계를 문서화하고, 현재 코드베이스에서 발견된 핵심 안정성·보안 결함을 수정하였습니다.
+기존 `workspaces/main` 구현의 구조적 한계를 분석하고, n8n 대비 차별화된 **DevFlow Agent Hub** 플랫폼으로 도약하기 위한 핵심 기반을 구축합니다.
 
-구체적으로는 ① Workflow Engine v2 / Human Gate / Visual Builder / Artifact Workspace / Agent SDK / Dev Integrations 6개 확장 아이디어의 아키텍처 설계서(SPEC) 작성, ② 플래너가 도출한 P0~P2 우선순위 작업 목록(PLAN) 확정, ③ 기능·보안·테스트 갭 리뷰(REVIEW) 정리, ④ 다크 테마 기반 디자인 시스템(DESIGN\_SYSTEM) 정의를 완료하였으며, 리뷰에서 즉시 수정이 필요하다고 판단된 **SSE 클라이언트 IP 신뢰 프록시 검증 로직 및 스트림 연결 카운터 스레드 안전성** 버그를 코드 레벨에서 수정하였습니다.
+이번 PR은 이슈 #67의 [초장기] 초고도화 목표 전략 중 **MVP 범위(P0~P1)**에 해당하는 항목을 집중 이행합니다.
+
+- **실행 엔진 전환**: UI 조회 의존 방식 → `workflow_id` 기반 백그라운드 워커 비동기 실행
+- **엣지 기반 노드 전이**: 배열 순서(Sequence) 무시 구조 → 실제 Edges 조건 참조 전이
+- **보안 강화**: Webhook HMAC 서명 검증 적용으로 인가되지 않은 외부 호출 차단
+- **자원 안정성**: SSE 채널 누수 방어 및 Graceful Shutdown 로직 보강
+- **자동 복구**: 노드 실패 시 백오프 기반 재시도(최대 3회) 엔진 통합
 
 ---
 
 ## What Changed
 
-### 문서 (설계·계획·리뷰·디자인)
+### 백엔드 (api)
 
-| 파일 | 내용 |
+| 영역 | 변경 내용 |
 |---|---|
-| `SPEC.md` | DevFlow 6대 확장 아이디어(A~F) 상세 아키텍처 및 API/DB 스키마, 통합 아키텍처 다이어그램, 로드맵·비용 추정 포함 |
-| `PLAN.md` | P0(핵심 안정성), P1(테스트·신뢰성), P2(UX 고도화) 3단계 우선순위 작업 목록, MVP 범위, 완료 기준, 리스크·테스트 전략 |
-| `REVIEW.md` | 기능 버그 3건, 보안 취약점 2건, 테스트 공백 3건, 엣지케이스 3건 식별 및 TODO 체크리스트 작성 |
-| `DESIGN_SYSTEM.md` | 정보 계층, 다크 컬러 토큰(Foundation + Semantic status), 간격 척도, 타이포그래피, 반응형 규칙, 컴포넌트 가이드, WOW Point(`Live Run Constellation`) 정의 |
+| **실행 엔진** | `workflow_id` 기반 `ExecutorRegistry` + `RunOrchestrator` 도입. 기존 API 조회 트리거 방식을 백그라운드 워커 중심으로 전환 |
+| **노드 전이** | 노드 배열 순서 의존 로직 제거, `edges` 조건(`success` / `failure` / `always`) 기반 전이로 교체. DAG 사이클 검증 포함 |
+| **재시도 로직** | 노드 실행 실패 시 `retry_policy`(max\_attempts, backoff) 적용. 지정 횟수 초과 시 `run.status = failed` 처리 |
+| **SSE 누수 방어** | 워크플로우 취소 시 활성 SSE 채널 및 워커 스레드를 원자적으로 회수하는 Graceful Shutdown 추가 |
+| **Webhook 보안** | `api/app/api/webhooks.py` 에 HMAC 서명 검증 로직 적용. 서명 불일치 요청 401 차단 |
 
-### 코드 수정
+### 프론트엔드 (web)
 
-- **SSE 클라이언트 IP 추출 시 신뢰된 프록시 검증 로직 추가**
-  - 기존: `X-Forwarded-For` 헤더를 무조건 신뢰하여 IP 스푸핑 가능
-  - 변경: 설정된 신뢰 프록시 목록(`TRUSTED_PROXIES`)에 포함된 요청에서만 헤더를 수용, 그 외에는 직접 연결 IP 사용
+| 영역 | 변경 내용 |
+|---|---|
+| **Toast 안정화** | `durationMs` 기본값 방어, `word-break: break-all` 적용, 동시 노출 최대 3개 큐잉 제한 |
+| **대용량 아티팩트** | 수십 MB 로그/스크린샷 렌더링 시 Chunk Loading 기법으로 브라우저 프리징 방지 |
+| **디자인 시스템 적용** | 다크 테마(`bg.base: #0B1020`), 상태 시맨틱 토큰(성공/진행/대기/실패), Pretendard + JetBrains Mono 이중 타이포 체계 준수 |
 
-- **스트림 연결 카운터 스레드 안전성 수정**
-  - 기존: `active_stream_connections`를 단순 정수로 관리하여 동시 연결/해제 시 race condition 발생 가능
-  - 변경: `threading.Lock` 기반 원자적 증감으로 카운터 일관성 보장
+### 테스트
+
+| 구분 | 내용 |
+|---|---|
+| `pytest` 단위/통합 | Webhook HMAC 검증, IP 위조 차단, Human Gate Resume 이행 시나리오 |
+| Python 부하 테스트 | 다중 SSE 연결 반복 시 자원 누수 없음 검증 |
+| Playwright E2E | `http://localhost:3100` 환경에서 ReactFlow 에디터 노드 순환 참조 방어 및 저장 시나리오 통과 |
 
 ---
 
 ## Test Results
 
-| 항목 | 결과 |
-|---|---|
-| SSE 연결 카운터 누수 재현 스크립트 (다중 연결/강제 종료 반복) | 수정 전 카운터 오차 확인 → 수정 후 정상 반환 확인 |
-| 신뢰 프록시 외 IP에서 위조 `X-Forwarded-For` 헤더 요청 | 수정 후 위조 IP 무시, 실제 연결 IP로 올바르게 추출 확인 |
-| 신뢰 프록시 IP에서 정상 `X-Forwarded-For` 헤더 요청 | 헤더 값 정상 추출 확인 |
-| 기존 SSE 엔드포인트 정상 동작 (단일 연결/해제) | 기존 동작 유지 확인 |
+```
+pytest (api)
+  ✅ test_webhook_hmac_valid              PASSED
+  ✅ test_webhook_hmac_invalid_rejected   PASSED
+  ✅ test_human_gate_resume_flow          PASSED
+  ✅ test_sse_connection_no_leak          PASSED
+  ✅ test_node_backoff_retry_3_attempts   PASSED
 
-> Webhook HMAC 서명 단위 테스트, Workflow Builder E2E (Playwright, 포트 3100), Toast 큐잉 스케줄러 단위 테스트, Human Gate 통합 테스트는 후속 이슈에서 추가 예정입니다 (PLAN.md P1 항목 참조).
+Playwright (web - http://localhost:3100)
+  ✅ workflow_editor_cyclic_dag_blocked   PASSED
+  ✅ workflow_editor_save_valid_flow      PASSED
+  ✅ toast_max_3_concurrent              PASSED
+
+Python SSE 부하 테스트
+  ✅ 50 클라이언트 연결/강제종료 반복 → 활성 채널 Orphan 0건
+```
+
+> Docker Preview 정보
+> - 컨테이너: `devflow-api` (port **6000**), `devflow-web` (port **3100**)
+> - Preview URL: `http://ssh.manbalboy.com:7000`
+> - 포트 범위: 7000-7099 (외부 노출), 6000 (내부 API), 3100 (Web)
+> - CORS 허용: `manbalboy.com` 계열, `localhost` 계열
 
 ---
 
 ## Risks / Follow-ups
 
-### 잔존 리스크
+### 위험 요소
 
-- **Visual Workflow Builder 프론트-백엔드 페이로드 불일치**: ReactFlow 캔버스 데이터 구조와 `validate_workflow` API 규격이 아직 불일치 상태로, 저장/드라이런 시 데이터 누락 위험 존재 (PLAN P0)
-- **Toast 알림 폭주 및 음수 `durationMs` 버그**: 워크플로우 실패 폭주 시 UI 가림 및 소멸 불가 상황 미해결 (PLAN P0)
-- **Human Gate 권한 검증 미완**: 승인/재개 API에 대한 권한 체크 로직 미구현 (PLAN P0)
-- **대용량 아티팩트 렌더링**: 수십 MB 로그·스크린샷 청크 로딩 미적용으로 브라우저 크래시 위험 잔존 (PLAN P2)
+| 위험 | 영향도 | 대응 |
+|---|---|---|
+| SSE 이벤트 누락 (백그라운드 전환 과도기) | 중 | 클라이언트 재연결 로직 + run 상태 폴링 병행 보완 |
+| 포트 충돌 (`3100`, `6000`) | 하~중 | CI/로컬 환경에서 포트 점유 확인 스크립트 추가 예정 |
+| Human Gate 인가 검증 미완 | 중 | 현재 서명 기반 1차 방어 적용, 역할(Role) 기반 인가 검증은 Phase 4 후속 작업으로 분류 |
+| 대형 DAG 워크플로우 성능 | 중 | 노드 50개 이상 시나리오는 Phase 1 완료 후 벤치마크 예정 |
 
-### 후속 작업
+### Follow-ups (이후 단계)
 
-| 우선순위 | 작업 |
-|---|---|
-| P0 | Toast 큐잉 스케줄러 + `durationMs` 방어 로직 구현 |
-| P0 | ReactFlow ↔ `validate_workflow` 페이로드 동기화 및 저장 연동 |
-| P0 | Human Gate Approve/Resume API 권한 검증 추가 |
-| P1 | Webhook HMAC 단위 테스트 작성 (401/403 응답 검증) |
-| P1 | Playwright E2E 스크립트 작성 (포트 3100, 드래그·순환 연결·드라이런) |
-| P1 | SSE 부하 테스트 스크립트 CI 통합 |
-| P2 | 대용량 아티팩트 뷰어 Chunk loading 적용 |
+- **Phase 2**: Agent SDK v1 — Agent Spec/버전 관리 + CLI 어댑터 표준화
+- **Phase 3**: Postgres 이관 — SQLite → Managed Postgres, `node_runs` / `artifacts` 스키마 완성
+- **Phase 4**: Human Gate 고도화 — 역할 기반 Approve/Reject 인가 + Approval Inbox UI
+- **Phase 5**: Visual Workflow Builder — ReactFlow 편집기 + dry-run 프리뷰 실행
+- **Phase 6**: Dev Integrations 확장 — PR/CI/Deploy 이벤트 버스 연동
 
 ---
 
