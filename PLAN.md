@@ -43,8 +43,12 @@
 
 
 
+
 절대 제약사항은 다음과 같습니다. 
 -- ** workspaces/main 안에 파일은 읽기만 해야합니다. 수정이나 삭제 하면안됨 **
+
+권한으로인해 파일을 읽을수 없다면 해당 디렉토리하위를 참고하세요 제가 복사해두었습니다. 
+workspaces/new-mind/manbalboy__agent-hub/ex-code 
 
 ## 1. Task breakdown with priority
 
