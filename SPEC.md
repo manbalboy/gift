@@ -1,283 +1,429 @@
 # SPEC
 
         - Repository: manbalboy/agent-hub
-        - Issue: #65
-        - URL: https://github.com/manbalboy/agent-hub/issues/65
-        - Title: [초장기] 오픈소스의 왕이 될  프로그램 제작
+        - Issue: #67
+        - URL: https://github.com/manbalboy/agent-hub/issues/67
+        - Title: [초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략
 
         ## 원본 요청
 
-        ** 해당 아래 기준을 충족하는 프로그래머를 만들고싶어 **
+        -- 기존레포지토리를 검사해서 아래 내용에서 적용되지 않은 아이디어를 구현해주세요 --
 
-----------------------------------------------------
-**CLI를 활용하는게 절대 1번 기능이야 바뀌지 않음**
-** manbalboy.com 이라는 도메인이 들어가면 서브도메인이든 포트가 달라도 허용 **
-----------------------------------------------------
+** 절대 ai 사용은 cli로 방법으로 하는걸 기본값으로 가져간다 api 방식은 서브 **
 
-# DevFlow Agent Hub 설계 프롬프트 문서
-
-## 요약
-
-**요약(Executive Summary)**: gift 레포의 AgentHub는 **GitHub Issue 라벨(`agent:run`) 트리거 → 고정 파이프라인 실행 → PR 생성**까지를 자동화하는 FastAPI 기반 MVP로, “순서를 정하는 주체는 AI가 아니라 워커 코드”라는 원칙 아래 Gemini/Codex/Claude를 **CLI 작업자**로 호출해 단계별로 수행합니다. citeturn3view0turn3view1turn6view0  
-본 문서는 이를 기반으로, **Agent Hub를 넘어 “AI Development Platform(Idea→Plan→Design→Code→Test→Deploy)”** 을 지향하는 **DevFlow Agent Hub**를 설계·문서화하기 위한 실행 가능한 아키텍처/기능 요구사항을 제시합니다. 워크플로우는 gift가 이미 시도 중인 “노드/엣지 기반 정의+검증” 방향을 정식 **Workflow Engine**으로 확장하고(시각 편집 포함), Workspace/Marketplace/Dev Integration을 결합해 실제 조직 SDLC에 맞춘 자동화를 제공합니다. citeturn8view0turn8view3  
-
-## 목적 및 핵심 개념
-
-DevFlow Agent Hub의 목적은 **개발 워크플로우 중심의 AI Development Platform**을 구축하는 것이며, 핵심 개념은 “(1) 사람이 이해 가능한 SDLC 단계를 **워크플로우 노드**로 모델링하고, (2) 각 노드는 목적 특화 **Agent(또는 Toolchain)** 로 실행되며, (3) 결과물(PRD·디자인 스펙·코드·테스트·배포 아티팩트)을 **Workspace**에 누적해 다음 단계의 입력으로 재사용”하는 것입니다. gift가 이미 “이슈 읽기→계획→구현→리뷰→수정→테스트→PR”을 코드로 강제한 구조를, **그래프 기반(노드/엣지) + 템플릿 기반(팀/앱/트랙별)** 으로 확장합니다. citeturn3view1turn8view0turn8view2  
-
-## 핵심 아키텍처
-
-아래 구조는 gift의 “API 서버 + 워커 + 오케스트레이터 + 스토어 + 대시보드”를 유지하되, Workflow/Marketplace/Workspace를 1급 도메인으로 승격합니다. gift는 이미 FastAPI/Worker/Orchestrator/Store 구성을 갖고 있으며, jobs/queue/logs 저장과 대시보드 가시화를 제공합니다. citeturn6view0turn7view0turn10view0  
-
-```text
-DevFlow Agent Hub
-├─ API Layer (FastAPI)
-│  ├─ Webhooks / Integrations
-│  ├─ Workflow / Runs API
-│  ├─ Marketplace API
-│  └─ Workspace API
-├─ Workflow Engine
-│  ├─ Workflow Definition Store (템플릿/버전)
-│  ├─ Executor Registry (node type → 실행기)
-│  ├─ Run Orchestrator (replay/재시도/상태)
-│  └─ Run History (workflow_run / node_run / artifacts)
-├─ Agent Marketplace
-│  ├─ Agent Spec (prompt, tools, constraints, io schema)
-│  ├─ Versioning / Capability Metadata
-│  └─ Template Packs (SDLC, 팀별, 앱/트랙별)
-├─ Workspace
-│  ├─ Project Context (repo snapshot, env, rules)
-│  ├─ Artifacts (PRD, UI spec, code, tests, reports)
-│  └─ Observability (logs, traces, timelines)
-└─ UI
-   ├─ Dashboard (runs, logs, status, KPI)
-   └─ Visual Workflow Builder (node/edge editor)
-```
-
-## 주요 기능
-
-**Workflow Engine(중요도 상)**: gift가 “고정 선형 파이프라인”으로 실행하던 방식을, 저장된 워크플로우 정의로 실행하는 엔진으로 확장합니다. gift는 이미 “워크플로우 스키마/저장소(JSON)/검증 API”를 우선 도입하고, DAG/사이클 검사·entry node·edge 이벤트 타입(success/failure/always) 검증을 정의했습니다. citeturn8view0turn8view2turn8view3  
-**Agent Marketplace(중요도 상)**: gift의 “planner/coder/reviewer/escalation”처럼 역할별 CLI 템플릿을 관리하되, 이를 **재사용 가능한 Agent 패키지**로 표준화합니다(입출력 스키마, 필요한 도구, 실패 시 fallback, 예시 프롬프트). gift는 이미 에이전트 템플릿 조회/저장 API와 CLI 연결 확인을 제공합니다. citeturn7view0turn6view2turn4view1  
-**Workspace(중요도 상)**: 실행 단위(Job/Run)가 “로그 파일”을 넘어, 단계별 산출물(PRD·리뷰·상태 등)을 구조적으로 저장·버전관리하도록 합니다. gift는 단계별 상태/로그/PR URL 저장 및 workspace 경로 분리를 운영 중입니다. citeturn3view0turn6view1  
-**Dev Integration(중요도 상)**: 현재는 GitHub Issues 웹훅 기반이 중심이므로, 이를 **PR/CI/테스트/배포 이벤트**까지 확장합니다. gift는 `issues` 라벨 이벤트를 받아 Job을 만들고, HMAC 서명(`X-Hub-Signature-256`)로 검증합니다. citeturn6view1turn3view0  
-**Dashboard & Observability(필수)**: gift는 Job 리스트/상세/로그, 상태 카드, KST 표시, “행위자 라벨” 등 운영 친화 UI를 이미 갖추고, Next 기반 대시보드 프로토타입도 제공합니다. citeturn6view2turn11view0  
-
-## 실제 개발 워크플로우
-
-gift의 “고정 오케스트레이션”은 `prepare_repo → read_issue → write_spec → plan_with_gemini → implement_with_codex → test/commit → review/fix → PR`로 구성되어 있으며, 실패 시 재시도(기본 3회) 및 WIP PR 시도를 포함합니다. citeturn3view1turn6view0  
-DevFlow는 이를 **레벨별 템플릿**으로 제공해 “점진적 고도화”를 가능하게 합니다.
-
-```mermaid
-flowchart LR
-  subgraph L1["Level 1 (MVP): 최소 자동화"]
-    a1["Idea"] --> b1["Plan"] --> c1["Code"] --> d1["Test"] --> e1["PR/Deploy"]
-  end
-
-  subgraph L2["Level 2: 디자인 포함"]
-    a2["Idea"] --> b2["Plan(PRD)"] --> c2["Design(UI Spec)"] --> d2["Code"] --> e2["Test"] --> f2["QA/Deploy"]
-  end
-
-  subgraph L3["Level 3: 조직형 SDLC"]
-    a3["Idea"] --> b3["기획(PRD)"] --> b3r["기획/디자인 검수"]
-    b3r --> c3["디자인(IA·UI·컴포넌트)"] --> c3r["디자인 검수"]
-    c3r --> d3["개발 착수전 플랜(아키텍처·작업분해)"] --> e3["개발"]
-    e3 --> f3["단위 테스트"] --> g3["QA"] --> h3["E2E"]
-    h3 --> i3["리뷰(기능/UX)"] --> j3["코드리뷰"] --> k3["수정사항 개발"] --> l3["고도화"] --> m3["Deploy/Monitor"]
-  end
-```
-
-## UX 및 사용성 개선 포인트
-
-**템플릿(필수)**: “Level 1~3 SDLC 템플릿” + “앱/트랙(new/enhance/bug)별 템플릿”을 기본 제공(현재 gift는 app_code/track 메타 및 네이밍 규칙을 운영). citeturn6view1  
-**Visual Workflow(필수)**: gift가 목표로 명시한 n8n 스타일(노드/엣지 시각 구성)과, 아직 미구현인 “노드 에디터 UI(드래그/연결)”를 제품의 중심 기능으로 승격(ReactFlow 등). citeturn8view0turn8view3  
-**상태표시(필수)**: Run/Node 단위로 `queued/running/done/failed`뿐 아니라, “승인 대기(Review Needed) / 재시도 중 / Human-in-the-loop” 상태를 표준화(현재 gift는 상태·단계·로그·재시도 정책을 보유). citeturn3view1turn6view0  
-**대시보드(필수)**: gift의 강점(실시간 로그/상태 카드/잡 상세 하이라이트/Next 프록시 구조)을 유지하면서, **Workflow 타임라인·병목 노드·재작업률·리드타임**을 KPI로 추가합니다. citeturn6view2turn11view0  
-
-## gift 레포 기반 개선 포인트
-
-gift는 “작동하는 자동화”가 강점이지만, 플랫폼화에는 아래 격차가 남아 있습니다(일부는 gift 문서에 ‘의도된 범위 제한’으로 명시). citeturn8view3turn6view0  
-
-| gift 현재 격차 | 근거 | DevFlow 제안 해결책 | 기대 효과 |
-|---|---|---|---|
-| **실행 엔진이 고정 플로우 중심** | 기존 Orchestrator는 고정 파이프라인이며 “실행 엔진 전면 전환 전 단계”로 스키마/검증만 도입 citeturn8view0turn8view3 | **Workflow Engine 정식화**(workflow_id 실행, node executor registry, node_runs 저장) | 팀/앱별 플로우 실험·버전관리, 분기/병렬 확장 |
-| **노드 편집 UI/분기/변수 매핑 부재** | 노드 에디터 UI·조건 분기·병렬 노드 미구현 citeturn8view3 | Visual Builder(ReactFlow) + 조건/매핑 DSL + 템플릿 마켓 | 비개발자도 설계 참여, 재사용/공유 용이 |
-| **스토리지/관측이 MVP 수준** | jobs/queue JSON 및 확장 언급(예: Postgres), 폴링 기반 UI citeturn6view0turn4view1 | Postgres 중심 Run/Artifact 스키마 + 이벤트 스트림(SSE/WS) | 대규모 이력/검색/리포팅 가능, 운영성 향상 |
-| **개발 통합이 GitHub Issues 중심** | issues+labeled 트리거로 Job 생성, PR 자동화 citeturn6view1turn3view0 | PR/CI 결과·배포 이벤트까지 확장, 이슈 트래커도 플러그인화 | “Idea→Deploy” 자동화 완성도 상승 |
-
-## 추천 기술 스택과 구현 로드맵
-
-**추천 기술 스택(기능 우선)**  
-백엔드: FastAPI(현행 유지) + 워커 프로세스(현행) + HTTP 클라이언트(httpx) 구성은 gift가 이미 검증한 최소 의존성입니다. citeturn10view0turn6view0  
-워크플로우 엔진: (A) **entity["company","Temporal","workflow orchestration platform"]** 기반 “내구성 있는 실행(재시도/스케줄/장기 실행)” 또는 (B) LangGraph 기반 “상태 저장형 에이전트 그래프”를 채택합니다. Temporal은 워크플로우 정의/실행/스케줄을 제공하며, 장애 후에도 실행을 이어가는 특성을 문서화합니다. citeturn0search1turn0search3 LangGraph는 “장기 실행·상태 저장 워크플로우/에이전트”를 그래프 구조로 설계하도록 지원합니다. citeturn0search2turn9search1  
-UI: Next.js(이미 dashboard-next 프로토타입 보유) + Visual Builder(ReactFlow 권장) + 실시간 로그 스트림. citeturn11view0turn8view3  
-DB: 초기 Postgres(+Redis 선택)로 Run/NodeRun/Artifacts를 정규화(현행 SQLite/JSON은 MVP에 적합). citeturn4view1turn6view0  
-LLM: “CLI 호출” 패턴(현행) 유지하되, Marketplace로 추상화(모델 교체/권한/툴링 분리). 예: planner/coder/reviewer/escalation 분리 운영. citeturn4view1turn6view2  
-
-**다음 단계(우선순위 포함)**  
-1) **아키텍처 설계(최우선)**: gift의 API/Worker/Store를 기준으로 “Workflow Engine·Marketplace·Workspace” 경계를 확정하고, Run/Artifact 흐름(입력→실행→산출물)을 문서화합니다. citeturn6view0turn8view3  
-2) **DB 설계(우선)**: `workflow_definitions`, `workflow_runs`, `node_runs`, `artifacts`, `integrations` 중심 스키마로 이력/검색/재현성을 확보합니다(현행 jobs.json/queue.json/로그 파일의 한계를 흡수). citeturn6view0turn4view1  
-3) **Workflow 엔진 설계(우선)**: gift가 제시한 2차 권장사항(“workflow_id 인자 수용, executor registry, node_runs 저장, 기본 플로우 호환, 노드 편집 UI”)을 구현 목표로 삼습니다. citeturn8view3  
-4) **Agent SDK(중요)**: Agent Spec(입출력, 프롬프트, 도구, 실패 전략, 산출물 타입)을 표준화하고, CLI/HTTP 모두를 어댑터로 붙일 수 있도록 SDK를 제공합니다(“Cursor+Linear+LangGraph” 컨셉에서 ‘에이전트가 팀의 워크플로우에 자연히 섞이는 경험’을 목표로 함). citeturn9search2turn9search3turn0search2
+** 기존 n8n과 차별기능을 고도화 할수 있는 플랜을 짜서 장기적인 목표를 짠다 ** 
 
 
-# DevFlow Agent Hub 설계 문서
+# DevFlow Agent Hub 확장 설계서
 
 ## 요약
 
-**요약(Executive Summary)**: manbalboy/gift는 **GitHub Issue에 `agent:run` 라벨이 붙으면 자동으로 Job을 생성하고, Worker가 고정된 단계 순서로 실행해 PR을 만드는 FastAPI 기반 MVP**이며, “순서를 정하는 주체는 AI가 아니라 워커 코드, AI는 CLI로 호출되는 작업자”라는 철학을 명시합니다. citeturn5view0turn9view0 본 문서는 gift의 강점(작동하는 End-to-End 자동화, 대시보드/로그/재시도 정책)을 유지하면서, 이를 **개발 워크플로우 중심 AI Development Platform(DevFlow)** 으로 확장하기 위한 **실행 가능한 아키텍처·기능 중심 요구사항**을 정리합니다(보안 중요도 **하**, 기능 중요도 **상**). citeturn5view0turn5view2turn7view2
+**요약(Executive Summary)**: 참고 레포인 gift는 **GitHub Issue에 `agent:run` 라벨이 붙으면 Job을 큐에 적재하고, 별도 Worker가 “이슈 읽기→계획→구현→리뷰→수정→테스트→PR” 순서를 코드로 강제**하는 FastAPI MVP이며, 상태/로그/PR URL을 저장하고 대시보드에서 관측합니다(manbalboy/gift:README.md). citeturn4view0turn13view1turn4view0 DevFlow는 gift의 “작동하는 자동화 + 간결한 운영 경험(대시보드/재시도/로그)”을 유지하면서, gift가 문서로 제시한 **워크플로우 노드 전환(스키마/저장/검증 → 실행 엔진 전환)** 로드맵을 현실적으로 완성해 **개발 워크플로우 중심 AI Development Platform**으로 확장하는 것이 목표입니다(manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn7view2turn7view3turn6view2
 
 ## 목적과 핵심 개념
 
-**목적 및 핵심 개념**: DevFlow의 목적은 “Idea→Plan→Design→Code→Test→Deploy”를 실제 개발 조직 SDLC에 맞춰 **워크플로우(그래프)로 모델링**하고, 각 노드를 **역할 기반 Agent(Planner/Designer/Coder/Tester/Reviewer 등)와 Toolchain**으로 실행해 산출물(PRD·UI Spec·코드·테스트 리포트·PR)을 **Workspace에 누적/재사용**하는 것입니다. gift가 이미 고정 파이프라인(prepare_repo→read_issue→…→create_pr)과 재시도(기본 3회), 실패 시 상태/로그/`STATUS.md` 기록 및 Draft PR 시도를 갖춘 점을 기반으로, “정의/실행/관측/재현”이 가능한 플랫폼으로 고도화합니다. citeturn5view0turn5view2turn11view0
+**목적 및 핵심 개념**: DevFlow의 목적은 실제 개발 조직의 SDLC를 **노드/엣지 기반 워크플로우 정의(템플릿/버전)** 로 모델링하고, 각 노드를 목표가 분명한 **Agent/Toolchain 실행기(Planner/Designer/Coder/Tester/Reviewer 등)** 로 수행하며, 산출물(PRD·SPEC·코드·테스트 리포트·UX 스크린샷·PR)을 **Workspace에 아티팩트로 누적/재사용**하는 플랫폼을 구현하는 것입니다. gift는 이미 “앱/트랙별 메타(app_code/track)”, 워크스페이스/로그/브랜치 네이밍 분리, 대시보드에서 이슈 등록·중복 방지·에이전트 템플릿 관리까지 갖추었으므로, DevFlow는 이를 기반으로 **(1) 실행 엔진을 workflow_id 기반으로 전환**하고 **(2) node_runs·artifacts 중심 데이터모델**로 확장해 “정의→실행→관측→재현”을 완결합니다(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn8view0turn26view0turn7view2
 
-## 아키텍처
+## 확장 아이디어 개요
 
-### 핵심 아키텍처 다이어그램
+아래 아이디어는 “보안 중요도 **하**, 기능 중요도 **상**” 기준이며, gift의 문서/구현이 이미 깔아둔 레일(워크플로우 스키마/저장/검증 API, Quality Gate V2 템플릿, 대시보드/에이전트 템플릿 API)에 맞춰 **실행 가능한 형태**로 구성합니다(manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md, manbalboy/gift:config/workflows.json). citeturn7view2turn11view1turn25view0
 
+- **아이디어 A — Workflow Engine v2(내구 실행 + node_runs)**: 고정 Orchestrator를 유지하되, `workflow_id`로 **정의 기반 실행**으로 전환해 node 단위 상태/재시도를 표준화. *(목표: 템플릿 실행·버전·재현성)* (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn5view4turn7view3  
+- **아이디어 B — Human Gate(승인/수정/거절) + 재개(Resume)**: 테스트/UX/리뷰 단계에 **휴먼 게이트**를 넣고, 중단/재개를 표준 API로 제공. *(목표: 조직형 SDLC 적합성)* (LangGraph:Interrupts). citeturn19view5  
+- **아이디어 C — Visual Workflow Builder(ReactFlow) + 시뮬레이션 런**: n8n 스타일 편집기/검증/저장/프리뷰를 UI 핵심 경험으로 승격. *(목표: 워크플로우를 “코드”가 아니라 “제품 기능”으로)* (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn6view4turn7view2  
+- **아이디어 D — Artifact-first Workspace(표준 아티팩트/메타/검색)**: 로그 파일 중심에서 **아티팩트 중심**으로 전환(리포트·스크린샷·diff summary). *(목표: 재현/검색/리뷰 효율)* (manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn8view0turn26view2  
+- **아이디어 E — Agent Marketplace + Agent SDK(모델/도구 추상화)**: gift의 CLI 템플릿을 **Agent Spec/버전/호환**으로 승격하고 SDK로 실행·테스트·fallback 일관화. *(목표: 재사용/확장/플러그인 생태계)* (manbalboy/gift:ai_commands.example.json). citeturn12view1  
+- **아이디어 F — Dev Integrations 확장(이슈→PR→CI→Deploy 이벤트 버스)**: Issues 트리거 중심을 PR/체크/배포 프리뷰까지 확장하고 이벤트 버스로 결합. *(목표: Idea→Deploy 폐루프)* (manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn6view2turn8view2  
+
+## 아이디어별 상세 설계
+
+### 아이디어 A — Workflow Engine v2
+
+**제안 요약**: gift가 문서로 명시한 “2차 권장(Orchestrator에 `workflow_id`, executor registry, node_runs, ReactFlow UI)”을 DevFlow의 **P0 핵심**으로 삼아, “정의 기반 실행 + node_runs 저장”을 먼저 완성합니다(manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn7view3turn5view4  
+
+**아키텍처(아이디어 A)**  
 ```text
-DevFlow Agent Hub
-├─ API Layer (FastAPI)
-│  ├─ Webhooks (GitHub/Linear/CI) + Manual Trigger
-│  ├─ Workflow API (definitions, validate, runs)
-│  ├─ Marketplace API (agent specs, packs)
-│  └─ Workspace API (projects, artifacts, permissions-lite)
+Workflow Engine v2
+├─ WorkflowDefinitionStore (workflows.json → DB로 점진 이관)
+├─ ExecutorRegistry (node.type → executor)
+├─ RunOrchestrator
+│  ├─ retry/backoff 정책
+│  ├─ fallback(default_linear_v1)
+│  └─ human-gate 대기 상태 지원
+└─ RunStore
+   ├─ workflow_runs
+   └─ node_runs
+```
+
+**핵심 컴포넌트**
+- **WorkflowDefinitionStore**: gift는 `config/workflows.json`에 **default_workflow_id + workflows 배열**을 두고 Quality Gate V2 템플릿을 운영합니다(manbalboy/gift:config/workflows.json). citeturn11view1turn25view0  
+- **Validator**: 노드 중복 ID, from/to, 이벤트 타입(success/failure/always), entry node, DAG(사이클) 검사(이미 구현 완료) (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn6view4turn7view2  
+- **ExecutorRegistry**: 노드 타입별 실행기(예: gh_read_issue, gemini_plan, tester_run_e2e)를 등록 (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn5view4  
+
+**데이터 흐름**
+1) Trigger(웹훅/대시보드 등록) → `workflow_id` 결정(앱/트랙별 override 가능) (manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn6view2turn8view0  
+2) validate 성공 시 run 생성 → entry node부터 executor 실행 → **node_run 기록** 후 다음 edge로 전이. (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn7view2turn7view3  
+3) 워크플로우 로딩 실패 시 fallback: `default_linear_v1` 또는 기존 고정 플로우(문서 권장) (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn5view4turn7view3  
+
+**API/DB 스키마(요약)**
+- API(추가/변경):  
+  - `POST /api/runs`(start) / `GET /api/runs/{run_id}` / `POST /api/runs/{run_id}/cancel`  
+  - `POST /api/runs/{run_id}/retry-node`(부분 재시도)  
+  - 기존 `GET/POST /api/workflows*` 유지(스키마/조회/검증/저장) (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn7view2turn7view0  
+- DB(핵심 테이블):  
+  - `workflow_definitions(id, version, app_code, track, json, created_at)`  
+  - `workflow_runs(id, workflow_id, app_code, track, status, started_at, ended_at)`  
+  - `node_runs(id, run_id, node_id, type, status, attempt, started_at, ended_at, error, outputs_ref)`  
+
+**실패/재시도/휴먼 게이트 정책**
+- 기본 재시도: gift는 Job 실패 시 `AGENTHUB_MAX_RETRIES`(기본 3) 재시도를 운영합니다(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn6view2turn5view2  
+- v2 정책:  
+  - node별 `retry_policy`(max_attempts, backoff) 지원  
+  - “실패 → node 단위 retry → 그래도 실패 시 run 상태 failed”  
+  - 휴먼 게이트는 아이디어 B의 `approval_pending` 상태로 분리(재시도와 독립)
+
+**우선순위/난이도/기간**
+- **우선순위: 높음(P0)**  
+- 난이도: 중~상(기존 Orchestrator를 “실행기”로 분해해야 함)  
+- 기간(3~10명): 3~6주 (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn5view4  
+
+### 아이디어 B — Human Gate + Resume
+
+**제안 요약**: “자동 머지는 절대 하지 않는다”는 gift 정책을 확장해, DevFlow는 **승인/수정/거절**을 시스템 기능으로 제공하고(특히 QA/E2E/최종 리뷰), 긴 대기 후에도 안전하게 재개합니다(manbalboy/gift:README.md). citeturn13view1  
+
+**아키텍처(아이디어 B)**  
+```text
+Human Gate
+├─ GateRule (node.type, 조건, 요구 입력 스키마)
+├─ ApprovalService
+│  ├─ create_request
+│  ├─ approve/edit/reject
+│  └─ resume(run_id, node_id)
+└─ UI
+   ├─ Approval Inbox
+   └─ Diff/Artifact Viewer
+```
+
+**핵심 컴포넌트**
+- **Interrupt/Resume 메커니즘**: LangGraph는 interrupt가 발생하면 상태를 persistence로 저장하고, 재개 전까지 무기한 대기할 수 있음을 문서화합니다(LangGraph:Interrupts). citeturn19view5  
+- **Persistence 필요성**: LangGraph는 checkpointer가 state를 thread에 저장하고(HITL, time-travel 등 가능), 휴먼 게이트에 checkpointer가 필요하다고 설명합니다(LangGraph:Persistence). citeturn19view3  
+- **실무 배치**: Quality Gate V2 템플릿은 “UX E2E 검수(PC/모바일 스샷) → 수정 → 재 E2E → 최종 리뷰 게이트” 노드를 이미 포함합니다(manbalboy/gift:config/workflows.json). citeturn25view0turn11view1  
+
+**데이터 흐름**
+1) node executor가 gate 조건을 만족하면 `approval_request` 생성 → run은 `approval_pending`으로 전환  
+2) 사용자가 UI에서 approve/edit/reject  
+3) approve/edit면 node 재실행 또는 다음 노드로 전이, reject면 run은 `blocked` 또는 `failed`  
+
+**API/DB 스키마(요약)**
+- API: `POST /api/approvals` / `POST /api/approvals/{id}/approve|edit|reject` / `POST /api/runs/{run_id}/resume`  
+- DB: `approval_requests(id, run_id, node_id, status, payload, decision, decided_by, decided_at)`
+
+**실패/재시도/휴먼 게이트 정책**
+- 휴먼 게이트 노드는 **재시도보다 우선**(retry로 해결 불가한 설계/UX 판단을 분리)  
+- interrupt를 사용하는 경우, LangGraph는 “interrupt는 노드를 재실행하며, interrupt 이전 부작용은 idempotent해야 한다”는 규칙을 제시합니다(LangGraph:Interrupts). citeturn19view6  
+
+**우선순위/난이도/기간**
+- **우선순위: 높음(P0~P1)** (Level3 SDLC에 필수)  
+- 난이도: 중(상태 모델/UX 설계가 핵심)  
+- 기간: 2~4주  
+
+### 아이디어 C — Visual Workflow Builder + 시뮬레이션 런
+
+**제안 요약**: gift는 “n8n 스타일(노드/엣지 시각 구성) + 저장된 워크플로우 정의 기반 실행”을 목표로 삼고, 1차 범위로 스키마/저장/검증 API를 이미 도입했습니다(manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn6view4turn7view2 DevFlow는 이를 “편집기 + 프리뷰 실행”까지 올려 **워크플로우를 제품 기능으로 완성**합니다.
+
+**아키텍처(아이디어 C)**  
+```text
+Workflow Builder
+├─ ReactFlow Canvas
+│  ├─ Node Palette (SUPPORTED_NODE_TYPES)
+│  ├─ Edge Editor (on: success/failure/always)
+│  └─ Property Panel (node params, retry, gate)
+├─ Validation/Preview
+│  ├─ server-side validate_workflow
+│  └─ dry-run executor (no side effects)
+└─ Publishing
+   ├─ versioning(workflow_id + vN)
+   └─ rollback(default_workflow_id)
+```
+
+**핵심 컴포넌트**
+- 서버 스키마/검증: `GET /api/workflows/schema`, `POST /api/workflows/validate`, `POST /api/workflows`(저장/업데이트) (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn7view2turn7view0  
+- 검증 항목: DAG 여부, entry_node_id 유효성, edge 이벤트 타입 등 (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn6view4  
+
+**데이터 흐름**
+1) UI에서 workflow 편집 → validate 호출  
+2) validate OK면 save→새 phiên(version) 생성  
+3) preview-run(드라이런)은 “각 노드가 어떤 입력/출력 스키마를 요구하는지”만 확인(실제 git push/PR 생성은 금지)
+
+**API/DB 스키마(요약)**
+- API: `POST /api/workflows/{id}/preview-run`(시뮬레이션)  
+- DB: `workflow_definitions`에 `status(draft/published/deprecated)` 추가
+
+**실패/재시도/휴먼 게이트 정책**
+- validate 실패는 저장 거부(문서 권장) (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn5view4turn7view3  
+- 편집 중에도 fallback(기본 워크플로우/고정 플로우) 유지 (manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn7view3  
+
+**우선순위/난이도/기간**
+- **우선순위: 중~높음(P1)**  
+- 난이도: 중(ReactFlow + 서버 검증 연결)  
+- 기간: 3~6주  
+
+### 아이디어 D — Artifact-first Workspace
+
+**제안 요약**: gift는 현재 logs와 Job 메타 중심이며, 앱/트랙 기준으로 브랜치/로그/워크스페이스를 분리하고, UX E2E 스크린샷 같은 산출물도 워크플로우 노드에 포함합니다(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md, manbalboy/gift:config/workflows.json). citeturn8view0turn25view0turn11view1 DevFlow는 이를 **아티팩트 표준**으로 확장해 “검색/재현/리뷰”를 강화합니다.
+
+**아키텍처(아이디어 D)**  
+```text
+Workspace & Artifacts
+├─ Artifact Registry (type, schema, retention)
+├─ Object Store (S3 compatible)
+├─ Metadata Store (Postgres)
+└─ UI
+   ├─ Artifact Viewer (md, diff, screenshots)
+   └─ Run Timeline (node_runs + artifacts)
+```
+
+**핵심 컴포넌트**
+- **Artifact 표준 타입**: `spec.md`, `plan.md`, `review.md`, `test_report.json`, `e2e_screenshots/*`, `code_change_summary.md`, `status.md`, `pr_link`  
+- **App Namespace**: gift의 app_code/track, 네이밍 분리 규칙은 그대로 유지 (manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn26view0turn8view0  
+
+**데이터 흐름**
+1) node 실행 결과는 “stdout 로그”뿐 아니라 artifact로 저장(경로+메타)  
+2) UI는 run 타임라인에서 각 node_run의 출력 artifact를 클릭해 확인  
+3) “재실행”은 특정 node_run을 기준으로 입력 아티팩트를 그대로 재사용(재현성)
+
+**API/DB 스키마(요약)**
+- API: `GET /api/runs/{run_id}/artifacts`, `GET /api/artifacts/{id}`  
+- DB: `artifacts(id, run_id, node_id, type, uri, mime, size, hash, created_at)`
+
+**실패/재시도/휴먼 게이트 정책**
+- 실패 시 “마지막 40줄 로그” 자동 노출 같은 운영 UX는 유지(실환경 웹훅 테스트 스크립트가 동일 패턴을 이미 채택) (manbalboy/gift:README.md). citeturn13view1  
+
+**우선순위/난이도/기간**
+- **우선순위: 중(P1)**  
+- 난이도: 중(DB+스토리지+UI 연결)  
+- 기간: 3~5주  
+
+### 아이디어 E — Agent Marketplace + Agent SDK
+
+**제안 요약**: gift는 `ai_commands.json`에 **planner/coder/reviewer/escalation** CLI 템플릿을 두고, 대시보드에서 템플릿 조회/저장·CLI 체크·모델 확인 API를 제공합니다(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn8view0turn8view2 DevFlow는 이를 “Agent Spec + 실행 SDK”로 격상해, **모델/도구/입출력/예산/폴백**을 표준화합니다.
+
+**아키텍처(아이디어 E)**  
+```text
+Agent Platform
+├─ Agent Spec Registry
+│  ├─ versions
+│  ├─ io schema
+│  └─ tool requirements
+├─ Agent SDK
+│  ├─ CLI adapter (gif t 방식 유지)
+│  ├─ HTTP adapter
+│  └─ test harness (golden prompts)
+└─ Marketplace UI
+   ├─ browse/search
+   └─ install to workflow
+```
+
+**핵심 컴포넌트**
+- **CLI 기반 실행 유지**: gift의 예시 템플릿은 `gemini/codex/claude`를 표준 입출력(파일/JSON→markdown 변환)로 연결합니다(manbalboy/gift:ai_commands.example.json). citeturn12view1  
+- **모델 추상화**: node executor는 “Agent Spec(역할)”만 참조하고, 실제 실행은 환경별 runner가 담당
+
+**데이터 흐름**
+1) workflow node(type=gemini_plan 등) → executor가 agent_spec 버전을 조회  
+2) prompt_builder가 `{prompt_file}` 등 변수를 렌더 → runner 실행  
+3) 결과는 artifact로 저장하고, 실패 시 fallback spec(또는 fallback command)로 재시도
+
+**API/DB 스키마(요약)**
+- API: `GET/POST /api/agents`(스펙 등록), `GET /api/agents/{id}/versions`  
+- DB: `agent_specs(id, name, description)`, `agent_versions(id, agent_id, semver, command_tpl, io_schema, defaults, created_at)`
+
+**실패/재시도/휴먼 게이트 정책**
+- 기본: planner/coder/reviewer 분리 + fallback 키를 이미 제공(예: planner_fallback, coder_fallback) (manbalboy/gift:ai_commands.example.json). citeturn12view1  
+- DevFlow: 비용/시간 budget 초과 시 escalation 또는 휴먼 게이트로 전환(보안보다 “기능 완주” 우선)
+
+**우선순위/난이도/기간**
+- **우선순위: 높음(P0)** (마켓플레이스 생태계의 기반)  
+- 난이도: 중  
+- 기간: 2~4주  
+
+### 아이디어 F — Dev Integrations + 이벤트 버스
+
+**제안 요약**: gift는 `issues+labeled` 웹훅과 `POST /api/issues/register`를 통해 이슈 생성·라벨 부착·Job 생성까지 자동화하고, 중복 방지(queued/running 기존 Job 연결)도 구현했습니다(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn6view2turn26view0 DevFlow는 이를 PR/CI/Deploy 이벤트까지 확장해 “Idea→Deploy” 폐루프를 강화합니다.
+
+**아키텍처(아이디어 F)**  
+```text
+Integrations
+├─ Event Ingest
+│  ├─ GitHub (issues/pr/checks)
+│  ├─ CI (GitHub Actions 등)
+│  └─ Deploy (preview/prod)
+├─ Event Bus (Redis streams 또는 Postgres outbox)
+└─ Workflow Triggers
+   ├─ start run
+   ├─ resume run
+   └─ update artifacts
+```
+
+**핵심 컴포넌트**
+- Trigger 다양화: `agent:run` 라벨 외에 “PR opened → 테스트 워크플로우 실행”, “CI fail → 수정 워크플로우 전환”  
+- Event Bus: 단순 큐(JSON/SQLite 폴링)에서 **이벤트 스트림 기반**으로 확장(관측/리플레이 용이)
+
+**데이터 흐름**
+1) 이벤트 수신 → 표준 event로 정규화(`event_type`, `repo`, `ref`, `payload`)  
+2) 트리거 매핑(규칙) → run 시작/재개/노드 스킵 등 실행 제어  
+3) 결과(체크/배포 URL)는 artifact로 저장
+
+**API/DB 스키마(요약)**
+- DB: `integration_events(id, type, source, payload, received_at)`, `trigger_rules(id, match, action)`  
+- API: `POST /api/triggers/test`(규칙 검증), `GET /api/events`(관측)
+
+**실패/재시도/휴먼 게이트 정책**
+- 외부 의존성 실패(gh auth, 외부 네트워크 등)는 운영 유의사항으로 명시되어 있으므로, 이벤트 재수신/재처리 전략이 필요합니다(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn8view2  
+
+**우선순위/난이도/기간**
+- **우선순위: 중(P1~P2)**  
+- 난이도: 중  
+- 기간: 2~5주  
+
+## 통합 아키텍처
+
+gift는 현재 “API 서버 + 워커 + 오케스트레이터 + 저장소(JSON/SQLite) + 대시보드” 형태로 작동하며, 워크플로우 스키마/저장/검증 API를 이미 추가했습니다(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md, manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn6view1turn7view2 DevFlow 통합 아키텍처는 이를 “Engine/Marketplace/Workspace/Integrations”로 재구성합니다.
+
+**통합 텍스트 트리**  
+```text
+DevFlow (Integrated)
+├─ UI (Next.js)
+│  ├─ Dashboard (runs, logs, KPIs, approvals)
+│  └─ Workflow Builder (ReactFlow)
+├─ API (FastAPI)
+│  ├─ Webhooks / Integrations
+│  ├─ Workflows (schema/validate/save/publish)
+│  ├─ Runs (start/cancel/resume/retry-node)
+│  ├─ Marketplace (agents/specs/versions)
+│  └─ Workspace (projects/artifacts/search)
 ├─ Workflow Engine
-│  ├─ Definition Store (workflow_id, version, templates)
+│  ├─ Validator (DAG, entry, edge conditions)
 │  ├─ Executor Registry (node.type → executor)
-│  ├─ Run Orchestrator (retries, resume, human gate)
-│  └─ Run History (workflow_runs, node_runs, events)
-├─ Agent Marketplace
-│  ├─ Agent Spec (prompt, io schema, tools, policies)
-│  ├─ Versioning / Capability Metadata
-│  └─ Template Packs (SDLC Level1~3, app/track별)
-├─ Workspace
-│  ├─ Project Context (repo snapshot, rules, env)
-│  ├─ Artifacts (PRD/UI spec/tests/reports)
-│  └─ Observability (logs, traces, timeline)
-└─ UI (Next.js)
-   ├─ Dashboard (status/KPI/runs/logs)
-   └─ Visual Workflow Builder (React Flow)
+│  ├─ Run Orchestrator (retries, human gate)
+│  └─ Runner Layer (CLI/HTTP)
+└─ Infra
+   ├─ Postgres (definitions/runs/node_runs/artifacts)
+   ├─ Redis (queue/cache/streams, optional)
+   ├─ Object Store (S3 compatible)
+   └─ Kubernetes (API/worker scale-out)
 ```
 
-gift는 이미 API/Worker/Orchestrator/Store/대시보드 구성을 갖고(`app/main.py`, `app/worker_main.py`, `app/orchestrator.py`, `app/store.py`, `app/dashboard.py`), JSON/SQLite 기반 저장소 추상화와(단일 JobStore 인터페이스) 워크플로우 정의 저장/검증 API를 제공하므로, DevFlow는 이를 **Workflow Engine + Marketplace + Workspace**의 도메인 경계로 재정렬하는 방식이 비용 대비 효과가 큽니다. citeturn5view2turn9view2turn9view3turn5view1
-
-## 기능과 워크플로우
-
-### 주요 기능 목록
-
-아래 우선순위는 “기능 **상** / 보안 **하**” 기준이며, gift에 이미 존재하는 기능은 “기반 있음”으로 표시합니다.
-
-| 기능 | 우선순위 | 핵심 설명 | gift 근거(현황) |
-|---|---|---|---|
-| Workflow Engine | **P0** | **워크플로우 정의(그래프) 기반 실행**, 분기/루프/휴먼 게이트, `node_runs` 저장, 재시도/재개/리플레이 관점 설계 | 고정 파이프라인 + 1차로 스키마/저장/검증 API 도입, 다음 단계로 executor registry·node_runs·ReactFlow UI 제안 citeturn5view1turn8view1turn9view3 |
-| Agent Marketplace | **P0** | 역할 기반 Agent 패키지(프롬프트/도구/입출력 스키마/버전)와 SDLC 템플릿 번들 제공 | CLI 커맨드 템플릿을 JSON으로 분리·대시보드에서 수정/체크/모델 확인 citeturn11view3turn7view1turn9view3 |
-| Workspace | **P0** | 프로젝트 단위 컨텍스트/산출물 저장(문서·리포트·스크린샷·PR 링크), 검색/재현/감사 최소 요건 | workspaces 경로 분리, 로그/상태 저장, 브랜치/로그 네이밍 규칙, `artifacts/ux/*.png` 생성 로직 citeturn7view1turn10view4turn5view0 |
-| Dev Integration | **P1** | GitHub Issues/PR/Checks, CI, 배포(프리뷰) 이벤트까지 확장 + (선택) Linear 연동 | GitHub issues 웹훅 + 라벨 트리거 + 대시보드에서 이슈 생성/라벨 자동 부착 citeturn11view1turn7view0turn9view3 |
-| Dashboard / Observability | **P1** | Run 타임라인·병목·재작업률·리드타임 KPI, 실시간 스트리밍 로그(SSE/WS) | Job 목록/상세/로그, 상태 요약, KST 표시, 행위자 라벨, 폴링 기반 갱신 citeturn7view0turn7view2turn9view3 |
-| Agent SDK | **P0** | Agent Spec 표준(입출력, 프롬프트, 툴, 실패전략) + CLI/HTTP 어댑터 + 테스트 하네스 | bash 템플릿 실행기(`bash -lc`), 템플릿 변수 렌더링/에러 가이드 citeturn11view3turn11view2 |
-
-### 실제 개발 워크플로우
-
-**Level 1**은 gift의 “이슈 기반 자동 PR 생성” 철학을 그대로 살리고, **Level 2~3**에서 기획/디자인/QA/E2E/리뷰 루프를 구조화합니다. gift의 최신 워크플로우 템플릿에는 디자이너 단계·E2E·UX 검수·루프가 이미 노드로 정의되어 있어(Level2~3의 일부), 이를 “워크플로우 템플릿 팩”으로 일반화하는 접근이 적합합니다. citeturn8view0turn8view1turn10view4
-
-- **Level 1 (MVP)**: Idea → Plan → Code → Test → PR/Deploy(선택)
-- **Level 2 (디자인 포함)**: Idea → PRD → UI Spec → Code → Unit/Integration Test → QA → Deploy
-- **Level 3 (조직형 SDLC)**: Idea → 기획(PRD) → 기획/디자인 검수 → 디자인(IA·UI·컴포넌트) → 개발 착수 플랜(작업분해/아키텍처) → 개발 → 단위 테스트 → QA → E2E → 리뷰/코드리뷰 → 수정 개발 → 고도화 → Deploy/Monitor
-
+**컴포넌트 다이어그램(mermaid)**  
 ```mermaid
-flowchart LR
-  subgraph L1["Level 1 (MVP)"]
-    i1["Idea"] --> p1["Plan"] --> c1["Code"] --> t1["Test"] --> d1["PR/Deploy"]
+flowchart TB
+  subgraph UI["UI"]
+    D["Dashboard"]
+    B["Workflow Builder (ReactFlow)"]
+    A["Approval Inbox"]
   end
 
-  subgraph L2["Level 2 (Design Included)"]
-    i2["Idea"] --> prd2["PRD"] --> ui2["UI Spec"] --> c2["Code"] --> ut2["Unit/Integration"] --> qa2["QA"] --> d2["Deploy"]
+  subgraph API["API (FastAPI)"]
+    W["Workflow API\n(schema/validate/save)"]
+    R["Run API\n(start/resume/retry)"]
+    M["Marketplace API\n(agent specs)"]
+    I["Integrations/Webhooks"]
   end
 
-  subgraph L3["Level 3 (Org SDLC)"]
-    i3["Idea"] --> prd3["기획(PRD)"] --> g3["기획/디자인 검수"]
-    g3 --> ds3["디자인(IA·UI·컴포넌트)"] --> dr3["디자인 검수"]
-    dr3 --> plan3["개발 착수전 플랜(아키텍처·작업분해)"] --> dev3["개발"]
-    dev3 --> unit3["단위 테스트"] --> qa3["QA"] --> e2e3["E2E"]
-    e2e3 --> rev3["리뷰/코드리뷰"] --> fix3["수정 개발"] --> hard3["고도화"] --> dep3["Deploy/Monitor"]
+  subgraph ENG["Workflow Engine"]
+    V["Validator\n(DAG/entry/edge)"]
+    X["Executor Registry"]
+    O["Run Orchestrator\n(retry/human gate)"]
   end
+
+  subgraph RUN["Runners"]
+    WK["Workers"]
+    CLI["CLI Runner\n(gemini/codex/claude)"]
+    T["Test Runner\n(unit/e2e)"]
+  end
+
+  subgraph STORE["Storage"]
+    PG["Postgres\n(runs/node_runs/artifacts)"]
+    OBJ["Object Store\n(artifacts)"]
+    RD["Redis\n(queue/streams)"]
+  end
+
+  UI --> API
+  I --> R
+  W --> V
+  R --> O
+  O --> X --> RUN
+  API <--> PG
+  RUN --> OBJ
+  O <--> RD
+  UI --> PG
 ```
 
-### UX/사용성 개선 포인트
-
-- **템플릿(필수)**: Level1~3 SDLC 템플릿 + app/track(`new/enhance/bug/long/ultra`)별 템플릿을 기본 제공. gift는 이미 app/track을 Job 메타로 저장하고 라벨/브랜치/로그/워크스페이스를 분리합니다. citeturn7view1turn11view1  
-- **Visual Workflow(React Flow, 필수)**: gift의 “n8n 스타일 노드/엣지 기반 + 저장된 워크플로우 실행” 목표를 UI 중심 기능으로 승격하고(드래그/연결/노드 설정 패널), React Flow를 기본 채택(노드 기반 에디터를 위한 MIT 라이선스 오픈소스, 드래그/줌/선택 등 내장). citeturn5view1turn16view2  
-- **상태표시(필수)**: `queued/running/done/failed`에 더해 **review_needed(휴먼 승인), retrying, blocked, skipped** 를 추가하고, `node_runs` 단위로 사유/링크(로그/아티팩트)를 노출합니다. gift는 이미 stage enum과 시도 횟수/재시도 정책으로 “진행 상태”를 정형화했습니다. citeturn11view0turn5view0turn10view1  
-- **대시보드 KPI(필수)**: 리드타임(이슈→PR), 재작업률(루프 횟수), 실패율(노드별), 병목 노드(대기·실행 시간), 테스트 신뢰도(E2E 통과율) 지표를 추가하고, 현재 폴링 기반을 SSE/WS로 확장(실시간 로그 스트림). gift가 “폴링 리스트+터미널 로그+에러 요약”까지 구현해둔 점을 기반으로 KPI 계층만 추가합니다. citeturn7view2turn9view3turn5view0  
-
-## gift 기반 갭 분석과 기술 선택
-
-### gift 레포 기반 개선 포인트
-
-gift 자체 문서에서 “1차는 실행 엔진 전면 전환 전 단계로 설계/저장/검증만 도입”이라고 명시하며(의도된 범위 제한), 조건 분기/변수 매핑/병렬 실행/노드 편집 UI가 미구현임을 인정합니다. citeturn5view1turn8view1 또한 현재 저장소는 JSON/SQLite 중심이며, 대시보드는 폴링 기반으로 갱신됩니다. citeturn9view2turn7view2 이를 출발점으로 **최소 4개 이상**의 격차와 해결책을 정리합니다.
-
-| 현재 격차(왜 문제인가) | 근거(gift) | 제안 해결책(DevFlow) | 기대 효과 |
-|---|---|---|---|
-| **정의≠실행**: 워크플로우를 저장/검증하지만 실제 실행은 여전히 Orchestrator 고정 플로우 | “실행 엔진은 기존 Orchestrator 고정 플로우 사용” + 2차 권장( executor registry, node_runs ) citeturn5view1 | **workflow_id 기반 실행 전환(P0)**: `workflow_runs/node_runs` 저장 + executor registry로 `node.type` 실행 | 템플릿 실험/버전관리, 재현성, 노드 단위 재실행 |
-| **관측 단위가 Job 중심**: 노드별 시간/산출물/실패 사유가 구조화되지 않음 | stage enum은 있으나 스토어는 Job 레코드 중심 citeturn11view0turn9view2 | **Run 이벤트/아티팩트 스키마(P0)**: node_runs(입력/출력/duration/status) + artifacts(경로/메타) | KPI/병목 분석, 부분 재시도, 감사 가능 |
-| **UI 편집/협업 미흡**: Visual Builder 부재로 워크플로우가 “코드/JSON 편집”에 머묾 | “노드 에디터 UI 미구현” 명시, ReactFlow 등 제안 citeturn5view1 | **React Flow 기반 Builder(P1)**: 노드 팔레트 + 속성 패널 + validate/save/preview-run | 비개발자도 설계 참여, 템플릿 공유·확산 |
-| **통합 범위 제한**: 트리거가 GitHub Issues 라벨 중심 | issues+labeled+`agent:run` 조건에서 Job 생성 citeturn11view1turn5view0 | **Dev Integration 확장(P1)**: PR 이벤트/CI 결과/배포 프리뷰/이슈 트래커(선택) | “Idea→Deploy” 폐루프 자동화 |
-| **에이전트 추상화 부족**: 커맨드 템플릿은 있으나 “능력/입출력/정책” 메타가 약함 | JSON 템플릿 실행(변수 렌더, bash -lc) 중심 citeturn11view3turn11view2 | **Agent SDK/Spec(P0)**: IO schema, tools, fallback, cost/time budget, human-gate 규칙 | 표준화된 Marketplace, 재사용/검증 용이 |
-
-### 추천 기술 스택
-
-gift는 최소 의존성(FastAPI/uvicorn/httpx/pytest)로 빠르게 MVP를 만든 구조이므로, DevFlow도 “**백엔드는 유지**, 워크플로우/스토리지/UI를 단계적으로 확장”이 현실적입니다. citeturn6view0turn5view0turn5view2
-
-- **백엔드**: FastAPI 유지(현행) + Worker 프로세스(현행) + API 경계 정리(Workflow/Marketplace/Workspace) citeturn5view2turn9view3  
-- **워크플로우 엔진(Temporal vs LangGraph)**: 두 기술의 “강점이 겹치지만 목적이 다름”을 전제로 선택합니다. Temporal은 워크플로우 정의/실행, 이벤트 히스토리 기반 재개/내구 실행, 장기 실행과 determinism(리플레이)을 핵심으로 설명합니다. citeturn0search5turn16view1turn14search3 LangGraph는 “장기 실행·상태 저장 워크플로우/에이전트”를 위한 인프라로, durable execution, human-in-the-loop, 메모리, 디버깅/배포를 코어 이점으로 제시합니다. citeturn16view0turn12search5  
-
-| 항목 | Temporal | LangGraph | 권장 사용처(DevFlow) |
-|---|---|---|---|
-| 주 목적 | 분산/장기 프로세스의 **내구 실행** | LLM/에이전트의 **상태 기반 그래프 실행** | DevFlow는 “SDLC 실행”과 “에이전트 추론”을 분리 |
-| 강점 | 이벤트 히스토리·리플레이, 장기 실행, 스케줄/메시징, 버전관리/결정성 citeturn0search5turn14search0turn14search3 | durable execution, human-in-loop, memory, 디버깅/가시화/배포 citeturn16view0turn12search5 | 조직형 SDLC(Level3)에는 Temporal, 에이전트 루프는 LangGraph 가능 |
-| 비용/복잡도 | 인프라/개념 학습 비용↑(하지만 운영 신뢰성↑) citeturn0search8turn0search5 | 적용이 빠르나 “플랫폼 런타임/관측”은 별도 설계 필요 citeturn16view0turn12search4 | 초기엔 LangGraph-only 또는 gift 엔진 확장, 성장 시 Temporal 고려 |
-
-- **UI**: Next.js 대시보드(현행 `dashboard-next` 기반) + React Flow로 Visual Builder 구성 citeturn3view0turn16view2  
-- **DB**: 초기에는 Postgres(Managed)로 `workflow_definitions / workflow_runs / node_runs / artifacts / integrations` 정규화(현행 JSON/SQLite는 개발 편의에 적합) citeturn9view2turn5view0  
-- **LLM(모델 추상화)**: gift처럼 “CLI 템플릿(플러그형)”을 유지하되, DevFlow에서는 이를 Agent Spec/SDK로 감싸 **모델/러너/권한을 교체 가능**하게 설계(예: planner/coder/reviewer/escalation 분리, fallback 템플릿) citeturn11view2turn11view3turn10view2  
-
-## 실행 로드맵과 오픈소스 성장 전략
-
-### 구현 로드맵과 우선순위
-
-gift의 2차 권장(Orchestrator에 `workflow_id` 수용, executor registry, `node_runs`, ReactFlow UI)과 Project Features에 정리된 운영·대시보드 자산을 “플랫폼 로드맵”의 뼈대로 삼습니다. citeturn5view1turn7view2turn9view3
-
-| 단계 | 우선순위 | 산출물(핵심) | 예상 난이도 | 기간(대략, 3~10명 OSS) |
-|---|---|---|---|---|
-| 아키텍처 설계 | **P0** | 도메인 경계(API/Engine/Marketplace/Workspace), Run/Artifact 흐름, 이벤트 모델 | 중 | 1~2주 |
-| DB 설계 | **P0** | Postgres ERD + 마이그레이션 + JSON/SQLite→Postgres 브리지 | 중~상 | 2~3주 |
-| Workflow Engine 설계/구현 | **P0** | executor registry, `workflow_id` 실행, `node_runs`, 재시도/재개, human-gate | 상 | 3~6주 |
-| Agent SDK | **P0** | Agent Spec(IO schema, tools, budgets), CLI/HTTP 어댑터, 테스트 하네스 | 중 | 2~4주 |
-| Marketplace + 템플릿 팩 | **P1** | SDLC Level1~3 팩, app/track별 팩, 버전/호환 정책 | 중 | 2~4주 |
-| UI/Visual Builder | **P1** | React Flow 편집기, validate/save/preview-run, KPI 대시보드 | 중~상 | 3~6주 |
-| 통합 확장 | **P2** | PR/CI/Deploy 이벤트, (선택) 이슈 트래커 연동 | 중 | 2~5주 |
-
+**시퀀스 다이어그램(mermaid)**  
 ```mermaid
-timeline
-  title DevFlow 구현 타임라인(대략)
-  아키텍처 설계 : 1~2주
-  DB 설계/마이그레이션 : 2~3주
-  Workflow Engine(P0) : 3~6주
-  Agent SDK(P0) : 2~4주
-  Marketplace/템플릿(P1) : 2~4주
-  Visual Builder + KPI(P1) : 3~6주
-  통합 확장(P2) : 2~5주
+sequenceDiagram
+  autonumber
+  participant GH as GitHub
+  participant API as DevFlow API
+  participant ENG as Workflow Engine
+  participant WK as Worker
+  participant DB as Postgres
+  participant UI as Dashboard
+
+  GH->>API: issues:labeled (agent:run)
+  API->>ENG: start_run(app_code, track, workflow_id)
+  ENG->>DB: insert workflow_run + node_run(entry)
+  ENG->>WK: dispatch node executor
+  WK->>DB: update node_run(status=running)
+  WK-->>ENG: node result (outputs/artifacts)
+  ENG->>DB: update node_run(done) + enqueue next
+  ENG->>UI: stream status/logs (SSE/WS)
+  ENG->>DB: if gate needed -> approval_request
+  UI->>API: approve/edit/reject
+  API->>ENG: resume(run_id, decision)
 ```
 
-### 오픈소스 스타 확보 전략
+**Temporal vs LangGraph 위치 선정(권장 운영 모델)**  
+- **Temporal**은 워크플로우 실행이 이벤트 히스토리에 기록되어 장애 복구/내구 실행을 제공하며, 워크플로우가 “수년” 실행될 수 있음을 명시합니다(Temporal:Workflow, Temporal:Events/Event History). citeturn21view0turn20view0 DevFlow가 “조직형 SDLC(Level3) + 장기 대기(휴먼 게이트) + 재시도”를 강하게 요구하면 Temporal 도입 가치가 큽니다(Temporal:Retry Policies). citeturn20view1  
+- **LangGraph**는 checkpointer 기반 persistence로 체크포인트/threads를 제공하고, interrupt로 실행을 일시정지한 뒤 재개하는 HITL 패턴을 공식 문서로 제공합니다(LangGraph:Persistence, LangGraph:Interrupts). citeturn19view3turn19view5  
+- 실행 가능 권장안: **1) 단기(4~8주)**는 gift 방식(내장 엔진)으로 v2를 완성하고, **2) 규모/신뢰성 요구가 커지면** Temporal(오케스트레이션) + LangGraph(에이전트 루프)로 분리.
 
-스타가 잘 붙는 프로젝트는 “**첫 실행까지의 마찰이 낮고**, 데모/템플릿이 명확하며, 기여 경로가 선명”합니다. Open Source Guides는 README가 신규 사용자를 환영하고(가치/시작법), CONTRIBUTING이 기여 절차를 안내하며, LICENSE가 오픈소스의 전제임을 강조합니다. citeturn16view3 또한 GitHub Docs는 README·라이선스·기여 가이드·Code of Conduct가 기대치와 기여 관리를 돕는다고 정리합니다. citeturn16view4turn13search2
+## 구현 로드맵과 우선순위
 
-- **README/온보딩(최우선)**: “30초 데모(웹훅→Job→PR)” + “로컬 2커맨드 설치(현재 gift의 setup script 철학 유지)” + “Level1 템플릿으로 즉시 실행”을 전면 배치 citeturn5view0turn7view1  
-- **템플릿/데모 팩**: SDLC Level1~3 템플릿을 “복붙 가능한 워크플로우 JSON + UI에서 불러오기”로 제공(기여자는 템플릿 PR로 쉽게 참여) citeturn5view1turn8view0turn9view3  
-- **CI/데모 신뢰도**: E2E 데모 리포(샘플 레포)에서 “Issue 생성→PR 생성→로그/아티팩트 링크”가 항상 재현되도록 고정 시나리오 제공(현재 gift는 실환경 웹훅 테스트 스크립트를 제공) citeturn5view0  
-- **기여 가이드/커뮤니티 헬스 파일**: `CONTRIBUTING`, `CODE_OF_CONDUCT`, 이슈 템플릿, “good first issue” 라벨 정책을 명확화(기여 허들을 낮춤) citeturn16view3turn13search4turn13search2  
-- **커뮤니티 운영 루틴**: 월간 “템플릿 팩 챌린지(예: QA 강화 팩)”, 릴리즈 노트, 디스코드/디스커션 중심 Q&A(초기에는 GitHub Discussions만으로도 충분) citeturn13search0turn13search14
+gift는 “나중에 확장”으로 Postgres, 멀티 워커/분산 큐, SSE/WS 실시간 로그를 제시하므로(manbalboy/gift:README.md), citeturn13view2 DevFlow도 이를 단계적으로 반영합니다.
+
+### 단계별 산출물, 병렬/순차, 기간, 리스크
+
+| 단계 | **우선순위** | 산출물(명확한 완료 기준) | 병렬/순차 | 기간(대략) | 리스크 |
+|---|---|---|---|---:|---|
+| Phase 1 | **높음** | Workflow Engine v2: `workflow_id` 실행 + ExecutorRegistry + `node_runs` 저장 + fallback(`default_linear_v1`) | 순차 | 3~6주 | 상 |
+| Phase 2 | **높음** | Agent SDK v1: Agent Spec/버전/폴백 + CLI 어댑터 표준화 + 테스트 하네스 | 병렬(Phase1 후반) | 2~4주 | 중 |
+| Phase 3 | **중** | Postgres 이관: runs/node_runs/artifacts + 마이그레이션 스크립트 + 검색 기본 | 병렬 | 2~3주 | 중 |
+| Phase 4 | **중** | Human Gate: approvals API + UI Inbox + resume 흐름 | 순차(Phase1 필요) | 2~4주 | 중 |
+| Phase 5 | **중** | Visual Builder: ReactFlow 편집/검증/저장/프리뷰 런 | 병렬 | 3~6주 | 중~상 |
+| Phase 6 | **낮음~중** | Integrations 확장: PR/CI/Deploy 이벤트 + 트리거 룰 엔진 | 병렬 | 2~5주 | 하~중 |
+
+**리스크 관리 포인트**
+- “편집 중에도 fallback 유지”는 gift 문서의 운영 규칙을 그대로 채택합니다(manbalboy/gift:WORKFLOW_NODE_PHASE1_DESIGN.md). citeturn7view3  
+- 외부 의존성(gh auth, 네트워크, npm 설치 등)은 운영 유의사항으로 이미 정리되어 있으므로, 타임아웃/재시도/재처리 시나리오를 Runbook으로 문서화합니다(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md). citeturn8view2  
+
+## 운영과 오픈소스 성장 전략
+
+### 운영·관측과 비용 추정
+
+**관측(Observability) 설계**: gift는 실시간 로그, 단계/시도 하이라이트, 오류 요약, 행위자 라벨(ORCHESTRATOR/CODER/PLANNER/REVIEWER 등) UX를 갖추고 있으므로(manbalboy/gift:PROJECT_FEATURES_SUMMARY.md), citeturn8view1 DevFlow는 이를 기반으로 아래를 추가합니다.
+- **로그**: run_id/node_run_id 키로 구조화(JSON) + 원문 로그(텍스트) 저장  
+- **메트릭**: node별 duration/실패율/재시도 횟수, E2E 통과율, “이슈→PR 리드타임”  
+- **트레이싱(선택)**: RunOrchestrator→executor→runner 경로를 분산 추적(필요 시)
+
+**인프라 가정**: 배포 환경 미지정이므로 “일반적 클라우드”를 가정하고, Managed Postgres + (선택) Redis + Kubernetes로 기술합니다(요청 가정). 또한 gift가 systemd 기반 24/7 운영 예시를 제공하므로 초기에는 VM+systemd도 옵션으로 유지합니다(manbalboy/gift:README.md). citeturn13view1turn13view2  
+
+**월 비용(대략, USD 기준 예시)**: 아래는 “작게 시작 → 사용량 증가” 관점의 범위입니다. EKS는 표준 지원 티어에서 **클러스터당 시간당 $0.10**을 명시합니다(AWS:EKS Pricing). citeturn18view0 또한 ALB는 시간당 고정요금 + LCU 요금이며, AWS 문서 예시에서 월 $22~$88 수준 사례를 제공합니다(AWS:ELB Pricing). citeturn24view1turn24view0 RDS/ElastiCache는 인스턴스/스토리지/전송량에 따라 변동하며, 정확치는 각 클라우드의 계산기를 사용해 산정하는 것이 정석입니다(AWS:RDS Postgres Pricing). citeturn24view4  
+
+| 구성 | 포함 리소스 | 월 비용 범위(대략) | 비고 |
+|---|---|---:|---|
+| Dev(최소) | VM 1대 + SQLite/파일 스토어 + systemd | $20~$120 | gift 운영 방식 그대로(빠른 PoC) (manbalboy/gift:README.md). citeturn13view1 |
+| Small(권장) | EKS 1클러스터 + Managed Postgres + Redis(선택) + Object Store + ALB | $250~$900 | EKS control plane만 약 $73/월 규모부터 시작, ALB는 사용량에 따라 변동(AWS:EKS/ELB). citeturn18view0turn24view1 |
+| Medium(성장) | 워커 스케일아웃 + 관측 스택(Managed) + CI/프리뷰 환경 | $800~$3,000 | 워커/테스트 실행량과 LLM 호출량이 비용의 상단을 결정 |
 
         ## Rule Of Engagement
 
