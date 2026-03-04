@@ -1,77 +1,55 @@
 # PLAN
 
 ## 1. Task breakdown with priority
-
-**[P0] Webhook 보안 및 인증 강화**
-- **목표:** GitHub Webhook 및 Generic Webhook 호출 시 발생할 수 있는 보안 취약점(RCE, DoS) 해결.
-- **작업 상세:**
-  - `api/app/api/webhooks.py`: GitHub `X-Hub-Signature-256` HMAC 서명 검증 로직 추가.
-  - `api/app/api/webhooks.py`: 범용 Webhook(`generic`, `ci` 등) 엔드포인트에 API Secret 토큰 검증 단계 추가.
-  - `api/app/core/config.py`: 웹훅 검증에 필요한 Secret 키 환경 변수 로드 로직 추가 (인접 고도화 반영).
-  - `api/tests/test_webhooks_api.py`: 서명 불일치, 토큰 누락 시 401/403 에러 반환을 검증하는 실패 단위 테스트 작성.
-
-**[P0] CORS 정책 수정**
-- **목표:** SPEC 명세에 맞는 올바른 프론트엔드 도메인 접근 허용.
-- **작업 상세:**
-  - `api/app/main.py`: `allow_origin_regex` 수정. `manbalboy.com` 도메인(서브도메인 포함)일 경우 특정 포트에 얽매이지 않고 모든 포트를 허용하도록 정규 표현식 개선 (현행 3100번대 제한 제거).
-
-**[P1] 시스템 리소스 및 I/O 병목 최적화**
-- **목표:** 빈번한 Docker 데몬 상태 확인으로 인한 프로세스 성능 저하 개선.
-- **작업 상세:**
-  - `api/app/services/agent_runner.py`: 매 태스크마다 실행되는 `_docker_ping()`에 인메모리 캐싱(예: TTL 10초~30초)을 적용하여 불필요한 I/O 오버헤드 완화.
-  - `api/tests/test_docker_runner_integration.py`: Docker Ping 실패(행 걸림 등) 및 타임아웃 발생 시 워커가 좀비 상태가 되지 않고 안전하게 실패(Exception)를 기록하는 Mock 기반 예외 테스트 추가.
-
-**[P2] Rate Limiter Fallback 안전성 확보**
-- **목표:** Redis 장애 시 발생하는 로컬 인메모리 Fallback의 동시성 제어 및 허용량 초과 문제 방어.
-- **작업 상세:**
-  - `api/app/services/rate_limiter.py`: Redis 장애로 인해 `LocalSlidingWindowRateLimiter` 동작 시 상세 경고 로깅을 추가하고, 다중 워커 환경을 고려해 Rate Limit 허용 범위를 보수적으로(예: 기존의 50% 등) 제한하도록 개선.
-  - `api/tests/test_rate_limit.py`: 다수의 요청이 동시에 몰릴 때 Redis가 다운된 상황을 모사하여 로컬 Fallback이 한도 내에서 정확히 제어하는지 검증하는 스트레스성 동시성 테스트 코드 작성 (인접 고도화 반영).
+- **P0: 기능 버그 및 보안 취약점 최우선 수정**
+  - **CORS 정책 정규식 완화**: `api/app/main.py`의 `allow_origin_regex`를 수정하여 `localhost` 및 `127.0.0.1` 도메인에 걸려있는 엄격한 포트 제한(`31\d{2}`)을 해제하고 SPEC.md 사양에 부합하도록 허용.
+  - **Webhook Payload 제한**: `api/app/api/webhooks.py` 내의 엔드포인트에서 `raw_body`를 로드하기 전 Request Body의 크기를 확인하여 최대 5MB를 초과하는 경우 413 Payload Too Large 응답을 반환(DoS 공격 대비).
+  - **Boolean 타입 파싱 엣지 케이스 방어**: `workflow_id` 검증 시 `isinstance` 대신 `type(workflow_id_raw) is int` 구문을 사용하여 `true`가 1로 변환되는 현상 방지.
+- **P1: 성능 병목 및 에러 전파(Cascading Failure) 방지**
+  - **Docker Ping Negative Cache**: `api/app/services/agent_runner.py`의 `_docker_ping()` 로직에 상태 체크 실패 시 3~5초 동안 실패를 기억하는 캐시 로직을 도입하여 연속적인 워커의 타임아웃 병목 현상 제거.
+  - **Redis 서킷 브레이커 패턴 도입**: `api/app/services/rate_limiter.py`의 `SSEReconnectRateLimiter`에 장애 상태 유지 로직을 구현하여 반복적인 연결 시도 지연 해소.
+- **P2: 테스트 커버리지 강화 및 고도화 추가 기능**
+  - **통합 및 스트레스 테스트 작성**: `api/tests/test_main.py`를 통해 CORS 접근 제어 테스트 작성 및 부하 상황에서 Fallback 전환 한계를 검증하는 테스트 커버리지 확보.
+  - **[고도화 플랜] 추가 기능 1: IP 기반 Webhook Rate Limiting**: Payload 사이즈 제한과 시너지를 내기 위해 특정 IP의 비정상적인 Webhook 대량 요청 시 일정 시간 차단하는 기능을 구현(보안 및 DoS 방지 시너지).
+  - **[고도화 플랜] 추가 기능 2: Health API 응답 정보 세분화**: `/health` 엔드포인트에 Redis Fallback 상태와 Docker 가용성 상태를 추가하여 대시보드에서 플랫폼 상태를 정확하게 관측할 수 있도록 개선(Negative Cache 및 서킷 브레이커 도입과 자연스럽게 연결).
 
 ## 2. MVP scope / out-of-scope
-
 **MVP scope**
-- `manbalboy.com` 계열 도메인의 API 통신을 위한 CORS 정규식 완화.
-- 외부 이벤트(GitHub 이슈/PR, Generic 웹훅) 트리거 시 인증/인가(HMAC, API Secret) 로직 구현 및 검증 테스트.
-- 워커 실행 시 Docker 데몬 ping 부하를 줄이기 위한 결과 캐싱 적용.
-- Redis Rate Limit 장애 시 Fallback 안전성 강화 및 상세 로깅.
+- `REVIEW.md`에 명시된 모든 결함 사항의 완벽한 보완 및 테스트 코드 통합.
+- CORS 허용 도메인 규칙 수정.
+- 메모리 고갈 방지를 위한 Webhook 페이로드 용량 제한 방어 로직.
+- 데이터 타입 명확화(Boolean 필터링) 버그 수정.
+- 장애(Docker, Redis) 연속 대기 병목을 끊기 위한 상태 캐싱 구조 구현.
 
 **Out-of-scope**
-- Visual Workflow Builder(React Flow) 등 신규 UI 구현 (현재는 보안 패치 및 엔진 최적화에 집중).
-- Postgres DB 마이그레이션 (기존 SQLite/JSON 기반 데이터 저장소 유지).
-- Temporal, LangGraph 등 신규 워크플로우 엔진 인프라 전면 도입.
-- 본 REVIEW 취약점과 무관한 추가 API 엔드포인트 설계 및 확장.
+- Visual Workflow Builder (React Flow) 등 프론트엔드 환경의 UI/UX 추가 구현.
+- Temporal 또는 LangGraph 등 외부 워크플로우 엔진 기반의 코어 로직 리팩토링 및 아키텍처 재설계.
+- 본 리뷰와 관련 없는 기타 통합 모듈(CI, Slack 알림 등) 확장.
 
 ## 3. Completion criteria
-
-- `api/app/main.py`의 CORS 정규식이 `*.manbalboy.com` 도메인에 대해 포트 제한 없이 접근을 허용해야 한다.
-- GitHub Webhook 수신 API가 올바른 HMAC 서명이 없을 경우 HTTP 401/403 응답을 반환해야 한다.
-- Generic Webhook 수신 API가 환경 변수로 설정된 API 토큰과 일치하지 않을 경우 HTTP 401/403 응답을 반환해야 한다.
-- `api/tests/test_webhooks_api.py`를 포함한 새롭게 작성된 모든 보안 및 인증 관련 단위/통합 테스트가 정상 통과해야 한다.
-- `_docker_ping()` 캐싱 로직이 적용되어 동일 워크플로우 내 짧은 간격의 연속 실행 시 서브프로세스 생성이 줄어듦을 로그로 확인할 수 있어야 한다.
-- 로컬 테스트 시 실행 가이드에 따라 3000번대 포트(예: API 서버 3001)에서 구동 가능하도록 설정 및 구성되어야 한다.
+- 모든 TODO 항목이 소스 코드 및 관련 서비스 컴포넌트에 누락 없이 반영되어야 함.
+- 포트가 지정되지 않거나 3000번대가 아닌 `localhost`, `manbalboy.com` 환경의 클라이언트 호출 시 CORS 에러가 발생하지 않아야 함.
+- 5MB 이상의 악의적 페이로드 수신 시 HTTP 413 상태 코드로 방어되어야 함.
+- JSON 페이로드에 `{"workflow_id": true}`가 입력될 시 422 Unprocessable Entity 에러가 반환되어 1번 워크플로우 오작동을 차단해야 함.
+- Docker 중단 상태 및 Redis 접속 불량 상태에서도 API 전체 응답 지연(Timeout)이 발생하지 않고 즉시 Fallback/Negative 상태가 반환되어야 함.
+- 모든 단위/통합 테스트 코드 실행 시 `pytest` 결과가 100% 통과해야 함.
 
 ## 4. Risks and test strategy
-
 **Risks**
-- 웹훅 서명 검증 도입으로 인해 기존 연동된 GitHub 레포지토리 환경에서 Secret이 미설정될 경우 모든 Job 트리거가 실패할 수 있음.
-- `_docker_ping` 캐싱 TTL을 길게 설정할 경우, 캐시된 시간 동안 Docker 데몬이 다운되면 작업을 시도하다 예기치 않은 에러가 발생할 수 있음.
-- Redis Fallback 허용량을 줄일 경우, 장애 상황에서 정상적인 트래픽까지 Rate Limit에 걸려 서비스 지연이 발생할 확률이 있음.
+- 완화된 CORS 정규식이 예상치 못한 서브도메인 악용이나 변형된 Origin 헤더 공격에 뚫릴 위험 존재.
+- Negative Cache의 유효 시간(TTL) 설정이 길 경우, 복구된 Docker나 Redis가 즉각적으로 반영되지 못해 일시적인 서비스 마비처럼 보일 위험.
 
 **Test strategy**
-- **웹훅 보안 단위 테스트:** Pytest를 사용하여 가상의 Payload와 올바른/틀린 HMAC 서명, 누락된 헤더를 전송하여 접근 차단 로직(401/403)을 철저히 검증.
-- **Docker 상태 Mocking 테스트:** Docker 프로세스 실행을 Mocking하여 타임아웃을 강제로 발생시키고 에러 처리 및 상태 기록 흐름이 멈춤 없이 정상 수행되는지 테스트.
-- **Rate Limit 스트레스 테스트:** Redis 연결 예외를 Mocking한 상태에서 ThreadPool 등을 활용해 동시다발적인 요청을 보내, 로컬 Fallback이 설정된 횟수 내에서 요청을 안전하게 차단하는지 검증.
+- `test_main.py` 내 `pytest.mark.parametrize`를 활용하여 허용해야 할 정상 도메인 및 거부해야 할 악의적 도메인을 다양하게 삽입하여 정규식 로직의 신뢰성을 철저히 검증.
+- 더미 스트리밍 페이로드(예: 4.9MB, 5.1MB)를 API 클라이언트(Mock)로 전송해 메모리 사용량 상승 방지 확인.
+- `unittest.mock`을 이용하여 `_docker_ping` 및 Redis Connection 동작을 강제로 Timeout 시킨 후, 두 번째 요청 시 걸리는 시간이 O(1)에 가깝게 줄어드는지 시간 측정 테스트(Performance Test) 병행.
 
 ## 5. Design intent and style direction
-
-- **기획 의도:** 기존에 동작하던 워크플로우 자동화 기능의 핵심 보안 취약점을 막고 성능 병목을 해결하여, 신뢰할 수 있는 개발 워크플로우 플랫폼(DevFlow)으로서의 기본기를 다지는 경험을 제공.
-- **디자인 풍:** (API 및 백엔드 로직 중심이므로 별도의 시각적 UI 변경은 없으나) 로그 및 에러 메시지 반환 시 개발자가 즉시 원인을 파악할 수 있는 직관적이고 구조화된 포맷 지향.
-- **시각 원칙:** 백엔드 관점에서는 RESTful API 원칙을 엄격히 준수하며 명확한 HTTP Status Code 사용(401, 403, 429 등)과 일관된 에러 JSON 응답 포맷(예: `{"detail": "..."}`)을 유지.
-- **반응형 원칙:** 프론트엔드 연동성을 위해 API 응답 지연을 최소화하고, 상태 코드를 명확히 분리하여 웹 대시보드에서 예외 처리가 용이하도록 구성.
+- **기획 의도**: 플랫폼 인프라적인 취약점(메모리 부족, 연결 타임아웃)을 해결해 대규모 요청이 와도 무너지지 않고 예측 가능하게 동작하는 프로덕션 레벨의 워크플로우 엔진 경험을 제공합니다.
+- **디자인 풍**: 견고하고 탄력적인 시스템 (Resilient & Robust System). 프론트엔드/CLI 클라이언트 입장에서 에러 상황을 명확하게 파악할 수 있는 인프라 형태.
+- **시각 원칙**: 클라이언트 측에 일관되고 명확한 표준 HTTP 상태 코드(413, 422, 503 등)와 일정한 JSON 에러 스키마를 반환하여 디버깅 직관성을 부여합니다.
+- **반응형 원칙**: 워커나 외부 자원이 응답하지 않을 때 기다리지 않고 빠르게 에러를 뱉는 Fail-Fast 메커니즘을 백엔드 로직의 기본 반응성(Responsiveness)으로 삼습니다.
 
 ## 6. Technology ruleset
-
-- **플랫폼 분류:** api 및 web
-- **API 구성:** FastAPI를 기반으로 파이썬 로직을 구현하며, 의존성 주입과 미들웨어를 활용해 인증 로직을 추가.
-- **Web 구성:** (UI 변경이 필요할 경우) React 기반 프레임워크 유지.
-- **실행 가이드:** 로컬 개발 및 실행 환경에서 포트가 필요한 경우 프론트엔드 및 API 서버 모두 3000번대 포트(예: Web 3000, API 3001)를 기본으로 할당하여 충돌을 방지.
+- **플랫폼 분류**: api
+- **기술 기반**: FastAPI 환경(Python)으로 철저히 한정하며 Starlette Request 속성과 Pydantic 유효성 검사, `asyncio` 기반의 캐싱 기법을 적극 활용합니다.
