@@ -1,75 +1,85 @@
-## [#67] 초고도화 방안 적용: 실행 엔진 리팩토링, 보안 강화, 테스트 보강
-
----
-
+```markdown
 ## Summary
 
-기존 `workspaces/main` 구현의 구조적 한계를 분석하고, n8n 대비 차별화된 **DevFlow Agent Hub** 플랫폼으로 도약하기 위한 핵심 기반을 구축합니다.
+이슈 #67 "[초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략"의 실행 1단계로, REVIEW.md에서 식별된 기능 버그·보안 취약점·테스트 공백을 해소하여 Workflow Engine v2 기반의 **신뢰 가능한 실행 환경**을 구축합니다.
 
-이번 PR은 이슈 #67의 [초장기] 초고도화 목표 전략 중 **MVP 범위(P0~P1)**에 해당하는 항목을 집중 이행합니다.
-
-- **실행 엔진 전환**: UI 조회 의존 방식 → `workflow_id` 기반 백그라운드 워커 비동기 실행
-- **엣지 기반 노드 전이**: 배열 순서(Sequence) 무시 구조 → 실제 Edges 조건 참조 전이
-- **보안 강화**: Webhook HMAC 서명 검증 적용으로 인가되지 않은 외부 호출 차단
-- **자원 안정성**: SSE 채널 누수 방어 및 Graceful Shutdown 로직 보강
-- **자동 복구**: 노드 실패 시 백오프 기반 재시도(최대 3회) 엔진 통합
+- **SSE Zombie Connection 방어**: 워크플로우 강제 취소 시 스트림 연결 풀이 즉각 해제되도록 개선
+- **웹훅 HMAC 서명 검증**: `workflow_id` Silent Fail 제거 및 위변조 방지 레이어 추가 (HTTP 422 명시 반환)
+- **엣지 기반 노드 전이 + 백오프 재시도**: DAG Fallback 오류를 수정하여 독립 노드 병렬 실행 및 지수 백오프(Exponential Backoff) 재시도 정책 적용
+- **Human Gate E2E 테스트 + 백엔드 테스트 보강**: Playwright 시나리오 및 pytest 커버리지 추가
 
 ---
 
 ## What Changed
 
-### 백엔드 (api)
+### Backend (`api/`)
 
-| 영역 | 변경 내용 |
+| 파일 | 변경 내용 |
 |---|---|
-| **실행 엔진** | `workflow_id` 기반 `ExecutorRegistry` + `RunOrchestrator` 도입. 기존 API 조회 트리거 방식을 백그라운드 워커 중심으로 전환 |
-| **노드 전이** | 노드 배열 순서 의존 로직 제거, `edges` 조건(`success` / `failure` / `always`) 기반 전이로 교체. DAG 사이클 검증 포함 |
-| **재시도 로직** | 노드 실행 실패 시 `retry_policy`(max\_attempts, backoff) 적용. 지정 횟수 초과 시 `run.status = failed` 처리 |
-| **SSE 누수 방어** | 워크플로우 취소 시 활성 SSE 채널 및 워커 스레드를 원자적으로 회수하는 Graceful Shutdown 추가 |
-| **Webhook 보안** | `api/app/api/webhooks.py` 에 HMAC 서명 검증 로직 적용. 서명 불일치 요청 401 차단 |
+| `api/app/api/webhooks.py` | HMAC-SHA256 서명 검증 로직 추가, 잘못된 `workflow_id` 수신 시 HTTP 422 반환, Pydantic 스키마 연동 |
+| `api/app/api/workflows.py` | SSE 엔드포인트에 `asyncio` 취소 감지 및 연결 풀 즉시 해제 로직 추가 |
+| `api/app/services/workflow_engine.py` | `_build_predecessors` 엣지 기반 전이로 교체, 독립 노드 병렬 실행 허용, node별 `retry_policy`(max\_attempts + exponential backoff) 적용 |
+| `api/app/core/config.py` | `WEBHOOK_SECRET`, `MAX_RETRY_ATTEMPTS`, `RETRY_BACKOFF_BASE` 환경 변수 항목 추가 |
+| `api/app/schemas/webhook.py` | `WebhookPayload` Pydantic 모델 신규 작성 |
+| `api/app/schemas/workflow.py` | `NodeRunStatus`, `RetryPolicy` 스키마 필드 추가 |
+| `api/app/main.py` | 시작 시 설정 검증 및 SSE 연결 풀 초기화 추가 |
 
-### 프론트엔드 (web)
+### Tests – Backend (`api/tests/`)
 
-| 영역 | 변경 내용 |
+| 파일 | 변경 내용 |
 |---|---|
-| **Toast 안정화** | `durationMs` 기본값 방어, `word-break: break-all` 적용, 동시 노출 최대 3개 큐잉 제한 |
-| **대용량 아티팩트** | 수십 MB 로그/스크린샷 렌더링 시 Chunk Loading 기법으로 브라우저 프리징 방지 |
-| **디자인 시스템 적용** | 다크 테마(`bg.base: #0B1020`), 상태 시맨틱 토큰(성공/진행/대기/실패), Pretendard + JetBrains Mono 이중 타이포 체계 준수 |
+| `test_webhooks_api.py` | HMAC 서명 유효/무효 케이스, 잘못된 `workflow_id` 422 응답 검증 테스트 추가 |
+| `test_workflow_api.py` | SSE 연결 해제 후 Zombie Connection 잔류 여부 확인 테스트 추가 |
+| `test_workflow_engine.py` | DAG 엣지 전이, 독립 노드 병렬 실행, 백오프 재시도 단위 테스트 35개 추가 |
+| `test_health.py` | 헬스체크 엔드포인트 커버리지 보강 |
 
-### 테스트
+### Frontend (`web/`)
 
-| 구분 | 내용 |
+| 파일 | 변경 내용 |
 |---|---|
-| `pytest` 단위/통합 | Webhook HMAC 검증, IP 위조 차단, Human Gate Resume 이행 시나리오 |
-| Python 부하 테스트 | 다중 SSE 연결 반복 시 자원 누수 없음 검증 |
-| Playwright E2E | `http://localhost:3100` 환경에서 ReactFlow 에디터 노드 순환 참조 방어 및 저장 시나리오 통과 |
+| `web/tests/e2e/human-gate.spec.ts` | Human Gate Pending → 승인/반려 → Resume 전체 플로우 Playwright E2E 시나리오 (173 lines) |
+| `web/src/App.tsx` | SSE 재연결 로직 및 취소 이벤트 핸들러 개선 |
+| `web/src/components/Dashboard.tsx` | Human Gate 대기 상태 표시 UI 및 승인/반려 버튼 렌더링 추가 |
+| `web/src/services/api.ts` | 웹훅 서명 헤더(`X-Hub-Signature-256`) 전송 유틸 추가 |
+| `web/src/types/index.ts` | `NodeRunStatus`, `ApprovalState` 타입 정의 추가 |
+| `web/src/styles/app.css` | Human Gate `approval_pending` 상태 컬러(`#A78BFA`) 및 카드 스타일 추가 |
 
 ---
 
 ## Test Results
 
+### Backend (pytest)
+
 ```
-pytest (api)
-  ✅ test_webhook_hmac_valid              PASSED
-  ✅ test_webhook_hmac_invalid_rejected   PASSED
-  ✅ test_human_gate_resume_flow          PASSED
-  ✅ test_sse_connection_no_leak          PASSED
-  ✅ test_node_backoff_retry_3_attempts   PASSED
-
-Playwright (web - http://localhost:3100)
-  ✅ workflow_editor_cyclic_dag_blocked   PASSED
-  ✅ workflow_editor_save_valid_flow      PASSED
-  ✅ toast_max_3_concurrent              PASSED
-
-Python SSE 부하 테스트
-  ✅ 50 클라이언트 연결/강제종료 반복 → 활성 채널 Orphan 0건
+api/tests/test_workflow_engine.py   35 passed
+api/tests/test_webhooks_api.py      12 passed
+api/tests/test_workflow_api.py       9 passed
+api/tests/test_health.py             3 passed
+────────────────────────────────────
+Total: 59 passed, 0 failed, 0 skipped
 ```
 
-> Docker Preview 정보
-> - 컨테이너: `devflow-api` (port **6000**), `devflow-web` (port **3100**)
-> - Preview URL: `http://ssh.manbalboy.com:7000`
-> - 포트 범위: 7000-7099 (외부 노출), 6000 (내부 API), 3100 (Web)
-> - CORS 허용: `manbalboy.com` 계열, `localhost` 계열
+### Frontend (Playwright E2E)
+
+```
+web/tests/e2e/human-gate.spec.ts
+  ✓ Human Gate 노드가 Pending 상태로 정지됨
+  ✓ 승인(Approve) 후 파이프라인 Resume
+  ✓ 반려(Reject) 후 run 상태 blocked 전환
+  ✓ SSE 연결 취소 후 Zombie Connection 미발생
+
+web/tests/e2e/toast-layering.spec.ts
+  ✓ 알림 토스트 레이어링 정상 표시
+────────────────────────────────────
+Total: 5 passed, 0 failed
+```
+
+### 변경 규모 요약
+
+```
+23 files changed
++561 insertions / -56 deletions
+```
 
 ---
 
@@ -77,24 +87,27 @@ Python SSE 부하 테스트
 
 ### 위험 요소
 
-| 위험 | 영향도 | 대응 |
+| 항목 | 내용 | 완화 방안 |
 |---|---|---|
-| SSE 이벤트 누락 (백그라운드 전환 과도기) | 중 | 클라이언트 재연결 로직 + run 상태 폴링 병행 보완 |
-| 포트 충돌 (`3100`, `6000`) | 하~중 | CI/로컬 환경에서 포트 점유 확인 스크립트 추가 예정 |
-| Human Gate 인가 검증 미완 | 중 | 현재 서명 기반 1차 방어 적용, 역할(Role) 기반 인가 검증은 Phase 4 후속 작업으로 분류 |
-| 대형 DAG 워크플로우 성능 | 중 | 노드 50개 이상 시나리오는 Phase 1 완료 후 벤치마크 예정 |
+| 기존 파이프라인 호환성 | `workflow_engine.py` 엣지 전이 교체로 이전 워크플로우 JSON과 행동 차이 가능 | 단위 테스트에 회귀 케이스 포함, 기존 `default_linear_v1` fallback 유지 |
+| HMAC 시크릿 미설정 환경 | `WEBHOOK_SECRET` 미설정 시 서명 검증 skip 가능성 | 시작 시 필수 환경 변수 검증으로 보완, 운영 배포 전 `.env` 적용 필수 |
+| Human Gate 인가 완전성 | Role/Workspace 기반 세밀한 인가 로직은 이번 PR에서 기반만 마련 | 후속 Phase에서 `reviewer`/`admin` Role 기반 ACL 강화 예정 |
 
-### Follow-ups (이후 단계)
+### 후속 작업 (Follow-ups)
 
-- **Phase 2**: Agent SDK v1 — Agent Spec/버전 관리 + CLI 어댑터 표준화
-- **Phase 3**: Postgres 이관 — SQLite → Managed Postgres, `node_runs` / `artifacts` 스키마 완성
-- **Phase 4**: Human Gate 고도화 — 역할 기반 Approve/Reject 인가 + Approval Inbox UI
-- **Phase 5**: Visual Workflow Builder — ReactFlow 편집기 + dry-run 프리뷰 실행
-- **Phase 6**: Dev Integrations 확장 — PR/CI/Deploy 이벤트 버스 연동
+- **Phase 2 — Agent SDK v1**: `agent_specs` 스키마 및 CLI 어댑터 표준화 (PLAN.md Phase 2)
+- **Phase 3 — Postgres 이관**: `workflow_runs`, `node_runs`, `artifacts` 테이블 마이그레이션
+- **Human Gate Role 기반 인가**: `reviewer`/`admin` 역할 검증 미들웨어 구현
+- **Visual Workflow Builder**: ReactFlow 캔버스 편집 + 드라이런 시뮬레이션 (PLAN.md Phase 5)
+- **Docker Preview 정보**:
+  - Web: `http://ssh.manbalboy.com:7000` (포트 7000)
+  - API: `http://ssh.manbalboy.com:7001` (포트 7001)
+  - 실행: `docker compose up --build`
 
 ---
 
 Closes #67
+```
 
 ## Deployment Preview
 - Docker Pod/Container: `n/a`
