@@ -1,0 +1,28 @@
+:root {
+  --color-bg-base: #0b1020;
+  --color-bg-surface: #121a2b;
+  --color-bg-elevated: #1a2438;
+  --color-border-default: #27324a;
+  --color-text-primary: #e6edf7;
+  --color-text-secondary: #a9b4c8;
+  --color-text-muted: #7e8aa3;
+
+  --color-status-success: #22c55e;
+  --color-status-running: #3b82f6;
+  --color-status-waiting: #f59e0b;
+  --color-status-failed: #ef4444;
+  --color-status-review-needed: #a78bfa;
+
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+
+  --radius-card: 12px;
+  --font-sans: 'Pretendard', 'Noto Sans KR', sans-serif;
+  --font-mono: 'JetBrains Mono', 'D2Coding', monospace;
+}

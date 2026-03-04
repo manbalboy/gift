@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+api/test_runtime.db
+api/test_devflow.db
+test_devflow.db
+web/node_modules/
+web/dist/
+artifacts/
