@@ -294,4 +294,3 @@ timeline
         - CORS 허용 대상은 manbalboy.com 계열 또는 localhost 계열로 제한합니다.
         - 허용 origin 정책(기준값): https://manbalboy.com,http://manbalboy.com,https://localhost,http://localhost,https://127.0.0.1,http://127.0.0.1
         - PR 본문에는 Docker Preview 정보(컨테이너/포트/URL)를 포함합니다.
-        - 코드는 알지 못하는 사람들에게도 정보를 줄수 있도록 주석을 꼼꼼하게 작성합니다. 
