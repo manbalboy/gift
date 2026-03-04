@@ -1,28 +1,28 @@
 # REVIEW
 
+본 리뷰는 `SPEC.md`와 `PLAN.md`에 정의된 요구사항을 바탕으로 현재 구현된 상태를 평가한 문서입니다.
+
 ## Functional bugs
-- **UI 렌더링 및 폰트 지연 로딩 문제:** `web/src/components/Toast.tsx` 컴포넌트에서 폰트 로딩 지연으로 인해 텍스트 오버플로우 높이가 잘못 계산되는 버그가 있습니다. `document.fonts.ready` API 완료 시점에 `measureMessageOverflow` 로직을 재평가해야 하며, 해당 API를 지원하지 않는 브라우저를 대비한 폴백(Fallback) 로직이 추가되어야 합니다.
-- **모바일 멀티 터치 오작동:** 모바일 환경에서 두 손가락 이상으로 터치할 경우에도 스와이프 이벤트가 처리되는 오작동이 발생합니다. `onTouchStart` 및 `onTouchMove` 이벤트 핸들러에 `event.touches.length > 1` 조건을 추가하여 다중 터치를 무시하는 방어 로직이 누락되어 있습니다.
-- **다중 알림 중복 및 UI 가림 현상:** 짧은 시간 내에 동일한 상태나 에러 메시지가 다수 발생할 경우, 알림 창이 화면을 가리는 현상이 있습니다. 중복 메시지 필터링 및 일정 개수 초과 시 대기시키는 큐잉(Queueing) 로직 구현이 필요합니다.
+- **`dangerouslySetInnerHTML` 사용의 모순**: `web/src/components/Toast.tsx`에서 메시지를 출력할 때 `dangerouslySetInnerHTML={{ __html: safeMessage }}`를 사용하고 있습니다. 하지만 `web/src/utils/escapeHtml.ts`의 `sanitizeToastText` 함수는 `<`와 `>`를 포함한 모든 HTML 기호를 이스케이프 처리합니다. 결과적으로 React의 기본 텍스트 렌더링(`{item.message}`)과 완벽하게 동일한 렌더링 결과를 얻으면서도, 불필요하게 XSS 취약점의 원인이 될 수 있는 DOM API를 직접 호출하는 안티패턴이 적용되어 있습니다.
+- **스와이프 중 뷰포트 전환 시 상태 잔류**: 모바일 뷰포트에서 스와이프 제스처를 진행하던 도중 화면 회전이나 브라우저 창 크기 조절로 데스크톱 뷰포트로 전환될 경우, `swipeOffsetX` 값이 초기화되지 않습니다. 이로 인해 데스크톱 환경에서도 알림 카드가 옆으로 이동된 상태로 렌더링될 수 있는 논리적 버그가 존재합니다.
 
 ## Security concerns
-- **XSS(Cross-Site Scripting) 취약점:** 알림 메시지 렌더링 시 워크플로우 응답 데이터 및 에러 로그 등 외부 입력값에 대한 텍스트 이스케이프 처리가 적용되지 않아, 악의적인 스크립트가 실행될 위험이 존재합니다. 
+- **XSS 방어 로직의 적합성 검토**: 현재 제어 문자(Control Character)를 제거하고 `&, <, >, ", '` 문자를 이스케이프하는 커스텀 로직은 기본적인 스크립트 삽입 공격을 방어합니다. 그러나 HTML 렌더링을 허용할 의도가 없다면 `dangerouslySetInnerHTML`과 커스텀 이스케이프 로직을 모두 제거하고 React 내장 렌더링 방식을 활용하는 것이 근본적인 보안 해결책입니다. 만약 메시지 내 부분적인 HTML(예: `<b>`, `<br>`) 허용이 기획 의도였다면, 정규식 기반의 치환 대신 `DOMPurify` 등 검증된 XSS Sanitizer 라이브러리를 사용해야 우회 공격을 안전하게 차단할 수 있습니다.
 
 ## Missing tests / weak test coverage
-- **E2E 스와이프 검증 부족:** 모바일 환경에서 단일 손가락 스와이프로 임계값(88px) 이상 이동 시 알림이 정상적으로 닫히는지 검증하는 테스트 시나리오가 부족합니다. E2E 테스트는 3100 포트 환경에서 구동되어야 합니다.
-- **접근성(a11y) 속성 검증 누락:** `web/tests/e2e/toast-layering.spec.ts` 내에 `role="alert"`, `role="status"`, `aria-live="polite"` 등 필수 ARIA 속성이 올바르게 DOM에 렌더링되는지 확인하는 접근성 검증이 필요합니다.
-- **단위 테스트 부재:** 새로 추가될 큐잉 로직, 중복 필터링, 그리고 XSS 이스케이프 처리가 올바르게 동작하는지 확인하는 단위 테스트(`Toast.test.tsx`) 작성이 누락되어 있습니다.
+- **큐잉 및 중복 처리 로직에 대한 단위 테스트 누락**: `PLAN.md`의 Task 2.1에서는 "중복 필터링 및 큐잉 로직 검증을 위한 `Toast.test.tsx` 단위 테스트 작성"을 요구하고 있습니다. 그러나 작성된 `Toast.test.tsx` 파일에는 UI 컴포넌트의 노출 및 제스처 동작에 대한 검증만 존재하며, 전역 상태 수준에서 3개를 초과하는 알림이 발생했을 때의 대기열(Queue) 처리 및 중복 병합 로직에 대한 격리된 단위 테스트가 누락되어 있습니다.
+- **E2E 스와이프 테스트의 한계**: `web/tests/e2e/toast-layering.spec.ts`의 제스처 테스트는 Playwright 환경 제약으로 인해 `dispatchEvent`를 사용하여 합성된 터치 이벤트를 주입하고 있습니다. 이는 DOM 이벤트 핸들러의 논리는 검증하지만, 실제 모바일 브라우저 엔진에서 발생할 수 있는 스크롤 개입이나 멀티 터치 등의 엣지 케이스를 완벽하게 모사하지 못하는 한계가 있습니다. (Playwright를 통한 E2E 테스트 재현 시 `PORT=3100 npx playwright test` 명령과 같이 3100번대 포트를 사용해야 합니다.)
 
 ## Edge cases
-- **렌더링 엔진 간 터치 이벤트 미세 차이:** Chromium 및 WebKit 등 브라우저 렌더링 엔진의 모바일 터치 이벤트 시뮬레이션 차이로 인해 자동화 테스트 시 스와이프 임계값(88px) 판정이 간헐적으로 실패(Flaky)할 수 있습니다.
-- **폰트 다운로드 지연 및 폴백 누락:** 구형 브라우저 또는 네트워크 쓰로틀링(Throttling) 환경에서 폰트 다운로드가 지연될 때 폴백 로직이 누락될 경우, 텍스트 재평가 실패 및 확장(Expand) 버튼 미노출 등 UI가 깨질 가능성이 있습니다.
+- **Message 값이 비어있을 때의 렌더링 결함**: 알림 데이터의 `item.message` 속성이 `null`이나 `undefined`로 전달될 경우, `sanitizeToastText` 내부의 `String(raw)` 캐스팅으로 인해 화면에 `"undefined"` 또는 `"null"`이라는 문자열이 텍스트로 그대로 노출됩니다.
+- **클론 노드 오버플로우 측정 오류**: `measureMessageOverflow` 함수에서 `cloneNode`를 사용하여 텍스트 넘침을 측정할 때, 모바일 브라우저의 화면 렌더링 지연 등으로 인해 원본 `node.clientWidth`가 0에 가깝게 잡히면(`Math.max(node.clientWidth, 1)` 적용), 실제로는 넘치지 않는 텍스트임에도 측정 높이가 비정상적으로 산출되어 불필요한 '펼치기' 버튼이 렌더링될 수 있습니다.
+
+---
 
 ## TODO
-- [ ] `web/src/components/Toast.tsx` 파일 내 외부 입력값 렌더링 시 안전한 텍스트 이스케이프 처리 함수를 적용하여 XSS 취약점 방어.
-- [ ] `web/src/components/Toast.tsx` 내에 `document.fonts.ready` 기반 `measureMessageOverflow` 텍스트 재평가 로직 및 `setTimeout` 등을 활용한 폴백(Fallback) 함수 구현.
-- [ ] `onTouchStart`, `onTouchMove` 이벤트 핸들러에 `event.touches.length > 1` 조건문을 추가하여 멀티 터치 오작동 방어 로직 구현.
-- [ ] Toast Provider 등 전역 상태 관리 로직에 다중 알림 큐잉(Queueing) 및 중복 메시지 필터링 기능 추가.
-- [ ] `web/src/components/Toast.test.tsx` 파일에 XSS 이스케이프 처리 및 큐잉 로직을 검증하는 Jest 단위 테스트 작성.
-- [ ] `web/tests/e2e/toast-layering.spec.ts` 파일에 88px 임계값 모바일 스와이프 동작 및 ARIA 접근성 유지 여부를 확인하는 E2E 테스트 추가.
-- [ ] `PORT=3100 npx playwright test` 명령을 실행하여 브라우저 엔진별 E2E 테스트 케이스가 100% 통과하는지 확인.
-- [ ] 크롬 개발자 도구의 네트워크 쓰로틀링(Throttling)을 적용하여 폰트 로딩 지연 시 확장(Expand) 버튼 노출 여부 등 UI 재평가 상태 수동 검수.
+
+- [ ] `Toast.tsx`에서 `dangerouslySetInnerHTML` 사용을 제거하고, React의 안전한 기본 텍스트 바인딩(`{item.message}`) 방식으로 수정 (만약 부분적 HTML 렌더링이 필수라면 커스텀 이스케이프 로직 대신 `DOMPurify` 도입).
+- [ ] `item.message`가 유효하지 않은 값(`null`, `undefined`)으로 전달되었을 때 화면에 노출되지 않도록 빈 문자열로 안전하게 처리하는 방어 코드 추가.
+- [ ] 뷰포트 상태(`isMobile`)가 `true`에서 `false`로 변경되는 시점에 맞춰 `swipeOffsetX`와 스와이프 진행 상태(`isSwipingRef` 등)를 초기화하는 클린업 로직 보완.
+- [ ] 알림 최대 노출 개수 제한, 큐(Queue) 대기열 처리 및 중복 알림 필터링 동작을 검증할 수 있도록 상태 관리자 측 단위 테스트 스펙 추가 작성.
+- [ ] 텍스트 오버플로우 측정 로직 실행 전, 대상 노드의 너비가 유효한지(예: `clientWidth > 10`) 검사하여 보이지 않는 상태에서 잘못된 측정 결과가 도출되는 엣지 케이스 방지.
