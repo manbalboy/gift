@@ -1,0 +1,116 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - generic "시스템 알림"
+  - banner [ref=e4]:
+    - heading "DevFlow Agent Hub" [level=1] [ref=e5]
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]: ○
+        - generic [ref=e9]: queued
+      - button "Run 시작" [disabled] [ref=e10]
+  - generic [ref=e11]:
+    - complementary [ref=e12]:
+      - heading "Workflow 목록" [level=2] [ref=e13]
+    - main [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - heading "Live Run Constellation" [level=2] [ref=e17]
+          - paragraph [ref=e18]: 현재 실행 노드 흐름을 실시간으로 시각화합니다.
+        - img "실행 상태 미니맵" [ref=e19]
+        - generic "상태 범례" [ref=e22]:
+          - generic [ref=e23]: queued ○
+          - generic [ref=e24]: running ▶
+          - generic [ref=e25]: done ✓
+          - generic [ref=e26]: failed !
+      - generic [ref=e27]:
+        - generic [ref=e28]:
+          - heading "Run Timeline & KPI" [level=2] [ref=e29]
+          - paragraph [ref=e30]: 현재 상태, 다음 액션, 장애 지점을 한 번에 확인합니다.
+        - paragraph [ref=e31]: 워크플로우 실행을 시작하면 실시간 상태가 표시됩니다.
+        - region "webhook-feedback-actions" [ref=e32]:
+          - heading "Webhook 피드백 검증" [level=3] [ref=e33]
+          - paragraph [ref=e34]: 파싱 오류(422)와 workflow_id 예외 경고를 즉시 확인합니다.
+          - generic [ref=e35]:
+            - button "파싱 오류 시뮬레이션" [ref=e36]
+            - button "workflow_id 경고 시뮬레이션" [ref=e37]
+      - generic [ref=e38]:
+        - generic [ref=e39]:
+          - generic [ref=e40]:
+            - heading "Workflow Canvas" [level=2] [ref=e41]
+            - paragraph [ref=e42]: 노드 연결로 SDLC를 정의하고 저장합니다.
+          - button "저장" [ref=e43]
+        - generic [ref=e44]:
+          - generic [ref=e45]:
+            - generic [ref=e46]: 워크플로우 이름
+            - textbox "워크플로우 이름" [ref=e47]: Level 1 SDLC Pipeline
+          - generic [ref=e48]:
+            - generic [ref=e49]: 설명
+            - textbox "설명" [ref=e50]: Idea에서 PR까지의 기본 파이프라인
+        - generic "node-status-list" [ref=e51]:
+          - generic [ref=e52]:
+            - generic [ref=e53]: Idea
+            - generic [ref=e54]:
+              - generic [ref=e55]: ○
+              - generic [ref=e56]: queued
+          - generic [ref=e57]:
+            - generic [ref=e58]: Plan
+            - generic [ref=e59]:
+              - generic [ref=e60]: ○
+              - generic [ref=e61]: queued
+          - generic [ref=e62]:
+            - generic [ref=e63]: Code
+            - generic [ref=e64]:
+              - generic [ref=e65]: ○
+              - generic [ref=e66]: queued
+          - generic [ref=e67]:
+            - generic [ref=e68]: Test
+            - generic [ref=e69]:
+              - generic [ref=e70]: ○
+              - generic [ref=e71]: queued
+          - generic [ref=e72]:
+            - generic [ref=e73]: PR
+            - generic [ref=e74]:
+              - generic [ref=e75]: ○
+              - generic [ref=e76]: queued
+        - generic [ref=e78]:
+          - generic [ref=e80]:
+            - generic:
+              - img:
+                - generic:
+                  - button "Edge from idea to plan" [ref=e81] [cursor=pointer]
+                  - button "Edge from plan to code" [ref=e84] [cursor=pointer]
+                  - button "Edge from code to test" [ref=e87] [cursor=pointer]
+                  - button "Edge from test to pr" [ref=e90] [cursor=pointer]
+              - generic:
+                - button "Idea" [ref=e93]: Idea
+                - button "Plan" [ref=e96]: Plan
+                - button "Code" [ref=e99]: Code
+                - button "Test" [ref=e102]: Test
+                - button "PR" [ref=e105]: PR
+          - img [ref=e108]
+          - generic [ref=e110]:
+            - button "zoom in" [ref=e111] [cursor=pointer]:
+              - img [ref=e112]
+            - button "zoom out" [ref=e114] [cursor=pointer]:
+              - img [ref=e115]
+            - button "fit view" [ref=e117] [cursor=pointer]:
+              - img [ref=e118]
+            - button "toggle interactivity" [ref=e120] [cursor=pointer]:
+              - img [ref=e121]
+          - img "React Flow mini map" [ref=e124]
+          - link "React Flow attribution" [ref=e131] [cursor=pointer]:
+            - /url: https://reactflow.dev
+            - text: React Flow
+        - region "selected-node-panel" [ref=e133]:
+          - heading "선택 노드" [level=3] [ref=e134]
+          - paragraph [ref=e135]: 캔버스에서 노드를 선택하면 ID와 Type을 확인할 수 있습니다.
+    - complementary [ref=e136]:
+      - generic [ref=e137]:
+        - generic [ref=e138]:
+          - heading "Node Detail" [level=2] [ref=e139]
+          - paragraph [ref=e140]: 노드 로그와 산출물을 확인합니다.
+        - group [ref=e141]:
+          - generic "실행 로그" [ref=e142]
+```
