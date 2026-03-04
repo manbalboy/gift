@@ -439,4 +439,45 @@ gift는 “나중에 확장”으로 Postgres, 멀티 워커/분산 큐, SSE/WS 
         - Preview 외부 기준 도메인/호스트: http://ssh.manbalboy.com:7000
         - CORS 허용 대상은 manbalboy.com 계열 또는 localhost 계열로 제한합니다.
         - 허용 origin 정책(기준값): https://manbalboy.com,http://manbalboy.com,https://localhost,http://localhost,https://127.0.0.1,http://127.0.0.1
-        - PR 본문에는 Docker Preview 정보(컨테이너/포트/URL)를 포함합니다.
+        - PR 본문에는 Docker Preview 정보(컨테이너/포트/URL)를 포함합니다.--
+
+
+        ** 절대 우선순위 ** 
+        최소 기능 구현이 미흡합니다. 
+        절대경로 
+        /home/docker/agentHub/workspaces/main
+
+        상대경로 
+        workspaces/main
+
+
+        위의 폴더 안의 프로젝트 기능들을 살펴보고 모두 구현해주세요 (비슷 동일한 사용법으로 )
+
+        위의 요구사항이 제일 우선순위가 높습니다. 
+
+
+        아래의 요구사항도 수정해주세요 우선순위가 높습니다. 
+
+  - 실행이 백그라운드 워커가 아니라 “조회 API 호출 시 1스텝 진행” 구조입니다.
+      - run 생성은 큐만 쌓음: create_run:88
+      - 실제 실행은 refresh_run에서만 진행: refresh_run:125
+      - 그래서 GET /runs/... 류를 안 치면 실행이 안 굴러갑니다: API get_run:199
+  - 프론트가 SSE 이벤트 받을 때 다시 getRun/getConstellation 호출해서 실행을 “밀어주는” 구조입니다.
+      - App onRunStatus:106
+      - 즉 UI/클라이언트가 사실상 실행 트리거 역할을 합니다.
+  - 그래프의 edges가 실행 로직에서 사실상 무시됩니다. 노드 배열 순서(sequence)만 사용합니다.
+      - sequence 부여:96
+      - queued 첫 노드 실행:147
+      - constellation 링크도 edge가 아니라 단순 인접 연결: constellation:235
+  - 아티팩트가 실제 실행 결과물이 아니라 고정 템플릿 문자열입니다.
+      - write_artifact 호출:199
+  - 아티팩트 조회 API가 없고 UI도 경로 문자열만 보여줍니다.
+      - artifact_path 사용 위치:290
+  - agents API는 있으나 Web UI에서 연결되지 않습니다.
+      - agents API:1
+  - 워크플로우는 run 1번이라도 생기면 수정 불가(409)라 운영 UX가 매우 딱딱합니다.
+      - update 제약:146 
+
+
+
+-- ** workspaces/main 안에 파일은 읽기만 해야합니다. 수정이나 삭제 하면안됨 **
