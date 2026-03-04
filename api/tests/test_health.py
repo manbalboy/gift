@@ -7,5 +7,9 @@ def test_health_check():
     body = resp.json()
     assert body["status"] == "ok"
     assert "docker_available" in body
+    assert "docker_health" in body
+    assert "agent_runner" in body
     assert "sse_rate_limiter" in body
     assert "fallback_active" in body["sse_rate_limiter"]
+    if body["agent_runner"]["backend"] == "docker":
+        assert "negative_cache_active" in body["agent_runner"]["docker_ping"]

@@ -1,1 +1,1 @@
-CORS 정규식 오류 수정, GitHub 웹훅 HMAC 서명 검증 누락 및 보안 취약점 패치
+웹훅 서명 검증, 페이로드 크기 제한, Docker 헬스체크 캐시, SSE rate limiter 개선 등 보안 및 안정성 취약점 수정

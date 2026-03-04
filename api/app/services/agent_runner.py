@@ -22,6 +22,9 @@ class ScriptRunner(Protocol):
     def run(self, request: AgentTaskRequest) -> AgentTaskResult:
         pass
 
+    def health_snapshot(self) -> dict[str, object]:
+        pass
+
 
 class BaseRunner:
     def __init__(self, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS) -> None:
@@ -90,6 +93,9 @@ class BaseRunner:
 
 
 class HostRunner(BaseRunner):
+    def health_snapshot(self) -> dict[str, object]:
+        return {"backend": "host", "docker_ping": {"enabled": False}}
+
     def run(self, request: AgentTaskRequest) -> AgentTaskResult:
         command = self._resolve_command(request)
         script_path = self._build_script(command)
@@ -236,6 +242,23 @@ class DockerRunner(BaseRunner):
             self._docker_ping_last_error = ""
             logger.debug("docker ping refreshed (ttl=%.1fs)", self._docker_ping_ttl)
 
+    def health_snapshot(self) -> dict[str, object]:
+        now = time.monotonic()
+        positive_remaining = max(0.0, self._docker_ping_cache_until - now)
+        negative_remaining = max(0.0, self._docker_ping_negative_cache_until - now)
+        negative_active = negative_remaining > 0
+        return {
+            "backend": "docker",
+            "docker_ping": {
+                "enabled": bool(settings.require_docker_ping_per_run),
+                "positive_cache_active": positive_remaining > 0,
+                "positive_cache_remaining_seconds": round(positive_remaining, 3),
+                "negative_cache_active": negative_active,
+                "negative_cache_remaining_seconds": round(negative_remaining, 3),
+                "last_error": self._docker_ping_last_error if negative_active else "",
+            },
+        }
+
     def run(self, request: AgentTaskRequest) -> AgentTaskResult:
         command = self._resolve_command(request)
         run_id = request.payload.get("run_id")
@@ -318,6 +341,12 @@ class AgentRunner:
             self.runner = HostRunner(timeout_seconds=timeout_seconds)
         else:
             raise RuntimeError(f"Unsupported runner backend: {selected_backend}")
+
+    def health_snapshot(self) -> dict[str, object]:
+        snapshot = getattr(self.runner, "health_snapshot", None)
+        if callable(snapshot):
+            return snapshot()
+        return {"backend": "unknown"}
 
     def run(self, request: AgentTaskRequest) -> AgentTaskResult:
         return self.runner.run(request)

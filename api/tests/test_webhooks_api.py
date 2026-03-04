@@ -149,3 +149,78 @@ def test_dev_integration_webhook_rejects_boolean_workflow_id(monkeypatch):
 
     assert response.status_code == 422
     assert response.json()["detail"] == "workflow_id must be an integer"
+
+
+def test_dev_integration_webhook_rate_limits_by_ip(monkeypatch):
+    monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+    monkeypatch.setattr(settings, "webhook_rate_limit_per_window", 1)
+    monkeypatch.setattr(settings, "webhook_rate_limit_window_seconds", 5.0)
+
+    headers = {"X-API-Secret": "test-generic-secret", "x-forwarded-for": "10.10.10.9"}
+    payload = {"provider": "jenkins", "event_type": "ci.completed"}
+
+    first = client.post("/api/webhooks/dev-integration", headers=headers, json=payload)
+    second = client.post("/api/webhooks/dev-integration", headers=headers, json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json()["detail"] == "too many webhook requests"
+
+
+def test_dev_integration_webhook_ignores_untrusted_forwarded_for(monkeypatch):
+    monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+    monkeypatch.setattr(settings, "webhook_rate_limit_per_window", 1)
+    monkeypatch.setattr(settings, "webhook_rate_limit_window_seconds", 5.0)
+    monkeypatch.setattr(settings, "webhook_trusted_proxy_ips", "127.0.0.1,::1")
+
+    payload = {"provider": "jenkins", "event_type": "ci.completed"}
+    first = client.post(
+        "/api/webhooks/dev-integration",
+        headers={"X-API-Secret": "test-generic-secret", "x-forwarded-for": "203.0.113.11"},
+        json=payload,
+    )
+    second = client.post(
+        "/api/webhooks/dev-integration",
+        headers={"X-API-Secret": "test-generic-secret", "x-forwarded-for": "198.51.100.12"},
+        json=payload,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+
+
+def test_dev_integration_webhook_trusts_forwarded_for_from_trusted_proxy(monkeypatch):
+    monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+    monkeypatch.setattr(settings, "webhook_rate_limit_per_window", 1)
+    monkeypatch.setattr(settings, "webhook_rate_limit_window_seconds", 5.0)
+    monkeypatch.setattr(settings, "webhook_trusted_proxy_ips", "testclient")
+
+    payload = {"provider": "jenkins", "event_type": "ci.completed"}
+    first = client.post(
+        "/api/webhooks/dev-integration",
+        headers={"X-API-Secret": "test-generic-secret", "x-forwarded-for": "203.0.113.11"},
+        json=payload,
+    )
+    second = client.post(
+        "/api/webhooks/dev-integration",
+        headers={"X-API-Secret": "test-generic-secret", "x-forwarded-for": "198.51.100.12"},
+        json=payload,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+
+def test_dev_integration_webhook_logs_invalid_workflow_id(monkeypatch, caplog):
+    monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+    caplog.set_level("WARNING")
+
+    response = client.post(
+        "/api/webhooks/dev-integration",
+        headers={"X-API-Secret": "test-generic-secret"},
+        json={"provider": "jenkins", "event_type": "ci.completed", "workflow_id": [1, 2]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["workflow_id"] is None
+    assert "Ignored webhook workflow_id due to parse failure" in caplog.text

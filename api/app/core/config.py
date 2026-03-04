@@ -40,10 +40,18 @@ class Settings:
     sse_rate_limit_window_seconds: int = int(os.getenv("DEVFLOW_SSE_RATE_LIMIT_WINDOW_SECONDS", "1"))
     sse_local_fallback_limit_ratio: float = float(os.getenv("DEVFLOW_SSE_LOCAL_FALLBACK_LIMIT_RATIO", "0.5"))
     sse_redis_fallback_ttl_seconds: float = float(os.getenv("DEVFLOW_SSE_REDIS_FALLBACK_TTL_SECONDS", "4"))
+    webhook_rate_limit_per_window: int = int(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_PER_WINDOW", "10"))
+    webhook_rate_limit_window_seconds: float = float(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_WINDOW_SECONDS", "5"))
+    webhook_trusted_proxy_ips: str = os.getenv("DEVFLOW_WEBHOOK_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
 
     @property
     def database_url(self) -> str:
         return f"sqlite:///{Path(self.db_path).resolve()}"
+
+    @property
+    def trusted_webhook_proxy_ips(self) -> set[str]:
+        values = [item.strip() for item in self.webhook_trusted_proxy_ips.split(",")]
+        return {item for item in values if item}
 
 
 settings = Settings()

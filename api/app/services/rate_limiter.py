@@ -19,6 +19,12 @@ except Exception:  # pragma: no cover
 
 
 class LocalSlidingWindowRateLimiter:
+    # NOTE:
+    # This limiter is process-local and safe only within one Python process.
+    # In multi-worker deployment (e.g., multiple uvicorn workers), each worker
+    # has an independent in-memory bucket, so the effective global limit can be
+    # exceeded. Use RedisSlidingWindowRateLimiter (or another shared store) for
+    # cross-worker consistency.
     def __init__(self) -> None:
         self._guard = threading.Lock()
         self._bucket: dict[str, deque[float]] = {}

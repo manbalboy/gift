@@ -208,6 +208,46 @@ input {
   font-size: 13px;
 }
 
+.node-detail-panel {
+  margin-top: var(--space-16);
+  border: 1px solid var(--color-border-default);
+  border-radius: 10px;
+  background: var(--color-bg-elevated);
+  padding: var(--space-12);
+}
+
+.node-detail-panel h3 {
+  font-size: 18px;
+  line-height: 26px;
+  margin-bottom: var(--space-8);
+}
+
+.node-detail-grid {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.node-detail-grid p {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.node-detail-grid code {
+  color: var(--color-text-primary);
+}
+
+.node-detail-empty {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-text-muted);
+}
+
 .run-kpi-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

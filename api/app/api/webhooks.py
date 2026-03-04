@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 import json
+import logging
+from ipaddress import ip_address
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -10,9 +12,44 @@ from app.api.workflows import engine
 from app.db.session import get_db
 from app.models.workflow import WorkflowDefinition
 from app.schemas.webhook import WebhookEventOut
+from app.services.rate_limiter import LocalSlidingWindowRateLimiter
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 MAX_WEBHOOK_PAYLOAD_BYTES = 5 * 1024 * 1024
+webhook_rate_limiter = LocalSlidingWindowRateLimiter()
+logger = logging.getLogger(__name__)
+
+
+def _extract_client_key(request: Request) -> str:
+    client_host = request.client.host if request.client and request.client.host else "unknown"
+    forwarded = request.headers.get("x-forwarded-for", "").strip()
+    if not forwarded:
+        return client_host
+
+    trusted_proxy_ips = settings.trusted_webhook_proxy_ips
+    trust_forwarded = "*" in trusted_proxy_ips or client_host in trusted_proxy_ips
+    if not trust_forwarded:
+        logger.warning(
+            "Ignoring x-forwarded-for from untrusted proxy host: host=%s configured=%s",
+            client_host,
+            sorted(trusted_proxy_ips),
+        )
+        return client_host
+
+    candidates = [item.strip() for item in forwarded.split(",") if item.strip()]
+    if not candidates:
+        return client_host
+    for candidate in candidates:
+        try:
+            ip_address(candidate)
+        except ValueError:
+            logger.warning("Ignoring malformed x-forwarded-for header: host=%s value=%s", client_host, forwarded)
+            return client_host
+    return candidates[0]
+
+
+def reset_webhook_limiter_for_tests() -> None:
+    webhook_rate_limiter.reset()
 
 
 def _normalize_github_event(event_name: str, payload: dict) -> tuple[str, bool, str]:
@@ -61,6 +98,15 @@ def _verify_github_signature(raw_body: bytes, signature_header: str, secret: str
 
 @router.post("/dev-integration", response_model=WebhookEventOut)
 async def receive_dev_integration_webhook(request: Request, db: Session = Depends(get_db)):
+    client_key = _extract_client_key(request)
+    allowed = webhook_rate_limiter.allow(
+        key=client_key,
+        limit=max(1, int(settings.webhook_rate_limit_per_window)),
+        window_seconds=max(0.2, float(settings.webhook_rate_limit_window_seconds)),
+    )
+    if not allowed:
+        raise HTTPException(status_code=429, detail="too many webhook requests")
+
     content_length = request.headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > MAX_WEBHOOK_PAYLOAD_BYTES:
         raise HTTPException(status_code=413, detail="payload too large")
@@ -107,8 +153,21 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
 
     workflow_id_raw = payload.get("workflow_id")
     if type(workflow_id_raw) is bool:
+        logger.warning(
+            "Rejected webhook workflow_id with boolean type: provider=%s event_type=%s",
+            provider,
+            normalized_event,
+        )
         raise HTTPException(status_code=422, detail="workflow_id must be an integer")
     workflow_id = int(workflow_id_raw) if type(workflow_id_raw) is int or str(workflow_id_raw).isdigit() else None
+    if workflow_id_raw is not None and workflow_id is None:
+        logger.warning(
+            "Ignored webhook workflow_id due to parse failure: provider=%s event_type=%s raw_type=%s raw_value=%r",
+            provider,
+            normalized_event,
+            type(workflow_id_raw).__name__,
+            workflow_id_raw,
+        )
 
     triggered_run_id: int | None = None
     if should_trigger and workflow_id is not None:

@@ -9,6 +9,7 @@ import ReactFlow, {
   type Connection,
   type Edge,
   type Node,
+  type NodeMouseHandler,
 } from 'reactflow';
 import StatusBadge from './StatusBadge';
 import type { Workflow } from '../types';
@@ -25,7 +26,7 @@ function convertToFlow(workflow: Workflow) {
   const nodes: Node[] = workflow.graph.nodes.map((n, idx) => ({
     id: n.id,
     position: { x: idx * 180, y: 70 + (idx % 2) * 50 },
-    data: { label: n.label, command: n.command ?? '' },
+    data: { label: n.label, command: n.command ?? '', nodeType: n.type },
     draggable: true,
   }));
 
@@ -50,7 +51,7 @@ export default function WorkflowBuilder({
       nodes: baseNodes.map((node, idx) => ({
         id: node.id,
         position: { x: idx * 180, y: 100 },
-        data: { label: node.label, command: '' },
+        data: { label: node.label, command: '', nodeType: node.type },
       })),
       edges: [
         { id: 'e1', source: 'idea', target: 'plan' },
@@ -65,12 +66,14 @@ export default function WorkflowBuilder({
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
   const [title, setTitle] = useState(workflow?.name ?? 'Level 1 SDLC Pipeline');
   const [description, setDescription] = useState(workflow?.description ?? 'Idea에서 PR까지의 기본 파이프라인');
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   useEffect(() => {
     setTitle(workflow?.name ?? 'Level 1 SDLC Pipeline');
     setDescription(workflow?.description ?? 'Idea에서 PR까지의 기본 파이프라인');
     setNodes(initial.nodes);
     setEdges(initial.edges);
+    setSelectedNodeId(null);
   }, [workflow, initial, setEdges, setNodes]);
 
   const onConnect = useCallback(
@@ -83,7 +86,11 @@ export default function WorkflowBuilder({
       name: title,
       description,
       graph: {
-        nodes: nodes.map((n) => ({ id: n.id, type: 'task', label: String(n.data?.label ?? n.id) })),
+        nodes: nodes.map((n) => ({
+          id: n.id,
+          type: String(n.type ?? n.data?.nodeType ?? 'task'),
+          label: String(n.data?.label ?? n.id),
+        })),
         edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
       },
     };
@@ -94,6 +101,12 @@ export default function WorkflowBuilder({
     });
     await onSave(payload, workflow?.id);
   };
+
+  const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
+
+  const onNodeClick: NodeMouseHandler = useCallback((_, node) => {
+    setSelectedNodeId(node.id);
+  }, []);
 
   return (
     <section className="card builder-card">
@@ -135,6 +148,7 @@ export default function WorkflowBuilder({
           onNodesChange={mobileViewOnly ? undefined : onNodesChange}
           onEdgesChange={mobileViewOnly ? undefined : onEdgesChange}
           onConnect={mobileViewOnly ? undefined : onConnect}
+          onNodeClick={onNodeClick}
           fitView
         >
           <Background gap={20} size={1} color="#27324A" />
@@ -142,6 +156,23 @@ export default function WorkflowBuilder({
           {!mobileViewOnly && <MiniMap pannable zoomable style={{ background: '#121A2B' }} />}
         </ReactFlow>
       </div>
+      <section className="node-detail-panel" aria-label="selected-node-panel">
+        <h3>선택 노드</h3>
+        {selectedNode ? (
+          <div className="node-detail-grid">
+            <p>
+              <span>ID</span>
+              <code className="mono">{selectedNode.id}</code>
+            </p>
+            <p>
+              <span>Type</span>
+              <code className="mono">{String(selectedNode.type ?? selectedNode.data?.nodeType ?? 'task')}</code>
+            </p>
+          </div>
+        ) : (
+          <p className="node-detail-empty">캔버스에서 노드를 선택하면 ID와 Type을 확인할 수 있습니다.</p>
+        )}
+      </section>
     </section>
   );
 }

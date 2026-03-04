@@ -6,7 +6,7 @@ jest.mock('reactflow', () => {
   const React = require('react');
   return {
     __esModule: true,
-    default: ({ nodes, edges, onConnect, children }: any) => (
+    default: ({ nodes, edges, onConnect, onNodeClick, children }: any) => (
       <div>
         <div data-testid="node-count">{nodes.length}</div>
         <div data-testid="edge-count">{edges.length}</div>
@@ -15,6 +15,9 @@ jest.mock('reactflow', () => {
           onClick={() => onConnect?.({ source: nodes[0]?.id ?? 'idea', target: nodes[1]?.id ?? 'plan' })}
         >
           connect
+        </button>
+        <button type="button" onClick={() => onNodeClick?.({}, nodes[0])}>
+          select-first
         </button>
         {children}
       </div>
@@ -111,5 +114,17 @@ describe('WorkflowBuilder', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'connect' }));
     expect(screen.getByTestId('edge-count')).toHaveTextContent('2');
+  });
+
+  test('노드를 선택하면 읽기 전용 상세 패널에 ID/Type이 표시된다', () => {
+    render(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
+
+    expect(screen.getByText('캔버스에서 노드를 선택하면 ID와 Type을 확인할 수 있습니다.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'select-first' }));
+
+    expect(screen.getByText('ID')).toBeInTheDocument();
+    expect(screen.getByText('idea')).toBeInTheDocument();
+    expect(screen.getByText('Type')).toBeInTheDocument();
+    expect(screen.getByText('task')).toBeInTheDocument();
   });
 });

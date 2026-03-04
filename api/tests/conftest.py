@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import pytest
 
 TEST_DB = Path('./api/test_runtime.db')
 if TEST_DB.exists():
@@ -13,7 +14,15 @@ os.environ['DEVFLOW_REQUIRE_DOCKER_PING_ON_STARTUP'] = 'false'
 
 from fastapi.testclient import TestClient
 
+from app.api import workflows as workflows_api
+from app.api.webhooks import reset_webhook_limiter_for_tests
 from app.main import app
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def reset_limiters():
+    workflows_api.reconnect_rate_limiter.reset_for_tests()
+    reset_webhook_limiter_for_tests()

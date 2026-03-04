@@ -16,6 +16,7 @@ from app.db.session import SessionLocal, engine
 
 _docker_health_cache_until = 0.0
 _docker_health_cached = False
+_docker_health_last_error = ""
 
 
 def ensure_docker_daemon_available() -> None:
@@ -72,6 +73,7 @@ Base.metadata.create_all(bind=engine)
 def _docker_daemon_available_cached() -> bool:
     global _docker_health_cache_until
     global _docker_health_cached
+    global _docker_health_last_error
     now = time.monotonic()
     if now < _docker_health_cache_until:
         return _docker_health_cached
@@ -85,18 +87,35 @@ def _docker_daemon_available_cached() -> bool:
             timeout=1,
         )
         _docker_health_cached = result.returncode == 0
+        _docker_health_last_error = "" if _docker_health_cached else (result.stderr or result.stdout or "").strip()
     except Exception:
         _docker_health_cached = False
+        _docker_health_last_error = "docker info command failed"
     _docker_health_cache_until = time.monotonic() + 3
     return _docker_health_cached
+
+
+def _docker_health_snapshot() -> dict[str, object]:
+    available = _docker_daemon_available_cached()
+    remaining = max(0.0, _docker_health_cache_until - time.monotonic())
+    return {
+        "available": available,
+        "cache_active": remaining > 0,
+        "cache_remaining_seconds": round(remaining, 3),
+        "last_error": "" if available else _docker_health_last_error,
+    }
 
 
 @app.get("/health")
 def health():
     limiter_health = workflows_api.reconnect_rate_limiter.health_snapshot()
+    agent_runner_health = workflow_engine.agent_runner.health_snapshot()
+    docker_health = _docker_health_snapshot()
     return {
         "status": "ok",
-        "docker_available": _docker_daemon_available_cached(),
+        "docker_available": docker_health["available"],
+        "docker_health": docker_health,
+        "agent_runner": agent_runner_health,
         "sse_rate_limiter": limiter_health,
     }
 
