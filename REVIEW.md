@@ -1,24 +1,23 @@
 # REVIEW
 
 ## Functional bugs
-- 현재 구현된 코드에서 크리티컬한 기능적 버그는 발견되지 않았습니다. 
-- `PLAN.md`에 명시된 프론트엔드 모바일 뷰 오타 수정("모니터링을")과 `WorkflowBuilder.tsx`의 노드 클릭 시 ID/Type을 표시하는 읽기 전용 속성 패널이 정상적으로 구현되었습니다.
-- 백엔드 `webhooks.py`의 `workflow_id` 타입 파싱 예외 처리 및 로깅 기능(Error/Warning)도 요구사항에 맞게 잘 동작하고 있습니다.
+- `WorkflowBuilder.tsx`에서 캔버스 배경 클릭 시 노드 선택이 정상적으로 해제(`onPaneClick`)되며, 우측 속성 패널도 올바르게 초기화됩니다. 
+- `data`나 `nodeType` 속성이 누락된 불완전한 노드 데이터가 유입되었을 때 `task` 타입으로 안전하게 폴백(fallback) 렌더링되도록 방어 로직이 구현되어 있어 컴포넌트 크래시 버그는 발견되지 않았습니다.
+- 웹훅 처리 과정에서 잘못된 타입의 `workflow_id` 페이로드가 유입될 경우, 서버 내부 에러(500)가 발생하지 않고 적절히 무시되거나 422 상태 코드를 반환하도록 예외 처리가 정상적으로 동작합니다.
 
 ## Security concerns
-- **X-Forwarded-For IP Spoofing 취약점**: `webhooks.py`의 `_extract_client_key` 함수에서 `candidates[0]`(가장 왼쪽 IP)를 클라이언트의 IP로 반환하고 있습니다. 악의적인 공격자가 임의의 조작된 IP를 담아 `X-Forwarded-For: <fake-ip>`로 요청을 보낼 경우, 중간에 위치한 신뢰할 수 있는 프록시가 실제 IP를 뒤에 덧붙여 `X-Forwarded-For: <fake-ip>, <real-ip>` 형태로 서버에 전달할 수 있습니다. 이 경우 가장 왼쪽의 `<fake-ip>`가 클라이언트 IP로 간주되어 IP 기반의 Rate Limiting을 쉽게 우회할 수 있는 보안 취약점이 존재합니다. 
-- 신뢰할 수 있는 프록시(Trusted Proxy) 목록과 대조하여 오른쪽에서 왼쪽으로 역순 탐색하며, 처음으로 등장하는 '신뢰할 수 없는 IP'를 진짜 클라이언트 IP로 식별하도록 IP 추출 로직을 강화해야 합니다.
+- `X-Forwarded-For` 헤더 조작을 통한 Rate Limiting 우회 및 IP 스푸핑 취약점이 해소되었습니다. `api/app/api/webhooks.py`의 `_extract_client_key` 함수에서 프록시 체인을 오른쪽 끝(마지막 추가 지점)부터 역순(`reversed(candidates)`)으로 탐색하여, 처음 등장하는 신뢰할 수 없는 IP를 실제 클라이언트 IP로 식별하는 방어 로직이 성공적으로 적용되었습니다.
+- 웹훅 페이로드 최대 크기 제한(5MB)과 HMAC 기반 서명 검증 로직이 기존대로 견고하게 유지되고 있습니다.
 
 ## Missing tests / weak test coverage
-- **스푸핑 및 다중 IP 헤더 테스트 부족**: 백엔드의 `test_webhooks_api.py`에서 `X-Forwarded-For` 헤더에 대한 테스트를 진행하고 있으나, 클라이언트가 악의적으로 쉼표로 구분된 다중 IP를 보냈을 때(`X-Forwarded-For: 10.0.0.1, 203.0.113.11`) 시스템이 Rate Limiter 우회를 제대로 방어하는지에 대한 엣지 케이스 단위 테스트가 누락되어 있습니다.
-- **프론트엔드 노드 선택 해제 및 예외 상태 검증**: 프론트엔드의 `WorkflowBuilder.test.tsx`가 정상 통과하고 있으나, 캔버스의 빈 영역을 클릭하여 노드 선택이 해제되었을 때(Selected Node === null) 우측 패널이 정확히 초기화되는지에 대한 상태 전이 커버리지가 더 필요합니다. 또한 로컬 테스트 서버 구동 시 포트 충돌 방지를 위해 명시적으로 3100번대(예: http://localhost:3100)를 바라보는 테스트 환경 설정 점검이 필요합니다.
+- 다중 IP 주입 공격 스푸핑 상황(`X-Forwarded-For: 10.0.0.1, 203.0.113.11`)을 시뮬레이션하는 단위 테스트(`test_dev_integration_webhook_uses_rightmost_untrusted_ip_for_rate_limit`)가 올바르게 작성 및 추가되었습니다.
+- `workflow_id`에 대한 엣지 케이스(`-1`, `1.0`, `0` 등) 파싱 방어 로직을 검증하는 파라미터화된 테스트(`@pytest.mark.parametrize`)가 추가되어 관련 단위 테스트 커버리지가 우수합니다.
+- 프론트엔드 `WorkflowBuilder.test.tsx`에 캔버스 바탕 클릭 이벤트 발생 시의 상태 전이 검증과 불완전 노드 데이터에 대한 폴백 렌더링 컴포넌트 테스트가 충실히 반영되었습니다.
 
 ## Edge cases
-- **음수 및 소수점 workflow_id 처리**: 웹훅 페이로드로 들어오는 `workflow_id_raw`가 `-1`과 같은 음수이거나 `1.0`과 같이 소수점을 포함한 문자열 형태일 경우, `str(workflow_id_raw).isdigit()` 검사에서 `False`로 평가되어 파싱에 실패하고 `None`이 할당됩니다. 시스템의 Workflow ID가 항상 양의 정수라면 안전하게 무시되겠지만, 파싱 실패 상황이 지속적으로 엣지 케이스로 발생할 수 있으므로 이에 대한 방어 로직이나 로그가 명확한지 고려할 필요가 있습니다.
-- **불완전한 노드 데이터 유입**: `WorkflowBuilder.tsx`에서 노드의 `data` 속성이 아예 누락되거나 `nodeType` 값이 없는 비표준 노드가 유입되었을 때, `task`로 fallback 처리하는 방어 코드가 있습니다. UI 상 에러를 발생시키지는 않지만, 사용자에게 부정확한 정보가 보여질 수 있는 엣지 케이스입니다.
+- 다중 프록시 환경에서 `X-Forwarded-For` 헤더에 유효하지 않은 형식(예: 일반 문자열이나 포트 번호가 포함된 비정상 IP 등)이 유입되는 경우, `ValueError`를 캐치하여 시스템이 안전하게 기본 클라이언트 호스트 IP로 처리하도록 엣지 케이스가 잘 방어되어 있습니다.
+- `workflow_id` 값으로 빈 문자열, 음수 기호, 소수점 등이 포함된 값이 유입될 경우, `isdigit()`을 통한 엄격한 검사를 거쳐 비정상적인 값은 안전하게 `None`으로 치환됩니다.
 
 ## TODO
-- [ ] `webhooks.py` 내 `X-Forwarded-For` IP 추출 로직을 수정하여, 오른쪽(가장 마지막에 추가된 프록시)부터 역탐색하여 Rate Limiting 우회를 방지하도록 개선하기.
-- [ ] `test_webhooks_api.py`에 악의적인 다중 IP 스푸핑 헤더(`X-Forwarded-For: fake_ip, real_ip`) 상황을 가정한 보안 단위 테스트 추가하기.
-- [ ] Jest를 활용한 프론트엔드 테스트에 노드 선택 해제(바탕 클릭) 상태 변화 및 데이터가 불완전한 엣지 케이스 노드 렌더링 검증 시나리오 추가하기 (로컬 E2E/UI 테스트 구동 시 포트 3100 사용 설정 확인 포함).
-- [ ] 음수 및 Float 형태의 `workflow_id` 페이로드 유입을 커버할 수 있도록 `isdigit()` 검증 조건을 보완하거나 해당 엣지 케이스에 대한 테스트 코드 추가하기.
+- [ ] [P2] 잘못된 웹훅 데이터 유입이나 노드 파싱 에러 발생 시, 사용자가 상황을 즉시 인지할 수 있도록 대시보드 화면 상단에 일시적인 Toast 경고 알림(경고: Orange, 에러: Red)을 노출하는 UI/API 피드백 기능 구현.
+- [ ] 개발 및 테스트 과정에서 프론트엔드 로컬 서버(예: `http://localhost:3100`) 구동 시 3100번 대역 포트 규칙이 완전히 준수되어 다른 서비스와 충돌하지 않는지 점검.
