@@ -17,9 +17,9 @@
 - 브라우저/엔진 간 터치 이벤트 동작 차이: Playwright의 Chromium과 WebKit 렌더링 엔진 간 모바일 터치스크린 시뮬레이션 방식에 미세한 차이가 있어, 특정 디바이스 환경에서 스와이프 종료 임계값(88px) 판정이 예상과 다르게 작동할 가능성이 있습니다.
 
 ## TODO
-- [ ] `web/src/components/Toast.tsx` 내 `onTouchStart`, `onTouchMove` 이벤트 핸들러에 `event.touches.length > 1` 조건을 추가하여 멀티 터치를 무시하는 방어 로직 보완.
-- [ ] `web/src/components/Toast.tsx`에 `document.fonts.ready` 완료 시점 이후 텍스트 오버플로우 높이를 재평가하는 `measureMessageOverflow` 훅 로직 적용.
-- [ ] `document.fonts.ready` API를 지원하지 않는 브라우저를 대비한 폴백(Fallback) 로직 추가 구현.
-- [ ] `web/tests/e2e/toast-layering.spec.ts` 파일에 단일 손가락 스와이프로 임계값(88px) 이상 이동 시 Toast가 정상적으로 닫히는지 검증하는 모바일 E2E 테스트 시나리오 작성 (테스트 포트 3100 지정).
-- [ ] `web/tests/e2e/toast-layering.spec.ts` 파일에 Toast 컴포넌트의 접근성 ARIA 속성이 올바르게 렌더링되는지 확인하는 테스트 시나리오 보강.
+- [x] `web/src/components/Toast.tsx` 내 `onTouchStart`, `onTouchMove` 이벤트 핸들러에 `event.touches.length > 1` 조건을 추가하여 멀티 터치를 무시하는 방어 로직 보완.
+- [x] `web/src/components/Toast.tsx`에 `document.fonts.ready` 완료 시점 이후 텍스트 오버플로우 높이를 재평가하는 `measureMessageOverflow` 훅 로직 적용.
+- [x] `document.fonts.ready` API를 지원하지 않는 브라우저를 대비한 폴백(Fallback) 로직 추가 구현.
+- [x] `web/tests/e2e/toast-layering.spec.ts` 파일에 단일 손가락 스와이프로 임계값(88px) 이상 이동 시 Toast가 정상적으로 닫히는지 검증하는 모바일 E2E 테스트 시나리오 작성 (테스트 포트 3100 지정).
+- [x] `web/tests/e2e/toast-layering.spec.ts` 파일에 Toast 컴포넌트의 접근성 ARIA 속성이 올바르게 렌더링되는지 확인하는 테스트 시나리오 보강.
 - [ ] 네트워크 쓰로틀링(Throttling)을 통해 폰트 로딩을 인위적으로 지연시키는 상태(포트 3100 서버 기준)에서 확장 버튼 토글과 말줄임 UI를 수동 검수.
