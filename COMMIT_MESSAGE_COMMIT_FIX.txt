@@ -1,1 +1,1 @@
-웹훅 서명 검증, 페이로드 크기 제한, Docker 헬스체크 캐시, SSE rate limiter 개선 등 보안 및 안정성 취약점 수정
+웹훅 IP 추출 로직의 신뢰 프록시 우선순위 버그 수정 및 workflow_id 파싱 개선, WorkflowBuilder 패널 클릭 선택 해제 처리 추가

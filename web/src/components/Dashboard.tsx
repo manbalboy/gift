@@ -14,7 +14,15 @@ function formatDuration(totalMs: number): string {
   return `${secs}s`;
 }
 
-export default function Dashboard({ run }: { run: WorkflowRun | null }) {
+export default function Dashboard({
+  run,
+  onTriggerMalformedWebhook,
+  onTriggerInvalidWorkflowWebhook,
+}: {
+  run: WorkflowRun | null;
+  onTriggerMalformedWebhook?: () => Promise<void>;
+  onTriggerInvalidWorkflowWebhook?: () => Promise<void>;
+}) {
   const nodeRuns = run?.node_runs ?? [];
   const doneCount = nodeRuns.filter((n) => n.status === 'done').length;
   const failedCount = nodeRuns.filter((n) => n.status === 'failed').length;
@@ -93,6 +101,30 @@ export default function Dashboard({ run }: { run: WorkflowRun | null }) {
       ) : (
         <p className="empty">워크플로우 실행을 시작하면 실시간 상태가 표시됩니다.</p>
       )}
+      <section className="webhook-actions" aria-label="webhook-feedback-actions">
+        <h3>Webhook 피드백 검증</h3>
+        <p>파싱 오류(422)와 workflow_id 예외 경고를 즉시 확인합니다.</p>
+        <div className="webhook-actions-row">
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => {
+              void onTriggerMalformedWebhook?.();
+            }}
+          >
+            파싱 오류 시뮬레이션
+          </button>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => {
+              void onTriggerInvalidWorkflowWebhook?.();
+            }}
+          >
+            workflow_id 경고 시뮬레이션
+          </button>
+        </div>
+      </section>
     </section>
   );
 }

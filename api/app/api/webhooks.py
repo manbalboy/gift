@@ -142,9 +142,9 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
     try:
         payload = json.loads(raw_body)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="invalid webhook payload") from exc
+        raise HTTPException(status_code=422, detail="invalid webhook payload") from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="invalid webhook payload")
+        raise HTTPException(status_code=422, detail="invalid webhook payload")
 
     github_event = request.headers.get("X-GitHub-Event")
     provider = "github" if github_event else str(payload.get("provider", "generic"))
@@ -171,6 +171,8 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
         category, should_trigger, normalized_event = _normalize_generic_event(payload)
 
     workflow_id_raw = payload.get("workflow_id")
+    workflow_warning_code: str | None = None
+    workflow_warning_message: str | None = None
     if type(workflow_id_raw) is bool:
         logger.warning(
             "Rejected webhook workflow_id with boolean type: provider=%s event_type=%s",
@@ -180,6 +182,8 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
         raise HTTPException(status_code=422, detail="workflow_id must be an integer")
     workflow_id = _parse_workflow_id(workflow_id_raw)
     if workflow_id_raw is not None and workflow_id is None:
+        workflow_warning_code = "workflow_id_ignored"
+        workflow_warning_message = "workflow_id가 유효한 양의 정수가 아니어서 무시되었습니다."
         logger.warning(
             "Ignored webhook workflow_id due to parse failure: provider=%s event_type=%s raw_type=%s raw_value=%r",
             provider,
@@ -201,6 +205,8 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
         category=category,
         event_type=normalized_event,
         workflow_id=workflow_id,
+        warning_code=workflow_warning_code,
+        warning_message=workflow_warning_message,
         triggered=triggered_run_id is not None,
         triggered_run_id=triggered_run_id,
     )

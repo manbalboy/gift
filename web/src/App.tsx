@@ -2,9 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Dashboard from './components/Dashboard';
 import LiveRunConstellation from './components/LiveRunConstellation';
 import StatusBadge from './components/StatusBadge';
+import Toast, { type ToastItem } from './components/Toast';
 import WorkflowBuilder from './components/WorkflowBuilder';
-import { api } from './services/api';
+import { LAYER_Z_INDEX } from './constants/layers';
+import { ApiError, api } from './services/api';
 import type { ConstellationData, Workflow, WorkflowRun } from './types';
+import { createToastId } from './utils/toastId';
 
 function useIsMobilePortrait() {
   const query = '(max-width: 767px) and (orientation: portrait)';
@@ -26,14 +29,39 @@ export default function App() {
   const [run, setRun] = useState<WorkflowRun | null>(null);
   const [constellation, setConstellation] = useState<ConstellationData | null>(null);
   const [navOpen, setNavOpen] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const isMobilePortrait = useIsMobilePortrait();
   const activeRunRef = useRef<WorkflowRun | null>(null);
+  const dedupedToastKeysRef = useRef<Set<string>>(new Set());
+
+  const enqueueToast = (
+    level: ToastItem['level'],
+    message: string,
+    options?: {
+      dedupeKey?: string;
+    },
+  ) => {
+    if (options?.dedupeKey) {
+      if (dedupedToastKeysRef.current.has(options.dedupeKey)) return;
+      dedupedToastKeysRef.current.add(options.dedupeKey);
+    }
+    setToasts((prev) => [...prev, { id: createToastId(), level, message }].slice(-3));
+  };
+
+  const closeToast = (id: string) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  };
 
   const loadWorkflows = async () => {
-    const items = await api.listWorkflows();
-    setWorkflows(items);
-    if (!activeWorkflow && items.length > 0) {
-      setActiveWorkflow(items[0]);
+    try {
+      const items = await api.listWorkflows();
+      setWorkflows(items);
+      if (!activeWorkflow && items.length > 0) {
+        setActiveWorkflow(items[0]);
+      }
+    } catch (error) {
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '워크플로우 목록 조회 실패';
+      enqueueToast('error', `워크플로우 조회 실패 (${message})`);
     }
   };
 
@@ -50,14 +78,22 @@ export default function App() {
 
     const unsubscribe = api.subscribeWorkflowRuns(activeWorkflow.id, {
       onRunStatus: async (event) => {
-        const targetRunId = activeRunRef.current?.id ?? event.runs[0]?.id;
-        if (!targetRunId) return;
-        const [latestRun, latestConstellation] = await Promise.all([
-          api.getRun(targetRunId),
-          api.getConstellation(targetRunId),
-        ]);
-        setRun(latestRun);
-        setConstellation(latestConstellation);
+        try {
+          const targetRunId = activeRunRef.current?.id ?? event.runs[0]?.id;
+          if (!targetRunId) return;
+          const [latestRun, latestConstellation] = await Promise.all([
+            api.getRun(targetRunId),
+            api.getConstellation(targetRunId),
+          ]);
+          setRun(latestRun);
+          setConstellation(latestConstellation);
+        } catch (error) {
+          const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '실시간 상태 동기화 실패';
+          enqueueToast('error', `실시간 상태 동기화 실패 (${message})`);
+        }
+      },
+      onError: () => {
+        enqueueToast('error', '실시간 스트림 연결이 끊겼습니다.');
       },
     });
 
@@ -74,21 +110,72 @@ export default function App() {
   );
 
   const handleSaveWorkflow = async (payload: Omit<Workflow, 'id'>, existingId?: number) => {
-    const saved = existingId ? await api.updateWorkflow(existingId, payload) : await api.createWorkflow(payload);
-    await loadWorkflows();
-    setActiveWorkflow(saved);
+    try {
+      const saved = existingId ? await api.updateWorkflow(existingId, payload) : await api.createWorkflow(payload);
+      await loadWorkflows();
+      setActiveWorkflow(saved);
+    } catch (error) {
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '워크플로우 저장 실패';
+      enqueueToast('error', `워크플로우 저장 실패 (${message})`);
+    }
   };
 
   const handleStartRun = async () => {
     if (!activeWorkflow) return;
-    const created = await api.startRun(activeWorkflow.id);
-    setRun(created);
-    const data = await api.getConstellation(created.id);
-    setConstellation(data);
+    try {
+      const created = await api.startRun(activeWorkflow.id);
+      setRun(created);
+      const data = await api.getConstellation(created.id);
+      setConstellation(data);
+    } catch (error) {
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '워크플로우 실행 실패';
+      enqueueToast('error', `워크플로우 실행 실패 (${message})`);
+    }
+  };
+
+  const handleMalformedWebhookSimulation = async () => {
+    try {
+      await api.sendMalformedDevIntegrationWebhook();
+      enqueueToast('warning', '웹훅 파싱 오류 시뮬레이션이 예상과 다르게 성공했습니다.');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 422) {
+        enqueueToast('error', '웹훅 파싱 오류(422)가 감지되었습니다.');
+        return;
+      }
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '웹훅 검증 요청 실패';
+      enqueueToast('error', `웹훅 파싱 오류 시뮬레이션 실패 (${message})`);
+    }
+  };
+
+  const handleInvalidWorkflowWebhookSimulation = async () => {
+    try {
+      const response = await api.sendDevIntegrationWebhook({
+        provider: 'jenkins',
+        event_type: 'ci.completed',
+        workflow_id: 'invalid-id',
+      });
+      if (response.warning_code === 'workflow_id_ignored') {
+        enqueueToast('warning', response.warning_message ?? 'workflow_id 예외 데이터가 감지되어 무시되었습니다.');
+        return;
+      }
+      enqueueToast('warning', 'workflow_id 예외 경고를 확인하지 못했습니다.');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 422) {
+        enqueueToast('error', 'workflow_id 검증 오류(422)가 감지되었습니다.');
+        return;
+      }
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '웹훅 검증 요청 실패';
+      enqueueToast('error', `workflow_id 경고 시뮬레이션 실패 (${message})`);
+    }
   };
 
   return (
     <div className="app-shell">
+      <div className="toast-stack" style={{ zIndex: LAYER_Z_INDEX.toast }} aria-label="시스템 알림">
+        {toasts.map((item) => (
+          <Toast key={item.id} item={item} onClose={closeToast} />
+        ))}
+      </div>
       <header className="top-bar">
         <button className="btn btn-ghost mobile-only" onClick={() => setNavOpen((v) => !v)}>
           메뉴
@@ -124,12 +211,21 @@ export default function App() {
 
         <main className="main-workspace">
           <LiveRunConstellation data={constellation} />
-          <Dashboard run={run} />
+          <Dashboard
+            run={run}
+            onTriggerMalformedWebhook={handleMalformedWebhookSimulation}
+            onTriggerInvalidWorkflowWebhook={handleInvalidWorkflowWebhookSimulation}
+          />
           <WorkflowBuilder
             workflow={activeWorkflow}
             onSave={handleSaveWorkflow}
             mobileViewOnly={isMobilePortrait}
             nodeStatuses={nodeStatuses}
+            onNodeFallback={({ count, signature }) => {
+              enqueueToast('warning', `속성 누락 노드 ${count}개가 task 타입으로 폴백되었습니다.`, {
+                dedupeKey: signature,
+              });
+            }}
           />
         </main>
 

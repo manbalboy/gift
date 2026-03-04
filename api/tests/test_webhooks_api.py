@@ -268,7 +268,10 @@ def test_dev_integration_webhook_logs_invalid_workflow_id(monkeypatch, caplog):
     )
 
     assert response.status_code == 200
-    assert response.json()["workflow_id"] is None
+    body = response.json()
+    assert body["workflow_id"] is None
+    assert body["warning_code"] == "workflow_id_ignored"
+    assert body["warning_message"] == "workflow_id가 유효한 양의 정수가 아니어서 무시되었습니다."
     assert "Ignored webhook workflow_id due to parse failure" in caplog.text
 
 
@@ -300,4 +303,20 @@ def test_dev_integration_webhook_ignores_invalid_workflow_id_edge_cases(monkeypa
     )
 
     assert response.status_code == 200
-    assert response.json()["workflow_id"] is None
+    body = response.json()
+    assert body["workflow_id"] is None
+    assert body["warning_code"] == "workflow_id_ignored"
+    assert body["warning_message"] == "workflow_id가 유효한 양의 정수가 아니어서 무시되었습니다."
+
+
+def test_dev_integration_webhook_invalid_json_is_422(monkeypatch):
+    monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+
+    response = client.post(
+        "/api/webhooks/dev-integration",
+        headers={"X-API-Secret": "test-generic-secret", "Content-Type": "application/json"},
+        content='{"provider":"jenkins"',
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "invalid webhook payload"

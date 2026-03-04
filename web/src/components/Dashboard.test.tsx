@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import Dashboard from './Dashboard';
 import type { WorkflowRun } from '../types';
@@ -48,5 +48,24 @@ describe('Dashboard', () => {
     render(<Dashboard run={null} />);
 
     expect(screen.getByText('워크플로우 실행을 시작하면 실시간 상태가 표시됩니다.')).toBeInTheDocument();
+  });
+
+  test('웹훅 피드백 액션 버튼 클릭 시 콜백을 호출한다', () => {
+    const onTriggerMalformedWebhook = jest.fn().mockResolvedValue(undefined);
+    const onTriggerInvalidWorkflowWebhook = jest.fn().mockResolvedValue(undefined);
+
+    render(
+      <Dashboard
+        run={runFixture}
+        onTriggerMalformedWebhook={onTriggerMalformedWebhook}
+        onTriggerInvalidWorkflowWebhook={onTriggerInvalidWorkflowWebhook}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '파싱 오류 시뮬레이션' }));
+    fireEvent.click(screen.getByRole('button', { name: 'workflow_id 경고 시뮬레이션' }));
+
+    expect(onTriggerMalformedWebhook).toHaveBeenCalledTimes(1);
+    expect(onTriggerInvalidWorkflowWebhook).toHaveBeenCalledTimes(1);
   });
 });

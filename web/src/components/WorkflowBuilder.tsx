@@ -11,6 +11,7 @@ import ReactFlow, {
   type Node,
   type NodeMouseHandler,
 } from 'reactflow';
+import { LAYER_Z_INDEX } from '../constants/layers';
 import StatusBadge from './StatusBadge';
 import type { Workflow } from '../types';
 
@@ -22,20 +23,41 @@ const baseNodes = [
   { id: 'pr', type: 'task', label: 'PR' },
 ];
 
-function convertToFlow(workflow: Workflow) {
-  const nodes: Node[] = workflow.graph.nodes.map((n, idx) => ({
-    id: n.id,
-    position: { x: idx * 180, y: 70 + (idx % 2) * 50 },
-    data: {
-      label: String(n.label ?? n.id),
-      command: n.command ?? '',
-      nodeType: String(n.type ?? 'task'),
-    },
-    draggable: true,
-  }));
+function convertToFlow(workflow: Workflow): {
+  nodes: Node[];
+  edges: Edge[];
+  fallbackCount: number;
+  fallbackSignature: string | null;
+} {
+  let fallbackCount = 0;
+  const fallbackNodeIds: string[] = [];
+  const nodes: Node[] = workflow.graph.nodes.map((n, idx) => {
+    const rawId = String((n as Partial<{ id: string }>).id ?? '').trim();
+    const nodeId = rawId || `fallback-node-${idx}`;
+    const rawType = String((n as Partial<{ type: string }>).type ?? '').trim();
+    const hasFallback = !rawId || !rawType;
+    if (hasFallback) {
+      fallbackCount += 1;
+      fallbackNodeIds.push(nodeId);
+    }
+    return {
+      id: nodeId,
+      position: { x: idx * 180, y: 70 + (idx % 2) * 50 },
+      data: {
+        label: String((n as Partial<{ label: string }>).label ?? nodeId),
+        command: n.command ?? '',
+        nodeType: rawType || 'task',
+      },
+      draggable: true,
+    };
+  });
 
   const edges: Edge[] = workflow.graph.edges.map((e) => ({ id: e.id, source: e.source, target: e.target }));
-  return { nodes, edges };
+  const fallbackSignature =
+    fallbackNodeIds.length > 0
+      ? `${workflow.id}:${fallbackNodeIds.sort((a, b) => a.localeCompare(b)).join(',')}`
+      : null;
+  return { nodes, edges, fallbackCount, fallbackSignature };
 }
 
 export default function WorkflowBuilder({
@@ -43,11 +65,13 @@ export default function WorkflowBuilder({
   onSave,
   mobileViewOnly,
   nodeStatuses,
+  onNodeFallback,
 }: {
   workflow: Workflow | null;
   onSave: (payload: Omit<Workflow, 'id'>, existingId?: number) => Promise<void>;
   mobileViewOnly: boolean;
   nodeStatuses?: Record<string, string>;
+  onNodeFallback?: (payload: { count: number; signature: string }) => void;
 }) {
   const initial = useMemo(() => {
     if (workflow) return convertToFlow(workflow);
@@ -63,6 +87,8 @@ export default function WorkflowBuilder({
         { id: 'e3', source: 'code', target: 'test' },
         { id: 'e4', source: 'test', target: 'pr' },
       ],
+      fallbackCount: 0,
+      fallbackSignature: null,
     };
   }, [workflow]);
 
@@ -79,6 +105,12 @@ export default function WorkflowBuilder({
     setEdges(initial.edges);
     setSelectedNodeId(null);
   }, [workflow, initial, setEdges, setNodes]);
+
+  useEffect(() => {
+    if (initial.fallbackCount > 0 && initial.fallbackSignature) {
+      onNodeFallback?.({ count: initial.fallbackCount, signature: initial.fallbackSignature });
+    }
+  }, [initial.fallbackCount, initial.fallbackSignature, onNodeFallback]);
 
   const onConnect = useCallback(
     (params: Edge | Connection) => setEdges((eds) => addEdge({ ...params, id: `edge-${Date.now()}` }, eds)),
@@ -161,8 +193,14 @@ export default function WorkflowBuilder({
           fitView
         >
           <Background gap={20} size={1} color="#27324A" />
-          <Controls />
-          {!mobileViewOnly && <MiniMap pannable zoomable style={{ background: '#121A2B' }} />}
+          <Controls style={{ zIndex: LAYER_Z_INDEX.canvasOverlay }} />
+          {!mobileViewOnly && (
+            <MiniMap
+              pannable
+              zoomable
+              style={{ background: '#121A2B', zIndex: LAYER_Z_INDEX.canvasOverlay }}
+            />
+          )}
         </ReactFlow>
       </div>
       <section className="node-detail-panel" aria-label="selected-node-panel">

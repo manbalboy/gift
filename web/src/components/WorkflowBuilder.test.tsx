@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { LAYER_Z_INDEX } from '../constants/layers';
 import WorkflowBuilder from './WorkflowBuilder';
 import type { Workflow } from '../types';
 
@@ -26,8 +27,8 @@ jest.mock('reactflow', () => {
       </div>
     ),
     Background: () => null,
-    Controls: () => null,
-    MiniMap: () => <div data-testid="minimap" />,
+    Controls: ({ style }: any) => <div data-testid="controls" style={style} />,
+    MiniMap: ({ style }: any) => <div data-testid="minimap" style={style} />,
     addEdge: (params: any, edges: any[]) => [
       ...edges,
       {
@@ -152,10 +153,26 @@ describe('WorkflowBuilder', () => {
   });
 
   test('불완전 노드 데이터가 들어와도 task 타입으로 fallback 렌더링된다', () => {
-    render(<WorkflowBuilder workflow={incompleteWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
+    const onNodeFallback = jest.fn();
+    render(
+      <WorkflowBuilder
+        workflow={incompleteWorkflow}
+        onSave={jest.fn()}
+        mobileViewOnly={false}
+        onNodeFallback={onNodeFallback}
+      />,
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'select-first' }));
     expect(screen.getByText('broken-node')).toBeInTheDocument();
     expect(screen.getByText('task')).toBeInTheDocument();
+    expect(onNodeFallback).toHaveBeenCalledWith({ count: 1, signature: '11:broken-node' });
+  });
+
+  test('ReactFlow 오버레이 위젯은 지정된 레이어 z-index로 렌더링된다', () => {
+    render(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
+
+    expect(screen.getByTestId('controls')).toHaveStyle({ zIndex: `${LAYER_Z_INDEX.canvasOverlay}` });
+    expect(screen.getByTestId('minimap')).toHaveStyle({ zIndex: `${LAYER_Z_INDEX.canvasOverlay}` });
   });
 });
