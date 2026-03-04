@@ -103,6 +103,25 @@ describe('WorkflowBuilder', () => {
     expect(onSave.mock.calls[0][1]).toBe(10);
   });
 
+  test('노드 추가 버튼으로 캔버스 노드를 동적으로 추가할 수 있다', () => {
+    render(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
+
+    expect(screen.getByTestId('node-count')).toHaveTextContent('2');
+    fireEvent.click(screen.getByRole('button', { name: '노드 추가' }));
+    expect(screen.getByTestId('node-count')).toHaveTextContent('3');
+  });
+
+  test('검증 버튼 클릭 시 서버 검증 결과를 표시한다', async () => {
+    const onValidate = jest.fn().mockResolvedValue({ valid: true, node_count: 2, edge_count: 1 });
+    render(
+      <WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} onValidate={onValidate} mobileViewOnly={false} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '검증' }));
+    expect(await screen.findByText('유효성 검사 통과 (2 nodes / 1 edges)')).toBeInTheDocument();
+    expect(onValidate).toHaveBeenCalledTimes(1);
+  });
+
   test('노드 상태가 status badge로 매핑되어 렌더링된다', () => {
     render(
       <WorkflowBuilder

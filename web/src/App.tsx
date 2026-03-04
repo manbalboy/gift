@@ -251,6 +251,7 @@ export default function App() {
           <WorkflowBuilder
             workflow={activeWorkflow}
             onSave={handleSaveWorkflow}
+            onValidate={api.validateWorkflowGraph}
             mobileViewOnly={isMobilePortrait}
             nodeStatuses={nodeStatuses}
             onNodeFallback={({ count, signature, nodeIds }) => {

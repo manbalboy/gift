@@ -81,6 +81,7 @@ jest.mock('./services/api', () => {
       listWorkflows: jest.fn(),
       createWorkflow: jest.fn(),
       updateWorkflow: jest.fn(),
+      validateWorkflowGraph: jest.fn(),
       startRun: jest.fn(),
       getRun: jest.fn(),
       getConstellation: jest.fn(),

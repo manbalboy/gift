@@ -12,6 +12,11 @@ const mockedUseViewport = useViewport as jest.MockedFunction<typeof useViewport>
 describe('Toast', () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+    });
     mockedUseViewport.mockReturnValue({
       width: 1200,
       height: 800,
@@ -266,6 +271,38 @@ describe('Toast', () => {
     });
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByText('영구 노출')).toBeInTheDocument();
+  });
+
+  test('durationMs가 음수여도 기본 지속시간으로 정규화되어 즉시 닫히지 않는다', () => {
+    const onClose = jest.fn();
+    const item: ToastItem = { id: 'toast-negative-duration', level: 'warning', message: 'duration 방어 테스트' };
+    render(<Toast item={item} durationMs={-1} onClose={onClose} />);
+
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    expect(onClose).toHaveBeenCalledWith('toast-negative-duration');
+  });
+
+  test('에러 토스트는 복사 버튼으로 메시지를 클립보드에 복사할 수 있다', async () => {
+    const onClose = jest.fn();
+    const item: ToastItem = {
+      id: 'toast-copy',
+      level: 'error',
+      message: '복사 대상 메시지',
+    };
+    render(<Toast item={item} onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '메시지 복사' }));
+    await act(async () => Promise.resolve());
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('복사 대상 메시지');
+    expect(screen.getByRole('button', { name: '메시지 복사' })).toHaveTextContent('복사됨');
   });
 
   test('hover 상태에서는 자동 만료 타이머를 일시 정지하고 해제 시 재개한다', () => {

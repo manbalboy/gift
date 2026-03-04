@@ -15,6 +15,7 @@ export type ToastItem = {
 };
 
 const SWIPE_DISMISS_THRESHOLD = 88;
+const DEFAULT_TOAST_DURATION_MS = 3000;
 
 function formatToastMessage(input: unknown): string {
   if (input === null || input === undefined) return '';
@@ -35,6 +36,13 @@ function formatToastMessage(input: unknown): string {
   }
 }
 
+function normalizeDurationMs(durationMs: number | undefined): number {
+  if (durationMs === 0) return 0;
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return DEFAULT_TOAST_DURATION_MS;
+  if (durationMs < 0) return DEFAULT_TOAST_DURATION_MS;
+  return durationMs;
+}
+
 export default function Toast({
   item,
   durationMs = 3000,
@@ -44,6 +52,7 @@ export default function Toast({
   durationMs?: number;
   onClose: (id: string) => void;
 }) {
+  const normalizedDurationMs = normalizeDurationMs(durationMs);
   const closedRef = useRef(false);
   const messageRef = useRef<HTMLParagraphElement | null>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -52,7 +61,7 @@ export default function Toast({
   const swipeOffsetRef = useRef(0);
   const dismissTimerRef = useRef<number | null>(null);
   const timerStartedAtRef = useRef(0);
-  const remainingMsRef = useRef(durationMs);
+  const remainingMsRef = useRef(normalizedDurationMs);
   const reboundTimeoutRef = useRef<number | null>(null);
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -62,9 +71,11 @@ export default function Toast({
   const [isFocusWithin, setIsFocusWithin] = useState(false);
   const [isTouchInteracting, setIsTouchInteracting] = useState(false);
   const [isSwipeRebound, setIsSwipeRebound] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
   const { isMobile } = useViewport();
   const message = useMemo(() => formatToastMessage(item.message), [item.message]);
-  const isPersistent = durationMs === 0;
+  const isPersistent = normalizedDurationMs === 0;
+  const shouldShowCopy = message.length > 0 && (item.level === 'error' || typeof item.message !== 'string');
 
   const closeOnce = useCallback(() => {
     if (closedRef.current) return;
@@ -155,10 +166,11 @@ export default function Toast({
     setIsFocusWithin(false);
     setIsTouchInteracting(false);
     setIsSwipeRebound(false);
+    setCopyStatus('idle');
     swipeOffsetRef.current = 0;
     swipeTriggeredRef.current = false;
     isSwipingRef.current = false;
-    remainingMsRef.current = durationMs;
+    remainingMsRef.current = normalizedDurationMs;
     scheduleDismiss();
     return () => {
       clearDismissTimer();
@@ -167,7 +179,7 @@ export default function Toast({
         reboundTimeoutRef.current = null;
       }
     };
-  }, [clearDismissTimer, durationMs, item.id, scheduleDismiss]);
+  }, [clearDismissTimer, item.id, normalizedDurationMs, scheduleDismiss]);
 
   useEffect(() => {
     const shouldPause = isHovered || isFocusWithin || isTouchInteracting;
@@ -256,6 +268,28 @@ export default function Toast({
     }),
     [swipeOffsetX, swipeProgress],
   );
+
+  const handleCopy = useCallback(async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = message;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        textarea.remove();
+      }
+      setCopyStatus('copied');
+      window.setTimeout(() => setCopyStatus('idle'), 1100);
+    } catch {
+      setCopyStatus('idle');
+    }
+  }, [message]);
 
   return (
     <article
@@ -386,6 +420,11 @@ export default function Toast({
             }}
           >
             {item.action.label}
+          </button>
+        )}
+        {shouldShowCopy && (
+          <button type="button" className="toast-copy" onClick={() => void handleCopy()} aria-label="메시지 복사">
+            {copyStatus === 'copied' ? '복사됨' : '복사'}
           </button>
         )}
       </div>

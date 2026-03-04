@@ -14,7 +14,7 @@ import ReactFlow, {
 } from 'reactflow';
 import { LAYER_Z_INDEX } from '../constants/layers';
 import StatusBadge from './StatusBadge';
-import type { Workflow } from '../types';
+import type { Workflow, WorkflowGraphValidationResult } from '../types';
 
 const baseNodes = [
   { id: 'idea', type: 'task', label: 'Idea' },
@@ -65,6 +65,7 @@ function convertToFlow(workflow: Workflow): {
 export default function WorkflowBuilder({
   workflow,
   onSave,
+  onValidate,
   mobileViewOnly,
   nodeStatuses,
   onNodeFallback,
@@ -73,6 +74,7 @@ export default function WorkflowBuilder({
 }: {
   workflow: Workflow | null;
   onSave: (payload: Omit<Workflow, 'id'>, existingId?: number) => Promise<void>;
+  onValidate?: (graph: Workflow['graph']) => Promise<WorkflowGraphValidationResult>;
   mobileViewOnly: boolean;
   nodeStatuses?: Record<string, string>;
   onNodeFallback?: (payload: { count: number; signature: string; nodeIds: string[] }) => void;
@@ -104,6 +106,9 @@ export default function WorkflowBuilder({
   const [title, setTitle] = useState(workflow?.name ?? 'Level 1 SDLC Pipeline');
   const [description, setDescription] = useState(workflow?.description ?? 'Idea에서 PR까지의 기본 파이프라인');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [nodeSequence, setNodeSequence] = useState(6);
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationSummary, setValidationSummary] = useState<string>('');
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance | null>(null);
 
@@ -113,6 +118,14 @@ export default function WorkflowBuilder({
     setNodes(initial.nodes);
     setEdges(initial.edges);
     setSelectedNodeId(null);
+    const nextSequence =
+      initial.nodes.reduce((maxValue, node) => {
+        const extracted = Number.parseInt(node.id.replace(/^node-/, ''), 10);
+        if (Number.isNaN(extracted)) return maxValue;
+        return Math.max(maxValue, extracted + 1);
+      }, 1) || 1;
+    setNodeSequence(nextSequence);
+    setValidationSummary('');
   }, [workflow, initial, setEdges, setNodes]);
 
   useEffect(() => {
@@ -178,6 +191,50 @@ export default function WorkflowBuilder({
     await onSave(payload, workflow?.id);
   };
 
+  const handleAddNode = useCallback(() => {
+    if (mobileViewOnly) return;
+    const nextId = `node-${nodeSequence}`;
+    setNodeSequence((prev) => prev + 1);
+    setNodes((current) => {
+      const index = current.length;
+      const col = index % 4;
+      const row = Math.floor(index / 4);
+      return [
+        ...current,
+        {
+          id: nextId,
+          position: { x: 120 + col * 190, y: 90 + row * 120 },
+          data: { label: `Task ${nodeSequence}`, command: '', nodeType: 'task' },
+          type: 'default',
+          draggable: true,
+        },
+      ];
+    });
+    setValidationSummary('');
+  }, [mobileViewOnly, nodeSequence, setNodes]);
+
+  const handleValidate = useCallback(async () => {
+    if (!onValidate) return;
+    const graph: Workflow['graph'] = {
+      nodes: nodes.map((node) => ({
+        id: node.id,
+        type: String(node.type ?? node.data?.nodeType ?? 'task'),
+        label: String(node.data?.label ?? node.id),
+        command: String(node.data?.command ?? '').trim() || undefined,
+      })),
+      edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+    };
+    setIsValidating(true);
+    try {
+      const result = await onValidate(graph);
+      setValidationSummary(`유효성 검사 통과 (${result.node_count} nodes / ${result.edge_count} edges)`);
+    } catch {
+      setValidationSummary('유효성 검사 실패: 그래프 규칙을 확인해주세요.');
+    } finally {
+      setIsValidating(false);
+    }
+  }, [edges, nodes, onValidate]);
+
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
 
   const onNodeClick: NodeMouseHandler = useCallback((_, node) => {
@@ -195,10 +252,23 @@ export default function WorkflowBuilder({
           <h2>Workflow Canvas</h2>
           <p>노드 연결로 SDLC를 정의하고 저장합니다.</p>
         </div>
-        <button className="btn btn-primary" onClick={handleSave}>
-          저장
-        </button>
+        <div className="builder-actions">
+          <button className="btn btn-ghost" type="button" onClick={handleAddNode} disabled={mobileViewOnly}>
+            노드 추가
+          </button>
+          <button className="btn btn-ghost" type="button" onClick={() => void handleValidate()} disabled={isValidating}>
+            {isValidating ? '검증 중...' : '검증'}
+          </button>
+          <button className="btn btn-primary" onClick={handleSave}>
+            저장
+          </button>
+        </div>
       </div>
+      {validationSummary && (
+        <p className="builder-validation" aria-live="polite">
+          {validationSummary}
+        </p>
+      )}
       <div className="builder-meta">
         <label>
           <span>워크플로우 이름</span>
@@ -220,7 +290,7 @@ export default function WorkflowBuilder({
           );
         })}
       </div>
-      <div className="canvas-wrap" ref={canvasWrapRef}>
+      <div className="canvas-wrap" ref={canvasWrapRef} data-testid="workflow-builder-canvas">
         {mobileViewOnly && <div className="mobile-blocker">세로 모바일에서는 모니터링을 우선 제공하며 편집은 가로/태블릿 이상에서 권장됩니다.</div>}
         <ReactFlow
           onInit={(instance) => {

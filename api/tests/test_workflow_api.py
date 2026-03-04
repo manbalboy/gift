@@ -211,3 +211,80 @@ def test_workflow_runs_stream_rate_limit_returns_429(monkeypatch):
 
     second = client.get(f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1")
     assert second.status_code == 429
+
+
+def test_workflow_runs_stream_ignores_untrusted_forwarded_for(monkeypatch):
+    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.settings, "sse_reconnect_limit_per_second", 1)
+    monkeypatch.setattr(workflows_api.settings, "sse_rate_limit_window_seconds", 5)
+    monkeypatch.setattr(workflows_api.settings, "sse_trusted_proxy_ips", "127.0.0.1,::1")
+    workflows_api.reconnect_rate_limiter.reset_for_tests()
+
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    first = client.get(
+        f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1",
+        headers={"x-forwarded-for": "203.0.113.11"},
+    )
+    second = client.get(
+        f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1",
+        headers={"x-forwarded-for": "198.51.100.12"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+
+
+def test_workflow_runs_stream_trusts_forwarded_for_from_trusted_proxy(monkeypatch):
+    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.settings, "sse_reconnect_limit_per_second", 1)
+    monkeypatch.setattr(workflows_api.settings, "sse_rate_limit_window_seconds", 5)
+    monkeypatch.setattr(workflows_api.settings, "sse_trusted_proxy_ips", "testclient")
+    workflows_api.reconnect_rate_limiter.reset_for_tests()
+
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    first = client.get(
+        f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1",
+        headers={"x-forwarded-for": "203.0.113.11"},
+    )
+    second = client.get(
+        f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1",
+        headers={"x-forwarded-for": "198.51.100.12"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+
+def test_update_workflow_rejects_when_run_history_exists():
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    run_response = client.post(f"/api/workflows/{workflow_id}/runs")
+    assert run_response.status_code == 200
+
+    updated = client.put(
+        f"/api/workflows/{workflow_id}",
+        json={
+            **PAYLOAD,
+            "name": "Updated Workflow",
+        },
+    )
+
+    assert updated.status_code == 409
+    assert updated.json()["detail"] == "workflow with existing runs cannot be modified"
+
+
+def test_validate_workflow_graph_endpoint():
+    response = client.post("/api/workflows/validate", json=PAYLOAD["graph"])
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is True
+    assert body["node_count"] == len(PAYLOAD["graph"]["nodes"])
+    assert body["edge_count"] == len(PAYLOAD["graph"]["edges"])

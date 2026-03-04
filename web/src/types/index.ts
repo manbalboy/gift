@@ -52,3 +52,9 @@ export type WorkflowRunsStreamEvent = {
   workflow_id: number;
   runs: Array<{ id: number; status: string; updated_at: string }>;
 };
+
+export type WorkflowGraphValidationResult = {
+  valid: boolean;
+  node_count: number;
+  edge_count: number;
+};

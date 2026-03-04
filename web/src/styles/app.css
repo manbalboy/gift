@@ -119,6 +119,19 @@ p {
   cursor: pointer;
 }
 
+.toast-copy {
+  justify-self: start;
+  margin-top: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 70%, transparent);
+  background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
+  color: var(--color-text-secondary);
+  border-radius: 8px;
+  padding: 0 var(--space-8);
+  height: 28px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .toast-expand-toggle {
   justify-self: start;
   border: 1px solid color-mix(in srgb, var(--color-border-default) 72%, transparent);
@@ -276,6 +289,20 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-12);
+}
+
+.builder-actions {
+  display: flex;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.builder-validation {
+  margin-bottom: var(--space-16);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-status-running);
 }
 
 .builder-meta {
@@ -592,7 +619,8 @@ input {
     max-height: 220px;
     line-height: 20px;
     white-space: normal;
-    word-break: break-word;
+    word-break: break-all;
+    overflow-wrap: anywhere;
   }
 
   .toast-expandable {
