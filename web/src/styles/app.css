@@ -97,6 +97,8 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
   max-height: 22px;
   transition: max-height 280ms ease, line-height 280ms ease;
 }
@@ -349,6 +351,22 @@ input {
   position: relative;
 }
 
+.workflow-node {
+  min-width: 120px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border-radius: 10px;
+  padding: var(--space-8) var(--space-12);
+  text-align: center;
+  font-size: 13px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+
+.workflow-node-label {
+  white-space: nowrap;
+}
+
 .mobile-blocker {
   position: absolute;
   top: 8px;
@@ -505,6 +523,11 @@ input {
   border-color: color-mix(in srgb, var(--color-status-review-needed) 40%, transparent);
 }
 
+.status-cancelled {
+  color: var(--color-text-muted);
+  border-color: color-mix(in srgb, var(--color-text-muted) 40%, transparent);
+}
+
 .constellation-card {
   overflow: hidden;
 }
@@ -570,6 +593,11 @@ input {
   border-radius: 8px;
   padding: var(--space-8);
   font-size: 13px;
+  background: transparent;
+  color: var(--color-text-primary);
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
 }
 
 .artifact-item code {
@@ -577,6 +605,33 @@ input {
   margin-top: var(--space-4);
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
+}
+
+.artifact-item-active {
+  background: var(--color-bg-elevated);
+}
+
+.artifact-viewer {
+  margin-top: var(--space-16);
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  padding: var(--space-12);
+  background: var(--color-bg-elevated);
+  display: grid;
+  gap: var(--space-8);
+}
+
+.artifact-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  font-size: 13px;
+}
+
+.artifact-pane {
+  max-height: 220px;
+  overflow: auto;
 }
 
 .btn {

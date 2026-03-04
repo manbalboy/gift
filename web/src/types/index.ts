@@ -58,3 +58,13 @@ export type WorkflowGraphValidationResult = {
   node_count: number;
   edge_count: number;
 };
+
+export type ArtifactChunkResponse = {
+  run_id: number;
+  node_id: string;
+  offset: number;
+  next_offset: number;
+  limit: number;
+  has_more: boolean;
+  content: string;
+};

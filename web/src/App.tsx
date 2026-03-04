@@ -19,6 +19,11 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [queuedToastCount, setQueuedToastCount] = useState(0);
   const [focusNodeRequest, setFocusNodeRequest] = useState<{ nodeId: string; requestId: number } | null>(null);
+  const [selectedArtifactNodeId, setSelectedArtifactNodeId] = useState<string | null>(null);
+  const [artifactContent, setArtifactContent] = useState('');
+  const [artifactNextOffset, setArtifactNextOffset] = useState(0);
+  const [artifactHasMore, setArtifactHasMore] = useState(false);
+  const [artifactLoading, setArtifactLoading] = useState(false);
   const viewport = useViewport();
   const isMobilePortrait = viewport.isMobile && viewport.isPortrait;
   const activeRunRef = useRef<WorkflowRun | null>(null);
@@ -101,6 +106,14 @@ export default function App() {
   }, [run]);
 
   useEffect(() => {
+    const firstArtifact = run?.node_runs.find((node) => node.artifact_path)?.node_id ?? null;
+    setSelectedArtifactNodeId(firstArtifact);
+    setArtifactContent('');
+    setArtifactNextOffset(0);
+    setArtifactHasMore(false);
+  }, [run?.id, run?.updated_at]);
+
+  useEffect(() => {
     if (!activeWorkflow) return;
 
     const unsubscribe = api.subscribeWorkflowRuns(activeWorkflow.id, {
@@ -173,6 +186,67 @@ export default function App() {
       enqueueToast('error', `웹훅 파싱 오류 시뮬레이션 실패 (${message})`);
     }
   };
+
+  const refreshRunAndConstellation = async (runId: number) => {
+    const [latestRun, latestConstellation] = await Promise.all([api.getRun(runId), api.getConstellation(runId)]);
+    setRun(latestRun);
+    setConstellation(latestConstellation);
+  };
+
+  const handleApproveHumanGate = async (nodeId: string) => {
+    if (!run) return;
+    try {
+      const approved = await api.approveRunNode(run.id, nodeId);
+      setRun(approved);
+      await refreshRunAndConstellation(approved.id);
+      enqueueToast('warning', `Human Gate(${nodeId}) 승인이 반영되었습니다.`);
+    } catch (error) {
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : 'Human Gate 승인 실패';
+      enqueueToast('error', `Human Gate 승인 실패 (${message})`);
+    }
+  };
+
+  const handleCancelRun = async () => {
+    if (!run) return;
+    try {
+      const cancelled = await api.cancelRun(run.id);
+      setRun(cancelled);
+      await refreshRunAndConstellation(cancelled.id);
+      enqueueToast('warning', '실행이 취소되었습니다.');
+    } catch (error) {
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '실행 취소 실패';
+      enqueueToast('error', `실행 취소 실패 (${message})`);
+    }
+  };
+
+  const handleLoadArtifact = async (nodeId: string, reset: boolean) => {
+    if (!run) return;
+    const offset = reset || selectedArtifactNodeId !== nodeId ? 0 : artifactNextOffset;
+    setArtifactLoading(true);
+    try {
+      const chunk = await api.getArtifactChunk(run.id, nodeId, offset, 16_384);
+      setSelectedArtifactNodeId(nodeId);
+      setArtifactContent((current) => (offset === 0 ? chunk.content : `${current}${chunk.content}`));
+      setArtifactNextOffset(chunk.next_offset);
+      setArtifactHasMore(chunk.has_more);
+    } catch (error) {
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '아티팩트 조회 실패';
+      enqueueToast('error', `아티팩트 조회 실패 (${message})`);
+    } finally {
+      setArtifactLoading(false);
+    }
+  };
+
+  const artifactNodes = useMemo(
+    () => (run?.node_runs ?? []).filter((node) => node.artifact_path),
+    [run?.node_runs],
+  );
+
+  useEffect(() => {
+    if (!selectedArtifactNodeId || !run) return;
+    if (artifactContent) return;
+    void handleLoadArtifact(selectedArtifactNodeId, true);
+  }, [artifactContent, run, selectedArtifactNodeId]);
 
   const handleInvalidWorkflowWebhookSimulation = async () => {
     try {
@@ -247,6 +321,8 @@ export default function App() {
             run={run}
             onTriggerMalformedWebhook={handleMalformedWebhookSimulation}
             onTriggerInvalidWorkflowWebhook={handleInvalidWorkflowWebhookSimulation}
+            onApproveHumanGate={handleApproveHumanGate}
+            onCancelRun={handleCancelRun}
           />
           <WorkflowBuilder
             workflow={activeWorkflow}
@@ -284,18 +360,64 @@ export default function App() {
             <details>
               <summary>실행 로그</summary>
               <pre className="log-pane mono">
-{run?.node_runs.map((n) => `[${n.status}] ${n.node_name}: ${n.log}`).join('\n') || '아직 로그가 없습니다.'}
+                {run?.node_runs
+                  .map((n) => {
+                    const raw = n.log ?? '';
+                    const preview = raw.length > 3000 ? `${raw.slice(0, 3000)}\n... (로그가 길어 일부만 표시)` : raw;
+                    return `[${n.status}] ${n.node_name}: ${preview}`;
+                  })
+                  .join('\n') || '아직 로그가 없습니다.'}
               </pre>
             </details>
             <div className="artifact-list">
-              {(run?.node_runs ?? [])
-                .filter((n) => n.artifact_path)
-                .map((n) => (
-                  <div key={n.id} className="artifact-item">
-                    <span>{n.node_name}</span>
-                    <code>{n.artifact_path}</code>
-                  </div>
-                ))}
+              {artifactNodes.map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  className={`artifact-item ${selectedArtifactNodeId === n.node_id ? 'artifact-item-active' : ''}`}
+                  onClick={() => {
+                    void handleLoadArtifact(n.node_id, true);
+                  }}
+                >
+                  <span>{n.node_name}</span>
+                  <code>{n.artifact_path}</code>
+                </button>
+              ))}
+            </div>
+            <div className="artifact-viewer">
+              <div className="artifact-viewer-header">
+                <strong>아티팩트 미리보기</strong>
+                {selectedArtifactNodeId && (
+                  <span className="mono">node: {selectedArtifactNodeId}</span>
+                )}
+              </div>
+              <pre className="log-pane mono artifact-pane">
+                {artifactContent || '아티팩트를 선택하면 일부 구간부터 순차 로딩합니다.'}
+              </pre>
+              <div className="webhook-actions-row">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={!selectedArtifactNodeId || artifactLoading}
+                  onClick={() => {
+                    if (!selectedArtifactNodeId) return;
+                    void handleLoadArtifact(selectedArtifactNodeId, true);
+                  }}
+                >
+                  다시 로딩
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={!selectedArtifactNodeId || !artifactHasMore || artifactLoading}
+                  onClick={() => {
+                    if (!selectedArtifactNodeId) return;
+                    void handleLoadArtifact(selectedArtifactNodeId, false);
+                  }}
+                >
+                  다음 청크 로딩
+                </button>
+              </div>
             </div>
           </section>
         </aside>

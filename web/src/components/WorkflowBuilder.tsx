@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
+  Handle,
   MiniMap,
+  Position,
   addEdge,
   useEdgesState,
   useNodesState,
+  type NodeProps,
   type ReactFlowInstance,
   type Connection,
   type Edge,
@@ -23,6 +26,40 @@ const baseNodes = [
   { id: 'test', type: 'task', label: 'Test' },
   { id: 'pr', type: 'task', label: 'PR' },
 ];
+
+function wouldCreateCycle(source: string, target: string, edges: Edge[]): boolean {
+  if (source === target) return true;
+  const adjacency = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
+    adjacency.get(edge.source)?.push(edge.target);
+  }
+
+  const queue = [target];
+  const visited = new Set<string>();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+    if (current === source) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const next = adjacency.get(current) ?? [];
+    for (const nextNode of next) {
+      queue.push(nextNode);
+    }
+  }
+  return false;
+}
+
+function TaskNode({ data }: NodeProps<{ label: string }>) {
+  return (
+    <div className="workflow-node">
+      <Handle type="target" position={Position.Left} />
+      <div className="workflow-node-label">{data.label}</div>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
 
 function convertToFlow(workflow: Workflow): {
   nodes: Node[];
@@ -44,6 +81,7 @@ function convertToFlow(workflow: Workflow): {
     }
     return {
       id: nodeId,
+      type: 'taskNode',
       position: { x: idx * 180, y: 70 + (idx % 2) * 50 },
       data: {
         label: String((n as Partial<{ label: string }>).label ?? nodeId),
@@ -86,6 +124,7 @@ export default function WorkflowBuilder({
     return {
       nodes: baseNodes.map((node, idx) => ({
         id: node.id,
+        type: 'taskNode',
         position: { x: idx * 180, y: 100 },
         data: { label: node.label, command: '', nodeType: node.type },
       })),
@@ -107,10 +146,11 @@ export default function WorkflowBuilder({
   const [description, setDescription] = useState(workflow?.description ?? 'Idea에서 PR까지의 기본 파이프라인');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeSequence, setNodeSequence] = useState(6);
-  const [isValidating, setIsValidating] = useState(false);
+  const [isDryRunning, setIsDryRunning] = useState(false);
   const [validationSummary, setValidationSummary] = useState<string>('');
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance | null>(null);
+  const nodeTypes = useMemo(() => ({ taskNode: TaskNode }), []);
 
   useEffect(() => {
     setTitle(workflow?.name ?? 'Level 1 SDLC Pipeline');
@@ -165,9 +205,26 @@ export default function WorkflowBuilder({
     return () => observer.disconnect();
   }, [mobileViewOnly]);
 
-  const onConnect = useCallback(
-    (params: Edge | Connection) => setEdges((eds) => addEdge({ ...params, id: `edge-${Date.now()}` }, eds)),
+  const attemptConnection = useCallback(
+    (source: string | null | undefined, target: string | null | undefined) => {
+      setEdges((eds) => {
+        if (!source || !target) return eds;
+        if (wouldCreateCycle(source, target, eds)) {
+          setValidationSummary('순환 연결은 허용되지 않습니다. 연결 방향을 확인해주세요.');
+          return eds;
+        }
+        setValidationSummary('');
+        return addEdge({ source, target, id: `edge-${Date.now()}` }, eds);
+      });
+    },
     [setEdges],
+  );
+
+  const onConnect = useCallback(
+    (params: Edge | Connection) => {
+      attemptConnection(params.source, params.target);
+    },
+    [attemptConnection],
   );
 
   const handleSave = async () => {
@@ -177,7 +234,7 @@ export default function WorkflowBuilder({
       graph: {
         nodes: nodes.map((n) => ({
           id: n.id,
-          type: String(n.type ?? n.data?.nodeType ?? 'task'),
+          type: String(n.data?.nodeType ?? n.type ?? 'task'),
           label: String(n.data?.label ?? n.id),
         })),
         edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
@@ -205,7 +262,7 @@ export default function WorkflowBuilder({
           id: nextId,
           position: { x: 120 + col * 190, y: 90 + row * 120 },
           data: { label: `Task ${nodeSequence}`, command: '', nodeType: 'task' },
-          type: 'default',
+          type: 'taskNode',
           draggable: true,
         },
       ];
@@ -218,20 +275,20 @@ export default function WorkflowBuilder({
     const graph: Workflow['graph'] = {
       nodes: nodes.map((node) => ({
         id: node.id,
-        type: String(node.type ?? node.data?.nodeType ?? 'task'),
+        type: String(node.data?.nodeType ?? node.type ?? 'task'),
         label: String(node.data?.label ?? node.id),
         command: String(node.data?.command ?? '').trim() || undefined,
       })),
       edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
     };
-    setIsValidating(true);
+    setIsDryRunning(true);
     try {
       const result = await onValidate(graph);
-      setValidationSummary(`유효성 검사 통과 (${result.node_count} nodes / ${result.edge_count} edges)`);
+      setValidationSummary(`드라이런 성공 (${result.node_count} nodes / ${result.edge_count} edges)`);
     } catch {
-      setValidationSummary('유효성 검사 실패: 그래프 규칙을 확인해주세요.');
+      setValidationSummary('드라이런 실패: 그래프 규칙을 확인해주세요.');
     } finally {
-      setIsValidating(false);
+      setIsDryRunning(false);
     }
   }, [edges, nodes, onValidate]);
 
@@ -256,8 +313,19 @@ export default function WorkflowBuilder({
           <button className="btn btn-ghost" type="button" onClick={handleAddNode} disabled={mobileViewOnly}>
             노드 추가
           </button>
-          <button className="btn btn-ghost" type="button" onClick={() => void handleValidate()} disabled={isValidating}>
-            {isValidating ? '검증 중...' : '검증'}
+          <button className="btn btn-ghost" type="button" onClick={() => void handleValidate()} disabled={isDryRunning}>
+            {isDryRunning ? '드라이런 중...' : '드라이런'}
+          </button>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => {
+              const source = nodes[1]?.id ?? 'plan';
+              const target = nodes[0]?.id ?? 'idea';
+              attemptConnection(source, target);
+            }}
+          >
+            순환 연결 테스트
           </button>
           <button className="btn btn-primary" onClick={handleSave}>
             저장
@@ -296,6 +364,7 @@ export default function WorkflowBuilder({
           onInit={(instance) => {
             flowRef.current = instance;
           }}
+          nodeTypes={nodeTypes}
           nodes={nodes}
           edges={edges}
           onNodesChange={mobileViewOnly ? undefined : onNodesChange}
@@ -326,7 +395,7 @@ export default function WorkflowBuilder({
             </p>
             <p>
               <span>Type</span>
-              <code className="mono">{String(selectedNode.type ?? selectedNode.data?.nodeType ?? 'task')}</code>
+              <code className="mono">{String(selectedNode.data?.nodeType ?? selectedNode.type ?? 'task')}</code>
             </p>
           </div>
         ) : (

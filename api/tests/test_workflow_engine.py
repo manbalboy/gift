@@ -8,7 +8,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.api.workflows import engine as workflow_engine
 from app.db.session import SessionLocal
-from app.models.workflow import NodeRun, WorkflowRun
+from app.models.workflow import NodeRun, WorkflowDefinition, WorkflowRun
 from app.core.config import settings
 from app.schemas.agent import AgentTaskRequest, AgentTaskResult
 from app.services.agent_runner import AgentRunner, DockerRunner
@@ -25,10 +25,11 @@ def test_run_status_progression():
 
     run_id = run.json()["id"]
     latest = None
-    for _ in range(10):
+    for _ in range(30):
         latest = client.get(f"/api/runs/{run_id}").json()
         if latest["status"] == "done":
             break
+        time.sleep(0.1)
 
     assert latest is not None
     assert latest["status"] == "done"
@@ -40,13 +41,8 @@ def test_run_status_progression():
     assert len(constellation.json()["nodes"]) > 0
 
 
-def test_parallel_polling_triggers_single_worker(monkeypatch):
-    workflow = client.post("/api/workflows", json=PAYLOAD).json()
-    run = client.post(f"/api/workflows/{workflow['id']}/runs").json()
-    run_id = run["id"]
-
+def test_parallel_polling_does_not_spawn_additional_execution(monkeypatch):
     calls = {"count": 0}
-
     original_runner = workflow_engine.agent_runner
 
     def slow_runner(request):
@@ -60,14 +56,111 @@ def test_parallel_polling_triggers_single_worker(monkeypatch):
 
     monkeypatch.setattr(workflow_engine, "agent_runner", StubRunner())
 
+    workflow = client.post("/api/workflows", json=PAYLOAD).json()
+    run = client.post(f"/api/workflows/{workflow['id']}/runs").json()
+    run_id = run["id"]
+
     try:
         with ThreadPoolExecutor(max_workers=6) as pool:
             responses = list(pool.map(lambda _: client.get(f"/api/runs/{run_id}"), range(6)))
+        for _ in range(20):
+            if calls["count"] >= 1:
+                break
+            time.sleep(0.05)
     finally:
         monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
 
     assert all(response.status_code == 200 for response in responses)
     assert calls["count"] == 1
+
+
+def test_engine_uses_edges_for_transition_even_when_sequence_differs():
+    payload = {
+        "name": "Edge Priority",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "plan", "type": "task", "label": "Plan"},
+                {"id": "code", "type": "task", "label": "Code"},
+            ],
+            "edges": [
+                {"id": "e1", "source": "idea", "target": "code"},
+                {"id": "e2", "source": "code", "target": "plan"},
+            ],
+        },
+    }
+    workflow = client.post("/api/workflows", json=payload).json()
+    run = client.post(f"/api/workflows/{workflow['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    final = None
+    for _ in range(30):
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        body = response.json()
+        if body["status"] == "done":
+            final = body
+            break
+        time.sleep(0.1)
+
+    assert final is not None
+    nodes = sorted(final["node_runs"], key=lambda item: item["updated_at"])
+    execution_order = [node["node_id"] for node in nodes]
+    assert execution_order.index("code") < execution_order.index("plan")
+
+
+def test_engine_retries_failed_node_with_backoff(monkeypatch):
+    payload = {
+        "name": "Retry Flow",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "retry-node", "type": "task", "label": "Retry Node"}],
+            "edges": [],
+        },
+    }
+    workflow = client.post("/api/workflows", json=payload).json()
+
+    attempts = {"count": 0}
+
+    class FlakyRunner:
+        def run(self, request):
+            if request.node_id != "retry-node":
+                return AgentTaskResult(ok=True, log="ok", output={"exit_code": 0})
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                return AgentTaskResult(ok=False, log=f"failed-{attempts['count']}", output={"exit_code": 1})
+            return AgentTaskResult(ok=True, log="recovered", output={"exit_code": 0})
+
+    original_runner = workflow_engine.agent_runner
+    monkeypatch.setattr(workflow_engine, "agent_runner", FlakyRunner())
+    monkeypatch.setattr(settings, "workflow_node_max_retries", 3)
+    monkeypatch.setattr(settings, "workflow_retry_backoff_seconds", 0.01)
+
+    try:
+        run = client.post(f"/api/workflows/{workflow['id']}/runs")
+        assert run.status_code == 200
+        run_id = run.json()["id"]
+
+        final = None
+        for _ in range(40):
+            response = client.get(f"/api/runs/{run_id}")
+            assert response.status_code == 200
+            body = response.json()
+            if body["status"] in {"done", "failed"}:
+                final = body
+                break
+            time.sleep(0.1)
+    finally:
+        monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
+
+    assert final is not None
+    assert final["status"] == "done"
+    assert attempts["count"] >= 3
+    first_node = sorted(final["node_runs"], key=lambda item: item["sequence"])[0]
+    assert "failed-1" in first_node["log"]
+    assert "recovered" in first_node["log"]
 
 
 def test_agent_runner_timeout_kills_process_group(tmp_path):
@@ -266,7 +359,7 @@ def test_docker_runner_returns_error_when_daemon_is_unavailable(monkeypatch, tmp
     assert "daemon down" in result.log
 
 
-def test_refresh_run_passes_node_command_to_agent_runner(monkeypatch):
+def test_background_worker_passes_node_command_to_agent_runner(monkeypatch):
     payload = {
         **PAYLOAD,
         "graph": {
@@ -277,10 +370,6 @@ def test_refresh_run_passes_node_command_to_agent_runner(monkeypatch):
             "edges": [{"id": "e1", "source": "idea", "target": "plan"}],
         },
     }
-    workflow = client.post("/api/workflows", json=payload).json()
-    run = client.post(f"/api/workflows/{workflow['id']}/runs").json()
-    run_id = run["id"]
-
     captured = {"command": None}
     original_runner = workflow_engine.agent_runner
 
@@ -295,35 +384,45 @@ def test_refresh_run_passes_node_command_to_agent_runner(monkeypatch):
 
     monkeypatch.setattr(workflow_engine, "agent_runner", StubRunner())
     try:
-        response = client.get(f"/api/runs/{run_id}")
+        workflow = client.post("/api/workflows", json=payload).json()
+        run = client.post(f"/api/workflows/{workflow['id']}/runs").json()
+        run_id = run["id"]
+
+        response = None
+        for _ in range(20):
+            response = client.get(f"/api/runs/{run_id}")
+            if captured["command"]:
+                break
+            time.sleep(0.1)
     finally:
         monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
 
+    assert response is not None
     assert response.status_code == 200
     assert captured["command"] == "echo custom-idea"
 
 
 def test_compensation_recovers_stale_running_nodes():
-    workflow = client.post("/api/workflows", json=PAYLOAD).json()
-    run = client.post(f"/api/workflows/{workflow['id']}/runs").json()
-    run_id = run["id"]
-
     db = SessionLocal()
     try:
-        workflow_run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
-        assert workflow_run is not None
-        workflow_run.status = "running"
-        workflow_run.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        workflow = WorkflowDefinition(name="Compensation", description="", graph=PAYLOAD["graph"])
+        db.add(workflow)
+        db.flush()
 
-        first_node = (
-            db.query(NodeRun)
-            .filter(NodeRun.run_id == run_id)
-            .order_by(NodeRun.sequence.asc())
-            .first()
+        workflow_run = WorkflowRun(workflow_id=workflow.id, status="running")
+        db.add(workflow_run)
+        db.flush()
+
+        first_node = NodeRun(
+            run_id=workflow_run.id,
+            node_id="idea",
+            node_name="Idea",
+            sequence=0,
+            status="running",
+            log="실행 중",
         )
-        assert first_node is not None
-        first_node.status = "running"
-        first_node.log = "실행 중"
+        db.add(first_node)
+        workflow_run.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
         first_node.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
         db.commit()
 
@@ -340,28 +439,25 @@ def test_compensation_recovers_stale_running_nodes():
 
 
 def test_compensation_commit_scope_isolated_per_node(monkeypatch):
-    workflow = client.post("/api/workflows", json=PAYLOAD).json()
-    run = client.post(f"/api/workflows/{workflow['id']}/runs").json()
-    run_id = run["id"]
-
     db = SessionLocal()
     try:
-        workflow_run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
-        assert workflow_run is not None
-        workflow_run.status = "running"
-        workflow_run.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        workflow = WorkflowDefinition(name="Compensation Scope", description="", graph=PAYLOAD["graph"])
+        db.add(workflow)
+        db.flush()
 
-        nodes = (
-            db.query(NodeRun)
-            .filter(NodeRun.run_id == run_id)
-            .order_by(NodeRun.sequence.asc())
-            .limit(2)
-            .all()
-        )
-        assert len(nodes) == 2
+        workflow_run = WorkflowRun(workflow_id=workflow.id, status="running")
+        db.add(workflow_run)
+        db.flush()
+
+        nodes = [
+            NodeRun(run_id=workflow_run.id, node_id="idea", node_name="Idea", sequence=0, status="running", log="실행 중"),
+            NodeRun(run_id=workflow_run.id, node_id="plan", node_name="Plan", sequence=1, status="running", log="실행 중"),
+        ]
         for node in nodes:
-            node.status = "running"
-            node.log = "실행 중"
+            db.add(node)
+
+        workflow_run.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        for node in nodes:
             node.updated_at = datetime.now(timezone.utc) - timedelta(minutes=10)
         db.commit()
 
@@ -379,7 +475,7 @@ def test_compensation_commit_scope_isolated_per_node(monkeypatch):
         recovered = workflow_engine.recover_stuck_runs(db, stale_after_seconds=30)
 
         assert recovered == 1
-        refreshed = db.query(NodeRun).filter(NodeRun.run_id == run_id).all()
+        refreshed = db.query(NodeRun).filter(NodeRun.run_id == workflow_run.id).all()
         failed_count = len([node for node in refreshed if node.status == "failed"])
         assert failed_count == 1
     finally:

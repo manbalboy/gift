@@ -1,4 +1,5 @@
 import type {
+  ArtifactChunkResponse,
   ConstellationData,
   Workflow,
   WorkflowGraphValidationResult,
@@ -9,6 +10,7 @@ import type {
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3101/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const WEBHOOK_SECRET = import.meta.env.VITE_WEBHOOK_SECRET ?? '';
+const HUMAN_GATE_APPROVER_TOKEN = import.meta.env.VITE_HUMAN_GATE_APPROVER_TOKEN ?? '';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -75,6 +77,16 @@ export const api = {
   startRun: (workflowId: number) => request<WorkflowRun>(`/workflows/${workflowId}/runs`, { method: 'POST' }),
   getRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}`),
   getConstellation: (runId: number) => request<ConstellationData>(`/runs/${runId}/constellation`),
+  approveRunNode: (runId: number, nodeId: string) =>
+    request<WorkflowRun>(`/runs/${runId}/approve?node_id=${encodeURIComponent(nodeId)}`, {
+      method: 'POST',
+      headers: HUMAN_GATE_APPROVER_TOKEN ? { 'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN } : undefined,
+    }),
+  cancelRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/cancel`, { method: 'POST' }),
+  getArtifactChunk: (runId: number, nodeId: string, offset = 0, limit = 16384) =>
+    request<ArtifactChunkResponse>(
+      `/runs/${runId}/artifacts/${encodeURIComponent(nodeId)}?offset=${Math.max(0, offset)}&limit=${Math.max(1, limit)}`,
+    ),
   sendDevIntegrationWebhook: (payload: unknown) =>
     request<WebhookResponse>('/webhooks/dev-integration', {
       method: 'POST',

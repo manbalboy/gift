@@ -4,6 +4,7 @@ const iconMap: Record<string, string> = {
   running: '▶',
   done: '✓',
   failed: '!',
+  cancelled: '×',
   review_needed: '◇',
 };
 

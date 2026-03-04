@@ -30,6 +30,8 @@ class Settings:
     docker_image: str = os.getenv("DEVFLOW_DOCKER_IMAGE", "bash:5.2")
     github_webhook_secret: str = os.getenv("DEVFLOW_GITHUB_WEBHOOK_SECRET", "")
     generic_webhook_secret: str = os.getenv("DEVFLOW_GENERIC_WEBHOOK_SECRET", "")
+    human_gate_approver_token: str = os.getenv("DEVFLOW_HUMAN_GATE_APPROVER_TOKEN", "")
+    webhook_allowed_source_ips: str = os.getenv("DEVFLOW_WEBHOOK_ALLOWED_SOURCE_IPS", "*")
 
     lock_backend: str = os.getenv("DEVFLOW_LOCK_BACKEND", "local")
     redis_url: str = os.getenv("DEVFLOW_REDIS_URL", "redis://localhost:6379/0")
@@ -44,6 +46,17 @@ class Settings:
     webhook_rate_limit_per_window: int = int(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_PER_WINDOW", "10"))
     webhook_rate_limit_window_seconds: float = float(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_WINDOW_SECONDS", "5"))
     webhook_trusted_proxy_ips: str = os.getenv("DEVFLOW_WEBHOOK_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
+    workflow_node_max_retries: int = int(os.getenv("DEVFLOW_WORKFLOW_NODE_MAX_RETRIES", "3"))
+    workflow_retry_backoff_seconds: float = float(os.getenv("DEVFLOW_WORKFLOW_RETRY_BACKOFF_SECONDS", "0.25"))
+    workflow_worker_poll_interval_seconds: float = float(
+        os.getenv("DEVFLOW_WORKFLOW_WORKER_POLL_INTERVAL_SECONDS", "0.1")
+    )
+    workflow_approval_poll_interval_seconds: float = float(
+        os.getenv("DEVFLOW_WORKFLOW_APPROVAL_POLL_INTERVAL_SECONDS", "0.2")
+    )
+    workflow_cancel_join_timeout_seconds: float = float(
+        os.getenv("DEVFLOW_WORKFLOW_CANCEL_JOIN_TIMEOUT_SECONDS", "2")
+    )
 
     @property
     def database_url(self) -> str:
@@ -57,6 +70,11 @@ class Settings:
     @property
     def trusted_sse_proxy_ips(self) -> set[str]:
         values = [item.strip() for item in self.sse_trusted_proxy_ips.split(",")]
+        return {item for item in values if item}
+
+    @property
+    def allowed_webhook_source_ips(self) -> set[str]:
+        values = [item.strip() for item in self.webhook_allowed_source_ips.split(",")]
         return {item for item in values if item}
 
 

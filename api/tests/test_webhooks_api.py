@@ -124,6 +124,37 @@ def test_dev_integration_webhook_rejects_generic_invalid_secret(monkeypatch):
     assert response.json()["detail"] == "invalid webhook secret"
 
 
+def test_dev_integration_webhook_rejects_unallowed_source_ip(monkeypatch):
+    monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+    monkeypatch.setattr(settings, "webhook_allowed_source_ips", "203.0.113.10")
+
+    response = client.post(
+        "/api/webhooks/dev-integration",
+        headers={"X-API-Secret": "test-generic-secret"},
+        json={"provider": "jenkins", "event_type": "ci.completed"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "forbidden webhook source ip"
+
+
+def test_dev_integration_webhook_allows_source_ip_from_trusted_forwarded_for(monkeypatch):
+    monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+    monkeypatch.setattr(settings, "webhook_trusted_proxy_ips", "testclient")
+    monkeypatch.setattr(settings, "webhook_allowed_source_ips", "198.51.100.77")
+
+    response = client.post(
+        "/api/webhooks/dev-integration",
+        headers={
+            "X-API-Secret": "test-generic-secret",
+            "x-forwarded-for": "10.0.0.2,198.51.100.77",
+        },
+        json={"provider": "jenkins", "event_type": "ci.completed"},
+    )
+
+    assert response.status_code == 200
+
+
 def test_dev_integration_webhook_rejects_too_large_payload(monkeypatch):
     monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
 

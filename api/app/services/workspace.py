@@ -38,6 +38,27 @@ class WorkspaceService:
         artifact.write_text(content, encoding="utf-8")
         return str(artifact)
 
+    def read_artifact_chunk(self, run_id: int, node_id: str, offset: int = 0, limit: int = 16384) -> tuple[str, bool, int]:
+        if not is_safe_node_id(node_id):
+            raise InvalidNodeIdError(f"unsafe node_id: {node_id}")
+        if run_id < 0:
+            raise InvalidNodeIdError(f"unsafe run_id: {run_id}")
+        safe_offset = max(0, offset)
+        safe_limit = min(max(1, limit), 256 * 1024)
+
+        artifact = self._resolve_under_root(self.root / "main" / "runs" / str(run_id) / f"{node_id}.md")
+        if not artifact.exists():
+            raise FileNotFoundError(str(artifact))
+
+        size = artifact.stat().st_size
+        with artifact.open("rb") as file_obj:
+            file_obj.seek(safe_offset)
+            raw = file_obj.read(safe_limit)
+        chunk = raw.decode("utf-8", errors="replace")
+        next_offset = safe_offset + len(raw)
+        has_more = next_offset < size
+        return chunk, has_more, next_offset
+
     def get_task_sandbox_dir(self, run_id: int, node_id: str) -> Path:
         if not is_safe_node_id(node_id):
             raise InvalidNodeIdError(f"unsafe node_id: {node_id}")

@@ -1,4 +1,5 @@
 import itertools
+import time
 import pytest
 
 from app.api import workflows as workflows_api
@@ -288,3 +289,223 @@ def test_validate_workflow_graph_endpoint():
     assert body["valid"] is True
     assert body["node_count"] == len(PAYLOAD["graph"]["nodes"])
     assert body["edge_count"] == len(PAYLOAD["graph"]["edges"])
+
+
+def test_human_gate_approve_requires_token(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    payload = {
+        "name": "Human Gate Flow",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "review", "type": "human_gate", "label": "Review"},
+                {"id": "pr", "type": "task", "label": "PR"},
+            ],
+            "edges": [
+                {"id": "e1", "source": "idea", "target": "review"},
+                {"id": "e2", "source": "review", "target": "pr"},
+            ],
+        },
+    }
+    created = client.post("/api/workflows", json=payload)
+    assert created.status_code == 200
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    for _ in range(20):
+        current = client.get(f"/api/runs/{run_id}")
+        assert current.status_code == 200
+        if any(node["status"] == "approval_pending" for node in current.json()["node_runs"]):
+            break
+        time.sleep(0.1)
+
+    missing = client.post(f"/api/runs/{run_id}/approve?node_id=review")
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "missing approver token"
+
+    invalid = client.post(
+        f"/api/runs/{run_id}/approve?node_id=review",
+        headers={"X-Approver-Token": "wrong"},
+    )
+    assert invalid.status_code == 403
+    assert invalid.json()["detail"] == "invalid approver token"
+
+
+def test_human_gate_approve_after_long_pending_resumes_run(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    payload = {
+        "name": "Human Gate Resume",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "review", "type": "human_gate", "label": "Review"},
+                {"id": "pr", "type": "task", "label": "PR"},
+            ],
+            "edges": [
+                {"id": "e1", "source": "idea", "target": "review"},
+                {"id": "e2", "source": "review", "target": "pr"},
+            ],
+        },
+    }
+    created = client.post("/api/workflows", json=payload)
+    assert created.status_code == 200
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    pending = None
+    for _ in range(25):
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        if any(node["status"] == "approval_pending" for node in response.json()["node_runs"]):
+            pending = response
+            break
+        time.sleep(0.1)
+    assert pending is not None
+    assert pending.json()["status"] == "waiting"
+
+    approved = client.post(
+        f"/api/runs/{run_id}/approve?node_id=review",
+        headers={"X-Approver-Token": "secret-approver"},
+    )
+    assert approved.status_code == 200
+
+    final = None
+    for _ in range(25):
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        if response.json()["status"] in {"done", "failed"}:
+            final = response
+            break
+        time.sleep(0.1)
+    assert final is not None
+    assert final.json()["status"] == "done"
+    review_node = next(node for node in final.json()["node_runs"] if node["node_id"] == "review")
+    assert review_node["status"] == "done"
+    assert "[human_gate] approved" in review_node["log"]
+
+
+def test_cancel_run_marks_run_and_non_terminal_nodes_cancelled():
+    payload = {
+        "name": "Cancelable Flow",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "review", "type": "human_gate", "label": "Review"},
+                {"id": "pr", "type": "task", "label": "PR"},
+            ],
+            "edges": [{"id": "e1", "source": "review", "target": "pr"}],
+        },
+    }
+    created = client.post("/api/workflows", json=payload)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+    run = client.post(f"/api/workflows/{workflow_id}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    waiting = client.get(f"/api/runs/{run_id}")
+    assert waiting.status_code == 200
+    assert waiting.json()["status"] in {"waiting", "running", "queued"}
+
+    cancelled = client.post(f"/api/runs/{run_id}/cancel")
+    assert cancelled.status_code == 200
+    body = cancelled.json()
+    assert body["status"] == "cancelled"
+    assert any(node["status"] == "cancelled" for node in body["node_runs"])
+
+    latest = client.get(f"/api/runs/{run_id}")
+    assert latest.status_code == 200
+    assert latest.json()["status"] == "cancelled"
+
+
+def test_artifact_chunk_endpoint_returns_partial_content():
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+    run = client.post(f"/api/workflows/{workflow_id}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    latest = None
+    for _ in range(25):
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        if response.json()["status"] == "done":
+            latest = response
+            break
+        time.sleep(0.1)
+    assert latest is not None
+
+    first = client.get(f"/api/runs/{run_id}/artifacts/idea?offset=0&limit=24")
+    assert first.status_code == 200
+    body = first.json()
+    assert body["run_id"] == run_id
+    assert body["node_id"] == "idea"
+    assert body["content"]
+    assert body["next_offset"] > 0
+    assert isinstance(body["has_more"], bool)
+
+
+def test_stream_metrics_endpoint_returns_active_connections(monkeypatch):
+    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    workflows_api.active_stream_connections = 0
+
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    with client.stream("GET", f"/api/workflows/{workflow_id}/runs/stream?max_ticks=2") as response:
+        assert response.status_code == 200
+        metrics = client.get("/api/runs/stream-metrics/active-connections")
+        assert metrics.status_code == 200
+        assert isinstance(metrics.json()["active_stream_connections"], int)
+
+
+def test_cancel_run_closes_active_workflow_stream(monkeypatch):
+    real_sleep = time.sleep
+    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: real_sleep(0.01))
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+    run = client.post(f"/api/workflows/{workflow_id}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    with client.stream("GET", f"/api/workflows/{workflow_id}/runs/stream?max_ticks=600") as response:
+        assert response.status_code == 200
+        iterator = response.iter_lines()
+        first = next(itertools.islice(iterator, 1))
+        if isinstance(first, bytes):
+            first = first.decode("utf-8")
+        assert "event: run_status" in first
+
+        cancelled = client.post(f"/api/runs/{run_id}/cancel")
+        assert cancelled.status_code == 200
+
+        lines = []
+        for _ in range(20):
+            try:
+                line = next(iterator)
+            except StopIteration:
+                break
+            if isinstance(line, bytes):
+                line = line.decode("utf-8")
+            lines.append(line)
+            if "stream closed by workflow cancellation" in line:
+                break
+
+    end_detected = any(("event: end" in line) or ("stream closed by workflow cancellation" in line) for line in lines)
+    active = None
+    for _ in range(20):
+        metrics = client.get("/api/runs/stream-metrics/active-connections")
+        assert metrics.status_code == 200
+        active = metrics.json()["active_stream_connections"]
+        if active == 0:
+            break
+        time.sleep(0.05)
+
+    assert end_detected or (active == 0)

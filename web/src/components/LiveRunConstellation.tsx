@@ -14,9 +14,13 @@ type Props = {
 };
 
 export default function LiveRunConstellation({ data }: Props) {
-  const { points, pointById, linkMap } = useMemo(() => {
+  const { points, pointById, links } = useMemo(() => {
     if (!data || data.nodes.length === 0) {
-      return { points: [], pointById: new Map<string, { status: string }>(), linkMap: new Set<string>() };
+      return {
+        points: [],
+        pointById: new Map<string, { id: string; x: number; y: number; status: string }>(),
+        links: [] as Array<{ key: string; source: string; target: string }>,
+      };
     }
 
     const cx = 280;
@@ -30,8 +34,10 @@ export default function LiveRunConstellation({ data }: Props) {
     }));
 
     const byId = new Map(p.map((point) => [point.id, point]));
-    const map = new Set<string>(data.links.map((link) => `${link.source}:${link.target}`));
-    return { points: p, pointById: byId, linkMap: map };
+    const normalizedLinks = data.links
+      .filter((link) => byId.has(link.source) && byId.has(link.target))
+      .map((link) => ({ ...link, key: `${link.source}:${link.target}` }));
+    return { points: p, pointById: byId, links: normalizedLinks };
   }, [data]);
 
   return (
@@ -49,23 +55,24 @@ export default function LiveRunConstellation({ data }: Props) {
         </defs>
         <rect x="0" y="0" width="560" height="240" fill="url(#orbitGlow)" rx="12" />
         <circle cx="280" cy="120" r="82" fill="none" stroke="#27324A" strokeDasharray="4 8" />
-        {points.map((point, idx) => {
-          const next = points[idx + 1];
-          if (!next) return null;
-          const key = `${point.id}:${next.id}`;
-          const sourceStatus = pointById.get(point.id)?.status ?? "queued";
-          const targetStatus = pointById.get(next.id)?.status ?? "queued";
-          const active = linkMap.has(key) && (targetStatus !== "queued" || sourceStatus !== "queued");
+        {links.map((link) => {
+          const sourcePoint = pointById.get(link.source);
+          const targetPoint = pointById.get(link.target);
+          if (!sourcePoint || !targetPoint) return null;
+
+          const sourceStatus = sourcePoint.status ?? 'queued';
+          const targetStatus = targetPoint.status ?? 'queued';
+          const active = targetStatus !== 'queued' || sourceStatus !== 'queued';
           const isRunning = sourceStatus === "running" || targetStatus === "running";
           return (
             <line
-              key={key}
-              x1={point.x}
-              y1={point.y}
-              x2={next.x}
-              y2={next.y}
+              key={link.key}
+              x1={sourcePoint.x}
+              y1={sourcePoint.y}
+              x2={targetPoint.x}
+              y2={targetPoint.y}
               className={isRunning ? "constellation-link-running" : "constellation-link"}
-              stroke={active ? statusColor[next.status] ?? '#7E8AA3' : '#27324A'}
+              stroke={active ? statusColor[targetStatus] ?? '#7E8AA3' : '#27324A'}
               strokeWidth={active ? 2.4 : 1.2}
             />
           );

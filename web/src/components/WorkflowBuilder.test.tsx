@@ -24,6 +24,12 @@ jest.mock('reactflow', () => {
           >
             connect
           </button>
+          <button
+            type="button"
+            onClick={() => onConnect?.({ source: nodes[1]?.id ?? 'plan', target: nodes[0]?.id ?? 'idea' })}
+          >
+            connect-cycle
+          </button>
           <button type="button" onClick={() => onNodeClick?.({}, nodes[0])}>
             select-first
           </button>
@@ -103,6 +109,15 @@ describe('WorkflowBuilder', () => {
     expect(onSave.mock.calls[0][1]).toBe(10);
   });
 
+  test('순환 연결은 차단되고 경고 메시지를 표시한다', () => {
+    render(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
+    expect(screen.getByTestId('edge-count')).toHaveTextContent('1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'connect-cycle' }));
+    expect(screen.getByTestId('edge-count')).toHaveTextContent('1');
+    expect(screen.getByText('순환 연결은 허용되지 않습니다. 연결 방향을 확인해주세요.')).toBeInTheDocument();
+  });
+
   test('노드 추가 버튼으로 캔버스 노드를 동적으로 추가할 수 있다', () => {
     render(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly={false} />);
 
@@ -117,8 +132,8 @@ describe('WorkflowBuilder', () => {
       <WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} onValidate={onValidate} mobileViewOnly={false} />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '검증' }));
-    expect(await screen.findByText('유효성 검사 통과 (2 nodes / 1 edges)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '드라이런' }));
+    expect(await screen.findByText('드라이런 성공 (2 nodes / 1 edges)')).toBeInTheDocument();
     expect(onValidate).toHaveBeenCalledTimes(1);
   });
 

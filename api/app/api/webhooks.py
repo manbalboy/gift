@@ -54,6 +54,15 @@ def _extract_client_key(request: Request) -> str:
     return candidates[0]
 
 
+def _is_allowed_source_ip(client_key: str) -> bool:
+    allowed_ips = settings.allowed_webhook_source_ips
+    if not allowed_ips:
+        return True
+    if "*" in allowed_ips:
+        return True
+    return client_key in allowed_ips
+
+
 def _parse_workflow_id(value: object) -> int | None:
     if type(value) is int:
         return value if value > 0 else None
@@ -118,6 +127,9 @@ def _verify_github_signature(raw_body: bytes, signature_header: str, secret: str
 @router.post("/dev-integration", response_model=WebhookEventOut)
 async def receive_dev_integration_webhook(request: Request, db: Session = Depends(get_db)):
     client_key = _extract_client_key(request)
+    if not _is_allowed_source_ip(client_key):
+        raise HTTPException(status_code=403, detail="forbidden webhook source ip")
+
     allowed = webhook_rate_limiter.allow(
         key=client_key,
         limit=max(1, int(settings.webhook_rate_limit_per_window)),

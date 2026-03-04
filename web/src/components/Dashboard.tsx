@@ -18,10 +18,14 @@ export default function Dashboard({
   run,
   onTriggerMalformedWebhook,
   onTriggerInvalidWorkflowWebhook,
+  onApproveHumanGate,
+  onCancelRun,
 }: {
   run: WorkflowRun | null;
   onTriggerMalformedWebhook?: () => Promise<void>;
   onTriggerInvalidWorkflowWebhook?: () => Promise<void>;
+  onApproveHumanGate?: (nodeId: string) => Promise<void>;
+  onCancelRun?: () => Promise<void>;
 }) {
   const nodeRuns = run?.node_runs ?? [];
   const doneCount = nodeRuns.filter((n) => n.status === 'done').length;
@@ -43,6 +47,7 @@ export default function Dashboard({
     null;
 
   const completionRate = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+  const pendingApproval = nodeRuns.find((node) => node.status === 'approval_pending') ?? null;
 
   return (
     <section className="card">
@@ -101,6 +106,33 @@ export default function Dashboard({
       ) : (
         <p className="empty">워크플로우 실행을 시작하면 실시간 상태가 표시됩니다.</p>
       )}
+      <section className="webhook-actions" aria-label="run-control-actions">
+        <h3>Run 제어</h3>
+        <p>승인 대기 노드와 실행 취소를 즉시 처리합니다.</p>
+        <div className="webhook-actions-row">
+          <button
+            className="btn btn-ghost"
+            type="button"
+            disabled={!pendingApproval}
+            onClick={() => {
+              if (!pendingApproval) return;
+              void onApproveHumanGate?.(pendingApproval.node_id);
+            }}
+          >
+            Human Gate 승인
+          </button>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            disabled={!run || ['done', 'failed', 'cancelled'].includes(run.status)}
+            onClick={() => {
+              void onCancelRun?.();
+            }}
+          >
+            Run 취소
+          </button>
+        </div>
+      </section>
       <section className="webhook-actions" aria-label="webhook-feedback-actions">
         <h3>Webhook 피드백 검증</h3>
         <p>파싱 오류(422)와 workflow_id 예외 경고를 즉시 확인합니다.</p>
