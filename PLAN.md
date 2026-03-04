@@ -1,64 +1,51 @@
 # PLAN
 
 ## 1. Task breakdown with priority
+- **[P0] API - WorkflowEngine 로직 수정**: `WorkflowEngine.refresh_run` 내 노드 실행 시 기본 폴백인 `echo`가 아닌, 워크플로우 정의에서 실제 `command`를 파싱하여 `AgentTaskRequest` payload에 전달하도록 수정.
+- **[P0] API - 보상 데몬 트랜잭션 스코프 개선**: `recover_stuck_runs`에서 복구 실패가 다른 노드의 복구를 롤백하지 않도록, 반복문 내에서 개별 혹은 청크 단위로 `db.commit()`을 수행하도록 변경.
+- **[P1] Web - Workflow Builder UI 테스트 보강**: `web/` 디렉토리 내 `WorkflowBuilder.tsx`에 대해 React Flow 캔버스 조작 및 상태 전환 등 사용자 시나리오를 포괄하는 Jest/Testing Library 기반 테스트 코드 확충 (포트 3000 기반 환경 호환성 검증).
+- **[P1] API - AgentRunner 단위 테스트 추가**: `AgentRunner.run` 실행 시 발생할 수 있는 시스템 예외(파일 I/O, 권한 부족 등) 브랜치에 대한 Mocking 테스트 코드 추가 작성.
+- **[P2] API - 실행 워커 격리 방안 기획(보안)**: RCE 방지를 위한 컨테이너(Docker) 기반 임시 스크립트 실행 격리 구조 재검토 및 문서화.
+- **[P2] API - 분산 락 구조화 계획 수립**: 다중 프로세스(Gunicorn 등) 확장 시나리오를 대비해 DB Row Lock 경합 방지를 위한 Redis 기반 분산 락 처리 로직 기획.
 
-### P0 (Critical - MVP 핵심 및 리뷰 버그 수정)
-- **CORS 및 보안 규칙 수정 (`api/app/main.py`)**: SPEC에 맞춰 CORS 허용 포트를 `7000-7099` 대역으로 변경. 기존의 복잡한 정규식(ReDoS 위험)을 개선하여 더욱 엄격하고 안전한 도메인 매칭(예: `manbalboy.com` 및 서브도메인, 로컬 환경 등)을 적용.
-- **Workflow 상태 보상(Compensation) 데몬 추가**: API 서버 비정상 종료 시 장기 `running` 상태 노드가 영원히 방치되는 문제를 해결. 서버 재시작 시(또는 백그라운드 스케줄러를 통해) 해당 노드를 `failed` (또는 재시도 대상)로 복원하는 초기화 프로세스 구현.
-- **긴 명령어 실행 구조 개선 (`api/app/services/agent_runner.py`)**: `bash -lc` 호출 시 운영체제의 `Argument list too long` 한계로 인해 긴 프롬프트나 코드가 실패하는 엣지 케이스를 수정. 명령어를 임시 `.sh` 파일로 저장한 후 파일 경로를 기반으로 실행하도록 워커 실행 구조 개선.
-- **Workflow Engine 정식화**: Orchestrator의 고정 플로우 의존을 탈피하고 `workflow_id` 기반 동적 노드 실행 체계 완성. `node_runs` 이력 저장.
-- **Agent SDK 표준화**: 입출력 스키마, 도구 제약, 실패 전략 등을 포함한 역할별 에이전트(Planner, Coder, Reviewer 등) Spec 정립.
-
-### P1 (High - 기능 강화 및 UI 연동)
-- **Visual Workflow Builder 연동**: `web/` 영역에 React Flow 라이브러리를 적용하여, 워크플로우를 시각적 노드 및 엣지로 편집하고 렌더링하는 UI 구성.
-- **테스트 커버리지 확충 (`api/tests/`)**: 
-  - 상태 복구(Compensation) 데몬의 정상 작동 여부를 단언(Assert)하는 테스트.
-  - `with_for_update()` 등 락 획득 시 타임아웃/데드락 엣지 케이스에 대한 Pytest 작성.
-- **상태 및 KPI 대시보드 고도화**: 재작업률, 리드타임, 타임라인 중심의 모니터링 뷰 추가. 노드 상태(Review Needed 등) 확장 적용.
-
-### P2 (Medium - 확장성)
-- **분산 환경 락 아키텍처 검토**: 단일 프로세스 `threading.Lock`에서 향후 다중 프로세스(Gunicorn 컨테이너 환경 등)로의 확장을 대비한 DB Row Lock 병목 전가 해소 및 Redis 분산 락 고도화 기획.
-- **Dev Integration 확대**: GitHub 웹훅 외의 통합 트리거(PR/CI 배포 이벤트) 연동.
+**고도화 플랜 (추가 기능)**
+- **[P2] API - 실시간 상태 스트리밍(SSE) 엔드포인트 초안 작성**: 
+  - **근거**: 노드 실행 커맨드 정상화 및 복구 데몬 트랜잭션 개선 이후, 빈번하게 갱신되는 상태(queued, running, done, failed)를 대시보드 UI에 지연 없이 반영하기 위해 기존 폴링 구조를 개선할 필요가 있음.
+  - **구현 경계**: 실제 Redis Pub/Sub까지 연동하지는 않고, 현재 데이터베이스 상태를 기반으로 `workflow_id`에 따른 서버 센트 이벤트(SSE)를 송출하는 FastAPI 라우터 초안 및 기본 로그 스트림 로직 추가로 한정.
 
 ## 2. MVP scope / out-of-scope
-
-**MVP Scope:**
-- Workflow Engine (DB를 통한 동적 워크플로우 파이프라인 진행 및 상태 보상 메커니즘 구축).
-- CORS 정책 개선 (Preview 7000~7099 대역 반영 및 보안 정규식 적용).
-- 임시 파일 실행 기반의 견고한 AgentRunner 구동.
-- Level 1 수준의 SDLC 템플릿 (Idea -> Plan -> Code -> Test -> PR).
-- React Flow 기반 기초 Visual Workflow Builder 렌더링.
-
-**Out-of-Scope:**
-- 복잡한 외부 이슈 트래커(Jira, Linear) 연동 시스템 구현.
-- 완전한 분산 처리(Multi-node 스케일아웃)를 위한 인프라 스택 (Redis 전면 도입 등은 MVP에서 배제하고 현재의 단일 DB 구조에서 구현).
-- Temporal 혹은 LangGraph 코어 전면 전환 (FastAPI 워커 구조를 고도화하는 방향 유지).
+- **Scope**:
+  - 기존 FastAPI 백엔드에서 발견된 치명적 실행 버그(command 파싱 누락, 트랜잭션 롤백 위험) 수정.
+  - 프론트엔드 React Flow(Visual Builder) 시각적 캔버스 조작 보장을 위한 Jest 주요 시나리오 UI 테스트 구축.
+  - AgentRunner 관련 시스템 예외 상황 커버리지(단위 테스트) 확보.
+  - 향후 확장을 위한 보안(샌드박싱) 및 분산 환경(분산 락) 계획의 문서화 구체화.
+- **Out-of-scope**:
+  - 즉각적인 Redis 기반 완벽한 분산 락 코드 구현 및 인프라 구축 (계획 수립까지만 범위).
+  - 임시 스크립트를 완벽히 차단하는 Docker 샌드박스 코어 로직의 전면 재작성 (현재는 아키텍처 재검토/기획으로 한정).
+  - 템플릿 마켓플레이스 화면 전체 신규 구현 (에디터 UI 안정성 확보에 집중).
 
 ## 3. Completion criteria
-- 모든 P0 티켓 완료 (CORS 수정, 상태 보상 데몬, 긴 명령어 스크립트 실행 등).
-- 서버 강제 재시작 후 기존 `running` 노드가 자동으로 복원됨을 E2E 환경에서 확인.
-- 워커 실행 시 매우 긴 명령어/payload가 임시 파일을 통해 무리 없이 성공 처리됨.
-- `api/tests` 디렉토리 내 추가 작성된 Pytest(보상 로직, 예외 타임아웃)가 100% 통과.
-- `web/` 애플리케이션의 3000번대 포트 구동 및 React Flow를 통한 워크플로우 시각화 정상 노출 확인.
+- `WorkflowEngine.refresh_run` 실행 시, 노드 정보의 실제 `command`가 파싱되어 `AgentRunner`를 통해 정상적으로 스크립트가 실행됨.
+- `recover_stuck_runs` 데몬 실행 중, 특정 노드의 업데이트 에러가 발생하더라도 다른 정상 노드의 상태 갱신이 온전히 데이터베이스에 커밋됨.
+- `AgentRunner.run`의 시스템 레벨 예외 케이스를 다루는 Mocking 기반 단위 테스트가 모두 통과함.
+- 웹 프론트엔드의 `WorkflowBuilder.tsx` 관련 React Flow 캔버스 테스트 코드(노드 추가/연결, 모바일 상태 전환 등)가 정상 통과함.
+- 보안 격리 기획 및 다중 프로세스 락 구조 기획안이 문서로 작성되어 리포지토리에 반영됨.
 
 ## 4. Risks and test strategy
-
-**Risks:**
-- 동적 상태 보상 로직 적용 시, 타이밍 이슈로 인해 정상 실행 중인 노드가 복원 처리되는 오작동 가능성.
-- React Flow와의 상태 동기화 시 비동기 갱신 지연으로 인한 프론트엔드 상태 불일치 현상.
-
-**Test Strategy:**
-- **Unit Test**: AgentRunner가 임시 파일을 생성하여 명령어 실행 후 안전하게 삭제하는 라이프사이클을 테스트. 보상 스크립트의 조건 필터링 정확도 확인.
-- **Integration Test**: DB 트랜잭션 도중 예외가 발생하거나 `with_for_update` 대기 지연이 나타날 때 적절히 Rollback 되고 타임아웃 에러를 발생시키는지 격리 테스트 구축.
-- **E2E Test**: GitHub 웹훅 모의 트리거를 통해 생성된 Issue가 코드 실행 및 상태 갱신을 거쳐 최종 아티팩트를 Workspace에 기록하기까지의 전 과정을 자동화 검증.
+- **Risk**: 동시성 환경에서의 DB 락 경합으로 인한 교착 상태, 무검증 임시 스크립트 실행에 따른 원격 코드 실행(RCE) 위험, 프론트엔드 그래프 상태와 백엔드 상태의 비동기화.
+- **Test Strategy**:
+  - **백엔드**: 비정상적인 스크립트 권한 문제나 파일 I/O 에러 상황을 `unittest.mock`을 통해 강제 발생시키고, 적절한 에러 핸들링 및 상태 기록이 되는지 검증. 복구 트랜잭션 롤백 방지 여부를 통합 테스트로 확인.
+  - **프론트엔드**: Testing Library를 사용하여 사용자 동작(드래그 앤 드롭, 연결 끊기 등)을 모사하고 그래프 상태의 정확성을 검증.
+  - **아키텍처**: 샌드박스 격리 방안 및 분산 락 도입을 위한 리뷰 세션을 거치고 위험을 문서로 관리.
 
 ## 5. Design intent and style direction
-- **기획 의도**: 복잡한 AI 에이전트들의 협업 파이프라인을 비개발자도 직관적으로 파악할 수 있고, 문제 노드를 투명하게 모니터링하여 개입(Human-in-the-loop)할 수 있는 생산적인 개발 허브 제공.
-- **디자인 풍**: 모던하고 기술적인(Tech-focused) 대시보드 스타일. 노드 연결형 시각화(Node-based canvas) 뷰.
-- **시각 원칙**: 핵심 상태를 명확히 구별하는 컬러 팔레트 (Success: Green, Progress: Blue, Failed: Red, Blocked/Warning: Yellow/Orange) 적용. 타이포그래피는 깔끔한 산세리프(San-serif)를 사용해 가독성 확보. 컴포넌트는 적절한 여백과 섀도우 처리로 부유감 있게 배치.
-- **반응형 원칙**: 캔버스 및 대시보드 뷰포트 특성상 데스크톱/태블릿(가로형) 환경을 최우선으로 고려하며, 모바일 화면에서는 카드 형태의 정보 요약 뷰로 자동 전환되도록 반응형 구현.
+- **기획 의도**: 워크플로우 엔진이 지정한 단계를 신뢰성 있게 실행하고 복구하도록 하여, 개발 조직이 안심하고 AI Development Platform에 SDLC 자동화를 맡길 수 있는 경험을 제공함.
+- **디자인 풍**: 직관적인 워크플로우 파악을 돕는 모던 대시보드형 뷰, 복잡한 노드를 깔끔하게 보여주는 카드형 디자인 적용.
+- **시각 원칙**: 핵심 상태(review_needed, running, done, failed 등)를 직관적으로 구분할 수 있는 명확한 컬러 시스템 적용. 가독성 높은 타이포그래피와 여유로운 마진/패딩을 두어 개발자가 장시간 보아도 피로하지 않도록 구성.
+- **반응형 원칙**: 모바일 우선 접근을 적용하여 작은 뷰포트에서도 노드 그래프의 상태를 확인하고, 패닝/줌 동작이 자연스럽게 이어지도록 최적화.
 
 ## 6. Technology ruleset
-- **플랫폼 분류**: api / web
-- **web**: React (TypeScript 및 Vite 기반 빌드 도구)를 기반으로 구축하며, 노드 시각화 UI 구현체로 `React Flow` 라이브러리를 적극 활용.
-- **api**: FastAPI 기반 프레임워크와 SQLAlchemy 데이터베이스 레이어 활용. CLI 명령어 수행 워커는 Python의 내장 `subprocess`를 통해 임시 `.sh` 스크립트를 실행하는 구조로 설계. 포트는 Preview 목적의 노출 시 `7000-7099` 대역만을 활용.
+- **플랫폼 분류**: Web / API
+- **Web**: React (Vite) 기반의 프론트엔드 앱, React Flow (노드/엣지 에디터), Jest/Testing Library (UI 테스트). 로컬 웹 개발 서버 및 프론트엔드 테스트 환경은 포트 3000을 사용.
+- **API**: FastAPI 기반 백엔드, Python 3.x.
+- **운영/통합 규칙**: Preview 환경 노출을 위한 외부 포트는 7000~7099 범위를 할당. CORS는 `*.manbalboy.com` 및 `localhost` 출처를 허용하도록 구성. 실행 가이드에 언급되는 로컬 포트는 3000번대로 엄격히 관리.
