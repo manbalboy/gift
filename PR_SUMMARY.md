@@ -1,87 +1,74 @@
+---
+
 ## Summary
 
-`REVIEW.md`에서 식별된 보안 취약점·기능 버그·엣지 케이스를 전면 수정하고, 이를 검증하는 테스트 코드를 추가합니다.  
-DevFlow Agent Hub의 FastAPI 백엔드가 **프로덕션 레벨의 내구성과 보안성**을 갖추도록 인프라 안정화 작업을 완료합니다.
+**[초장기] 오픈소스의 왕이 될 프로그램 제작 (#65)** 이슈의 일환으로, DevFlow Agent Hub의 보안 취약점 수정·안정성 강화·구조적 개선을 수행한 PR입니다.
+
+REVIEW.md에서 식별된 웹훅 보안 취약점, Rate Limiter 한계, 동시성 문제, 프론트엔드 오류를 중심으로 MVP 범위 내 핵심 수정 사항을 반영하였습니다. 본 변경은 "AI는 작업자, 오케스트레이터가 순서를 결정한다"는 기본 원칙을 유지하면서 플랫폼의 신뢰도를 높이는 데 초점을 맞춥니다.
 
 ---
 
 ## What Changed
 
-### P0 — 보안 취약점 및 기능 버그 수정
+### 보안 (Security)
+- **웹훅 HMAC 서명 검증 추가**: `api/app/api/webhooks.py`에서 GitHub 웹훅 요청의 `X-Hub-Signature-256` 헤더 검증 누락 패치. 미검증 페이로드 수신 차단.
+- **`X-Forwarded-For` IP 파싱 강화**: Spoofing을 통한 Rate Limiting 우회 방지를 위해 신뢰할 수 있는 프록시 기반 엄격한 IP 파싱 로직 적용. 비표준 형식 및 다중 IP 엣지 케이스 처리 포함.
+- **페이로드 크기 제한 적용**: 웹훅 수신 시 과도한 페이로드로 인한 DoS 위험 완화를 위해 최대 페이로드 크기 제한 추가.
+- **`workflow_id` 타입 파싱 예외 로깅**: 잘못된 타입(`bool`, 예상치 못한 객체 등) 유입 시 Warning/Error 로거를 통해 감사 추적 가능하도록 개선.
+- **CORS 정규식 보완**: `manbalboy.com` 계열 및 `localhost` 계열 허용 origin 처리를 위한 정규식 오류 수정.
+- **Path Traversal 방어**: 파일 경로를 처리하는 로직에 경로 탈출(traversal) 방어 로직 추가.
 
-| 파일 | 변경 내용 |
-|---|---|
-| `api/app/main.py` | `allow_origin_regex`를 수정하여 `manbalboy.com` (서브도메인·포트 무관), `localhost`, `127.0.0.1` 접근을 올바르게 허용 |
-| `api/app/api/webhooks.py` | Request Body를 읽기 전 크기를 확인하여 **5MB 초과 시 `413 Payload Too Large`** 반환 — OOM/DoS 방어 |
-| `api/app/api/webhooks.py` | `workflow_id` 검증 시 `isinstance` → `type(...) is int` 로 교체하여 `{"workflow_id": true}` 가 1번 워크플로우로 오인식되는 타입 캐스팅 버그 수정, 잘못된 타입 입력 시 `422 Unprocessable Entity` 반환 |
+### 안정성 (Stability)
+- **분산 락(lock_provider) 추가**: 워크플로우 동시 실행 방지를 위한 분산 락 제공자 구현. Race Condition으로 인한 DB 이중 실행 문제 해소.
+- **Race Condition DB 락**: DB 쓰기 경합 상황에서의 안정성 확보.
+- **Docker 헬스체크 캐시 개선**: 반복적인 헬스체크 요청이 서비스 응답에 미치는 영향 최소화.
+- **SSE Rate Limiter 개선**: 다중 워커 환경에서의 Server-Sent Events 연결에 대한 Rate Limiting 동작 개선. 로컬 메모리 기반의 구조적 한계 및 향후 분산 캐시(Redis) 도입 필요성을 주석으로 문서화.
 
-### P1 — 성능 병목 및 Cascading Failure 방지
+### 구조 / 코드 품질
+- **AgentRunner 실 구동 연결**: 기존 stub 수준이던 `AgentRunner`를 실제 실행 흐름에 연결. 에이전트 러너 리팩토링으로 CLI 호출 흐름 명확화.
+- **스키마 유효성 검사 강화**: 워크플로우 정의 및 노드 입력에 대한 JSON Schema 검증 추가.
 
-| 파일 | 변경 내용 |
-|---|---|
-| `api/app/services/agent_runner.py` | `_docker_ping()` 실패 시 **3~5초 Negative Cache** 적용 — 연속 타임아웃 병목 제거 |
-| `api/app/services/rate_limiter.py` | `SSEReconnectRateLimiter`에 **서킷 브레이커 패턴** 도입 — Redis 장애 시 즉시 Fail-Fast 응답, 반복 대기 해소 |
+### 테스트
+- **`test_webhooks_api.py` 엣지 케이스 추가**: 조작된 `X-Forwarded-For` 헤더, 잘못된 페이로드 타입, 서명 불일치 등 다양한 케이스에 대한 단위 테스트 작성.
+- **프론트엔드 Jest 환경 정비**: `web/` 디렉터리 테스트 환경 복구 및 `package.json` 스크립트 보완.
 
-### P2 — 테스트 커버리지 강화
-
-| 파일 | 추가된 테스트 |
-|---|---|
-| `api/tests/test_main.py` | CORS 허용·차단 도메인 `pytest.mark.parametrize` 통합 테스트 |
-| `api/tests/test_main.py` | 4.9MB / 5.1MB 더미 페이로드 전송 시 413 방어 스트레스 테스트 |
-| `api/tests/test_main.py` | `unittest.mock`으로 Docker·Redis 타임아웃 강제 후 두 번째 요청이 O(1)에 수렴하는지 시간 측정 Fail-Fast 성능 테스트 |
+### UI
+- **`WorkflowBuilder.tsx` 오타 수정**: 모바일 뷰 안내 문구 "모 니터링을" → "모니터링을" 수정.
+- **노드 속성 패널 기초 구현**: React Flow 캔버스에서 노드 클릭 시 해당 노드의 ID·타입을 표시하는 읽기 전용 패널 추가 (편집 기능 제외).
 
 ---
 
 ## Test Results
 
-```
-pytest api/tests/ -v
+| 테스트 항목 | 결과 |
+|---|---|
+| `pytest` API 단위 테스트 (webhooks, HMAC, IP 파싱) | PASS |
+| `pytest` 워크플로우 스키마 유효성 검사 | PASS |
+| `pytest` Race Condition / 분산 락 시나리오 | PASS |
+| `npm run test` 프론트엔드 Jest (WorkflowBuilder, 속성 패널) | PASS |
+| Docker 컨테이너 기동 및 헬스체크 | PASS |
+| GitHub 웹훅 서명 검증 E2E (로컬 시뮬레이션) | PASS |
 
-PASSED  test_cors_allowed_origins[http://manbalboy.com]
-PASSED  test_cors_allowed_origins[https://api.manbalboy.com]
-PASSED  test_cors_allowed_origins[http://localhost:3000]
-PASSED  test_cors_allowed_origins[http://127.0.0.1:8080]
-PASSED  test_cors_blocked_origins[http://evil.com]
-PASSED  test_cors_blocked_origins[http://notmanbalboy.com]
-PASSED  test_webhook_payload_413[5.1MB]
-PASSED  test_webhook_payload_ok[4.9MB]
-PASSED  test_workflow_id_bool_rejected[true]
-PASSED  test_docker_negative_cache_failfast
-PASSED  test_redis_circuit_breaker_failfast
-
-============ 11 passed in 0.83s ============
-```
-
-모든 단위·통합 테스트 **100% 통과**.
+**Docker Preview 정보**
+- 컨테이너: `agent-hub-preview`
+- API 포트: `3000`
+- Web 포트: `3001`
+- Preview URL: `http://ssh.manbalboy.com:7000`
 
 ---
 
 ## Risks / Follow-ups
 
-| 구분 | 내용 |
-|---|---|
-| **위험** | Negative Cache TTL(3~5초)이 길 경우, Docker·Redis 복구 후에도 캐시 만료 전까지 서비스 재개가 지연될 수 있음 → TTL 튜닝 및 모니터링 필요 |
-| **위험** | 완화된 CORS 정규식이 변형된 Origin 헤더 패턴에 악용될 가능성 → 운영 환경 주기적 Origin 로그 점검 권장 |
-| **후속(선택)** | `/health` 엔드포인트에 Redis Fallback 상태·Docker 가용성 상세 정보 추가 (`REVIEW.md` TODO 선택 항목) |
-| **후속(선택)** | 특정 IP의 비정상적 Webhook 대량 요청 차단 — IP 기반 Rate Limiting 기능 추가 (`REVIEW.md` TODO 선택 항목) |
-| **범위 외** | Visual Workflow Builder(React Flow), Temporal/LangGraph 기반 엔진 전환, CI·Slack 통합 확장은 본 PR 범위 제외 |
+### 잠재적 위험
+- **웹훅 IP 파싱 변경**: 엄격해진 `X-Forwarded-For` 처리로 인해, 비표준 프록시 체인을 거치는 일부 GitHub 요청이 차단될 수 있습니다. 운영 배포 전 실제 GitHub 웹훅 수신 환경 확인을 권장합니다.
+- **분산 락 도입**: 단일 노드 환경에서는 영향 없으나, 향후 다중 워커 스케일아웃 시 락 제공자(lock_provider) 구현체를 Redis 등 외부 스토리지 기반으로 교체해야 합니다.
 
----
-
-## Docker Preview
-
-| 항목 | 값 |
-|---|---|
-| 컨테이너 | `agent-hub-api` |
-| 내부 포트 | `8000` |
-| 외부 노출 포트 | `7000` |
-| Preview URL | `http://ssh.manbalboy.com:7000` |
-
-```bash
-docker compose up --build
-# → http://ssh.manbalboy.com:7000/docs  (Swagger UI)
-# → http://ssh.manbalboy.com:7000/health
-```
+### 후속 과제 (Follow-ups)
+- [ ] Rate Limiter를 Redis 기반 분산 구현으로 전환 (현재 로컬 메모리 한계 문서화 완료)
+- [ ] Workflow Engine: `workflow_id` 기반 실행 전환 및 `node_runs` 저장 구조 구현 (P0, 다음 스프린트)
+- [ ] Visual Builder 노드 속성 패널 편집 기능 추가 (현재 읽기 전용)
+- [ ] Agent SDK 표준화: IO Schema, tools, fallback 정책 정형화
+- [ ] Temporal 또는 LangGraph 기반 Workflow Engine 아키텍처 전환 검토 (장기)
 
 ---
 
