@@ -3,25 +3,27 @@
 - Job: `c1f5f30c-a8df-4ce0-bd66-de3acf0908fc`
 - Issue: `#65`
 - Stage: `summarize_code_changes`
-- Generated at: `2026-03-04T20:12:59.064083+00:00`
+- Generated at: `2026-03-04T20:33:21.136050+00:00`
 
 ## Changed Files
 | Status | Path | Added | Deleted |
 |---|---|---:|---:|
-| `M` | `COMMIT_MESSAGE_COMMIT_FIX.txt` | `1` | `1` |
-| `M` | `api/app/api/webhooks.py` | `8` | `2` |
-| `M` | `api/app/schemas/webhook.py` | `2` | `0` |
-| `M` | `api/tests/test_webhooks_api.py` | `21` | `2` |
-| `M` | `web/src/App.tsx` | `102` | `21` |
-| `M` | `web/src/components/Dashboard.test.tsx` | `20` | `1` |
-| `M` | `web/src/components/Dashboard.tsx` | `33` | `1` |
-| `M` | `web/src/components/WorkflowBuilder.test.tsx` | `10` | `1` |
-| `M` | `web/src/components/WorkflowBuilder.tsx` | `31` | `12` |
-| `M` | `web/src/services/api.ts` | `74` | `1` |
-| `M` | `web/src/styles/app.css` | `95` | `0` |
-| `M` | `web/src/styles/tokens.css` | `1` | `0` |
-| `??` | `web/src/components/Toast.test.tsx` | `-` | `-` |
-| `??` | `web/src/components/Toast.tsx` | `-` | `-` |
+| `M` | `api/app/main.py` | `8` | `9` |
+| `M` | `api/tests/test_main.py` | `8` | `4` |
+| `M` | `api/tests/test_workflow_api.py` | `15` | `4` |
+| `M` | `web/jest.setup.ts` | `13` | `0` |
+| `M` | `web/package-lock.json` | `64` | `0` |
+| `M` | `web/package.json` | `4` | `2` |
+| `M` | `web/src/App.test.tsx` | `14` | `2` |
+| `M` | `web/src/App.tsx` | `24` | `4` |
+| `M` | `web/src/components/Toast.test.tsx` | `44` | `0` |
+| `M` | `web/src/components/Toast.tsx` | `29` | `4` |
+| `M` | `web/src/components/WorkflowBuilder.test.tsx` | `28` | `20` |
+| `M` | `web/src/components/WorkflowBuilder.tsx` | `49` | `6` |
+| `M` | `web/src/styles/app.css` | `13` | `0` |
+| `??` | `web/playwright.config.ts` | `-` | `-` |
+| `??` | `web/scripts/` | `-` | `-` |
+| `??` | `web/tests/` | `-` | `-` |
 
 ## Notes
 - 본 문서는 구현 직후 변경 파일을 빠르게 검토하기 위한 자동 요약입니다.
