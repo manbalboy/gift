@@ -22,12 +22,12 @@
 - Loop Engine이 평가(Evaluator) 단계에서 기준점(Quality Score threshold)을 달성하지 못해 동일한 코드를 무한정 리팩토링하려는 시도를 할 때, `max_loop_count` 제어 로직이 정상 작동하여 루프를 차단하는지 확인해야 합니다.
 
 ## TODO
-- [ ] `web/src/components/ErrorLogModal` UI 개선: `overflow-y: auto`, `word-break: break-all` 적용 및 5000자 초과 텍스트 Truncation('Show more' 버튼) 구현
-- [ ] 전역 Toast 알림 기능 추가 및 로그 복사 버튼 클릭 시 클립보드 API 성공/실패 예외 처리(연속 클릭 디바운싱 포함) 연동
-- [ ] 비정형 XSS 방어 로직 고도화 및 정상적인 제네릭 문법(`<T>`) 오탐 방지 예외 처리 적용 (정규식 성능 최적화 포함)
-- [ ] `web/src/components/ErrorLogModal.test.tsx`에 클립보드 API 성공/예외 상황 Mock 단위 테스트 작성
-- [ ] `web/src/utils/security.test.ts`에 XSS 심화 엣지 케이스 및 제네릭 방어 로직 교차 검증 단위 테스트 추가
+- [x] `web/src/components/ErrorLogModal` UI 개선: `overflow-y: auto`, `word-break: break-all` 적용 및 5000자 초과 텍스트 Truncation('Show more' 버튼) 구현
+- [x] 전역 Toast 알림 기능 추가 및 로그 복사 버튼 클릭 시 클립보드 API 성공/실패 예외 처리(연속 클릭 디바운싱 포함) 연동
+- [x] 비정형 XSS 방어 로직 고도화 및 정상적인 제네릭 문법(`<T>`) 오탐 방지 예외 처리 적용 (정규식 성능 최적화 포함)
+- [x] `web/src/components/ErrorLogModal.test.tsx`에 클립보드 API 성공/예외 상황 Mock 단위 테스트 작성
+- [x] `web/src/utils/security.test.ts`에 XSS 심화 엣지 케이스 및 제네릭 방어 로직 교차 검증 단위 테스트 추가
 - [ ] 로컬 환경 구동 시(`http://localhost:3100`) 빈 문자열, 극단적 더미 텍스트 등을 주입하여 렌더링 붕괴 여부 및 Toast 상태 통합 수동 테스트 진행
-- [ ] FastAPI 기반 Self-Improvement Loop 엔진 4대 핵심 컴포넌트(Analyzer, Evaluator, Planner, Executor) 기본 라우팅 및 모의 응답 엔드포인트 설계
-- [ ] Loop Engine의 무한 루프 방지(Loop Control) 및 장기 기억(Memory) 데이터 저장을 위한 스키마 초안 작성
-- [ ] 웹 서버 및 API 엔드포인트 CORS 정책 검증 (허용 기준값: manbalboy.com 및 localhost 계열)
+- [x] FastAPI 기반 Self-Improvement Loop 엔진 4대 핵심 컴포넌트(Analyzer, Evaluator, Planner, Executor) 기본 라우팅 및 모의 응답 엔드포인트 설계
+- [x] Loop Engine의 무한 루프 방지(Loop Control) 및 장기 기억(Memory) 데이터 저장을 위한 스키마 초안 작성
+- [x] 웹 서버 및 API 엔드포인트 CORS 정책 검증 (허용 기준값: manbalboy.com 및 localhost 계열)
