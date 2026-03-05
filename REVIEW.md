@@ -1,28 +1,31 @@
 # REVIEW
 
-## Functional bugs
-* **UI 레이아웃 붕괴 (텍스트 오버플로우)**: 프론트엔드의 `SystemAlertWidget.tsx` 컴포넌트 등에서 긴 시스템 알림 문자열이 연속될 경우, 줄바꿈 처리가 적절히 수행되지 않아 모바일 뷰포트(예: 너비 320px)에서 화면 밖으로 텍스트 영역이 이탈하고 가로 스크롤이 발생하는 버그가 존재합니다.
-* **조회 시 페이징 누락 및 중복 현상**: 대량의 시스템 로그 및 알림이 동일한 밀리초(ms)에 일괄 삽입될 경우, 현재의 Offset 기반 페이징 로직으로는 데이터 누락이나 중복 조회가 발생할 수 있습니다.
-* **포트 경합 및 락 릴리즈 실패**: 여러 백그라운드 프로세스 실행 시 포트 경합 락 대기가 길어질 경우 릴리즈가 정상 관측되지 않는 현상이 있습니다. (재현 예시: 로컬 포트 3100번을 대상으로 다수의 쉘 프로세스가 충돌 경합할 때 비정상 행(Hang) 발생)
+### Functional bugs
+- **UI 텍스트 오버플로우 및 레이아웃 붕괴:** 모바일 뷰포트(예: 너비 320px) 환경에서 시스템 알림(`SystemAlertWidget`)에 띄어쓰기가 없는 극단적으로 긴 문자열이 전달될 경우, 텍스트가 컨테이너 영역을 벗어나 가로 스크롤바가 발생하고 레이아웃이 붕괴되는 버그가 있습니다. 요소에 `word-break: break-all` 및 `overflow-wrap: break-word` 속성이 누락되어 발생합니다.
+- **Offset 페이징 데이터 누락 및 중복 결함:** 대량의 시스템 알림이 동시에(동일 밀리초 등) 적재되는 환경에서, 기존의 Offset 방식 페이징을 사용해 다음 페이지를 조회하면 로그 항목의 누락이나 중복 조회가 발생할 수 있는 치명적 결함이 존재합니다. 데이터 일관성을 위해 Cursor 기반 페이징으로의 전환이 필수적입니다.
 
-## Security concerns
-* **ReDoS (정규표현식 서비스 거부) 취약점 위험**: `api/app/services/system_alerts.py`의 `_sanitize_string`과 같은 텍스트 검열 로직에서 입력받는 문자열의 최대 길이를 검증하지 않습니다. 악의적인 초장문 텍스트(예: 20,000자 이상)가 필터링 없이 인입되어 정규식 매칭을 수행하게 되면, 서버의 CPU 자원을 과도하게 점유하고 심각한 병목 및 지연을 유발합니다. 반드시 정규식 실행 전 단계에서 문자열을 선제적으로 절삭(Truncate)하여 허용 길이(예: 10,000자) 이내로 제한해야 합니다.
+### Security concerns
+- **ReDoS (정규표현식 서비스 거부) 취약점:** `api/app/services/system_alerts.py` 파일 내 `_sanitize_string` 등의 텍스트 검열 로직에서 정규표현식을 실행하기 전 입력 문자열 길이를 제한하지 않고 있습니다. 악의적인 사용자나 시스템이 20,000자 이상의 비정상적으로 긴 텍스트 페이로드를 인입시킬 경우, 정규표현식 처리 병목으로 인해 서버가 서비스 거부 상태에 빠질 위험이 있습니다.
 
-## Missing tests / weak test coverage
-* **예산(Budget) 제한 경계값 단위 테스트 부재**: `api/tests/test_workflow_engine.py`에서 워크플로우 노드 반복 실행을 제어하는 예산 한도 초과 상황에 대해, 제한 수치와 정확히 일치하는 시점과 그 직후를 세밀하게 단언(Assert)하는 단위 테스트가 부족합니다.
-* **모바일 UI 환경의 텍스트 E2E 시각 테스트 미흡**: `web/tests/e2e/system-alert.spec.ts` 내에 극단적으로 긴 텍스트 페이로드를 주입한 상태에서, 좁은 모바일 화면이 깨지거나 가로 스크롤 영역이 생기는지 방어 여부를 확인하는 시각적 E2E 시나리오가 누락되어 있습니다.
-* **동시성 쉘 스크립트 테스트 커버리지 부족**: `web/scripts/test-port-timeout.sh`에서 여러 백그라운드 비동기 프로세스가 동시에 3100번 포트 락을 선점하려 할 때, 설정된 타임아웃 처리와 안전한 해제(Release) 과정을 명확히 보장하는 시나리오가 미흡합니다.
+### Missing tests / weak test coverage
+- **워크플로우 예산(Budget) 제한 테스트 누락:** 초장기 24시간 루프 실행이 예상되는 엔진에서 무한 반복을 제어하는 예산 한계 경계값 초과 상황에 대한 단위 테스트(`api/tests/test_workflow_engine.py`)가 없습니다.
+- **모바일 뷰포트 시각 테스트 부족:** 프론트엔드 모바일 UI 환경에서 장문의 텍스트 입력 시 레이아웃 초과 여부를 자동 검증하는 Playwright E2E 테스트 시나리오(`web/tests/e2e/system-alert.spec.ts`)가 불충분합니다.
+- **포트 동시성 락 경합 커버리지 미흡:** `web/scripts/test-port-timeout.sh` 스크립트를 여러 백그라운드 프로세스로 동시 실행할 때 발생하는 다중 락 경합 상황 및 데드락 해제, 타임아웃 검증 시나리오가 빈약합니다.
 
-## Edge cases
-* **동시 알림 폭증 시 시인성 저하**: 워크플로우 실행 실패가 연쇄적으로 발생하여 시스템 알림 대시보드에 데이터가 급증할 경우, 사용자가 이를 한 번에 파악하거나 해소하기 어렵습니다. 화면을 깨끗하게 정리할 수 있는 일괄 초기화(Clear All) 기능이 부재하여 알림 누적 시 중요 이벤트 파악이 지연될 엣지 케이스가 존재합니다.
-* **느린 CI 환경에서의 프로세스 경합(Race Condition)**: 통합 쉘 스크립트 실행 환경의 사양에 따라 비동기 프로세스의 락 획득 타이밍이 엇갈려 간헐적 실패를 유발할 수 있습니다. 슬립(Sleep)과 타임아웃 여유가 충분히 보장되지 않으면 오작동으로 판단될 리스크가 있습니다.
+### Edge cases
+- **초당 대량 로그 삽입 동시성 처리:** 수십 건의 로그가 완전히 동일한 밀리초(ms) 단위의 타임스탬프로 DB에 삽입되는 극단적인 엣지 케이스에서 단순 날짜순 정렬 시 순서가 꼬일 수 있습니다. `(created_at DESC, id DESC)` 형태의 복합 인덱스를 적용해야만 Cursor 기반 페이징에서 무한 스크롤이나 중복 조회를 방어할 수 있습니다.
+- **대량 로그 렌더링 부하 발생:** 이벤트 버스와 통합되어 짧은 시간에 엄청난 양의 알림이 발생할 경우, 클라이언트 브라우저의 렌더링 부하를 막기 위해 일괄 초기화(Clear All) 버튼을 통한 즉각적인 화면 정리와 오프라인 분석을 위한 다운로드(Export Logs) 기능이 필요합니다.
+- **로컬 실행 포트 충돌 가능성:** 개발 환경에서 프론트엔드와 API 서버, 외부 Preview 서버 등이 동시에 동작할 때 포트 충돌 가능성이 있습니다. 실행 및 재현 예시로 프론트엔드 컨테이너는 `http://localhost:3100`, 백엔드 API 컨테이너는 `http://localhost:3101` 등 3100번대 포트를 명시적으로 할당하여 락 스크립트 대기 현상이나 실행 오류를 방지해야 합니다.
 
-## TODO
-- [ ] `api/app/services/system_alerts.py`의 `_sanitize_string` 등 입력 처리 함수에 최대 문자열 길이(예: 10,000자) 제한 및 정규식 처리 이전 사전 절삭(Truncate) 로직 추가.
-- [ ] `web/src/components/SystemAlertWidget.tsx` 또는 연관 스타일 시트 텍스트 컨테이너 영역에 `word-break: break-all` 및 `overflow-wrap: break-word` (또는 `anywhere`) 강제 적용.
-- [ ] `api/scripts/migrations/` 경로에 새로운 스크립트를 추가하여 `created_at` 단일 인덱스를 `(created_at DESC, id DESC)` 구조의 복합 인덱스로 마이그레이션.
-- [ ] `api/app/api/logs.py` 등의 시스템 알림 조회 API를 복합 인덱스를 활용하는 Cursor 기반 페이징 로직으로 전환.
-- [ ] 알림 대시보드의 데이터를 일괄 삭제 혹은 숨김 처리할 수 있는 백엔드 Clear All 엔드포인트 구현 및 프론트엔드 버튼 위젯 연동.
-- [ ] `api/tests/test_workflow_engine.py` 내 예산(Budget) 한도 경계값 및 초과 상황을 검증하는 엣지 케이스 단위 테스트 추가 작성.
-- [ ] `web/tests/e2e/system-alert.spec.ts`에 극단적인 장문 텍스트 주입 상황에서도 모바일 뷰포트 레이아웃을 안전하게 유지하는지 단언하는 E2E 테스트 시나리오 보강.
-- [ ] `web/scripts/test-port-timeout.sh`에 다수의 쉘 프로세스가 3100번 포트의 락을 경합할 때의 타임아웃 및 해제 동작 커버리지 시나리오 추가 및 검증.
+---
+
+# TODO
+
+- [ ] `api/app/services/system_alerts.py`의 `_sanitize_string` 함수에 정규표현식 실행 전 문자열 길이를 10,000자로 선제적 제한(Truncate)하는 방어 로직 추가.
+- [ ] `web/src/components/SystemAlertWidget.tsx` 컨테이너 및 연관 CSS에 `word-break: break-all` 및 `overflow-wrap: break-word` 속성 적용.
+- [ ] `api/scripts/migrations/20260305_add_system_alert_created_at_desc_index.sql` 스크립트 적용 및 `api/app/api/logs.py` 페이징 로직을 Cursor 기반(복합 인덱스 활용)으로 전환.
+- [ ] 프론트엔드 대시보드 위젯에 시스템 알림 일괄 초기화(Clear All) UI 버튼 추가 및 백엔드 숨김/삭제 API 연동.
+- [ ] 클라이언트 사이드에 로드된 시스템 알림 데이터를 즉시 JSON 파일로 다운로드할 수 있는 내보내기(Export Logs) 유틸리티 버튼 구현.
+- [ ] `api/tests/test_workflow_engine.py`에 무한 루프 예방용 예산(Budget) 한계 경계값 테스트 케이스 작성.
+- [ ] `web/tests/e2e/system-alert.spec.ts`에 모바일 해상도(320px) 기준 장문 텍스트 인입 시 레이아웃 붕괴 여부를 확인하는 프로그래매틱 검증 로직 추가.
+- [ ] `web/scripts/test-port-timeout.sh` 내 다중 백그라운드 프로세스 실행에 따른 락 경합 시나리오(포트 3100 할당 기준) 및 트랩 해제 테스트 코드 보강.
