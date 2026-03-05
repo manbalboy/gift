@@ -3,6 +3,7 @@ import Dashboard from './components/Dashboard';
 import LiveRunConstellation from './components/LiveRunConstellation';
 import SafeArtifactViewer from './components/SafeArtifactViewer';
 import StatusBadge from './components/StatusBadge';
+import SystemAlertWidget from './components/SystemAlertWidget';
 import Toast, { type ToastItem } from './components/Toast';
 import WorkflowBuilder from './components/WorkflowBuilder';
 import { useViewport } from './hooks/useViewport';
@@ -13,6 +14,7 @@ import type {
   HumanGateAuditDecision,
   HumanGateStaleAlert,
   StatusArtifactAuditEntry,
+  SystemAlertEntry,
   WebhookBlockedEvent,
   Workflow,
   WorkflowRun,
@@ -50,6 +52,8 @@ export default function App() {
   const [humanGateAuditDateRange, setHumanGateAuditDateRange] = useState<'all' | '24h' | '7d' | '30d' | 'today'>('all');
   const [humanGateAuditsLoading, setHumanGateAuditsLoading] = useState(false);
   const [staleHumanGateAlerts, setStaleHumanGateAlerts] = useState<HumanGateStaleAlert[]>([]);
+  const [systemAlerts, setSystemAlerts] = useState<SystemAlertEntry[]>([]);
+  const [systemAlertsLoading, setSystemAlertsLoading] = useState(false);
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectTargetNodeId, setRejectTargetNodeId] = useState<string | null>(null);
@@ -172,6 +176,39 @@ export default function App() {
     const timer = window.setInterval(() => {
       void syncBlockedEvents();
     }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const syncSystemAlerts = async () => {
+      if (!cancelled) {
+        setSystemAlertsLoading(true);
+      }
+      try {
+        const items = await api.listSystemAlerts(50);
+        if (!cancelled) {
+          setSystemAlerts(items);
+        }
+      } catch {
+        if (!cancelled) {
+          setSystemAlerts([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setSystemAlertsLoading(false);
+        }
+      }
+    };
+
+    void syncSystemAlerts();
+    const timer = window.setInterval(() => {
+      void syncSystemAlerts();
+    }, 10_000);
 
     return () => {
       cancelled = true;
@@ -663,6 +700,7 @@ export default function App() {
 
         <main className="main-workspace">
           <LiveRunConstellation data={constellation} />
+          <SystemAlertWidget alerts={systemAlerts} loading={systemAlertsLoading} />
           <Dashboard
             run={run}
             blockedEvents={blockedWebhookEvents}

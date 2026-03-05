@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 
 from app.core.config import settings
+from app.services.system_alerts import record_system_alert
 
 
 NODE_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -48,6 +49,14 @@ class WorkspaceService:
                 )
                 if not is_lock_related or attempt >= attempts:
                     raise
+                logger.warning(
+                    "workspace_lock_contention_retry",
+                    extra={
+                        "attempt": attempt,
+                        "max_attempts": attempts,
+                        "error_type": exc.__class__.__name__,
+                    },
+                )
                 time.sleep(base_delay * attempt)
         raise RuntimeError("workspace retry loop exhausted")
 
@@ -71,6 +80,13 @@ class WorkspaceService:
                 },
                 exc_info=True,
             )
+            record_system_alert(
+                level="error",
+                code="workspace_dir_access_failed",
+                message="워크스페이스 디렉터리 접근 중 Lock/권한 오류가 발생했습니다.",
+                source="workspace",
+                context={"run_id": run_id, "node_id": node_id, "path": str(target_dir), "error_type": exc.__class__.__name__},
+            )
             raise WorkspaceArtifactIOError(
                 f"workspace artifact directory access failed: {target_dir} ({exc.__class__.__name__})"
             ) from exc
@@ -87,6 +103,13 @@ class WorkspaceService:
                     "error_type": exc.__class__.__name__,
                 },
                 exc_info=True,
+            )
+            record_system_alert(
+                level="error",
+                code="workspace_write_failed",
+                message="아티팩트 파일 쓰기 중 Lock/권한 오류가 발생했습니다.",
+                source="workspace",
+                context={"run_id": run_id, "node_id": node_id, "path": str(artifact), "error_type": exc.__class__.__name__},
             )
             raise WorkspaceArtifactIOError(
                 f"workspace artifact write failed: {artifact} ({exc.__class__.__name__})"
@@ -125,6 +148,13 @@ class WorkspaceService:
                 },
                 exc_info=True,
             )
+            record_system_alert(
+                level="error",
+                code="workspace_read_failed",
+                message="아티팩트 파일 읽기 중 Lock/권한 오류가 발생했습니다.",
+                source="workspace",
+                context={"run_id": run_id, "node_id": node_id, "path": str(artifact), "error_type": exc.__class__.__name__},
+            )
             raise WorkspaceArtifactIOError(
                 f"workspace artifact read failed: {artifact} ({exc.__class__.__name__})"
             ) from exc
@@ -153,6 +183,18 @@ class WorkspaceService:
                     "error_type": exc.__class__.__name__,
                 },
                 exc_info=True,
+            )
+            record_system_alert(
+                level="error",
+                code="workspace_sandbox_access_failed",
+                message="샌드박스 디렉터리 접근 중 Lock/권한 오류가 발생했습니다.",
+                source="workspace",
+                context={
+                    "run_id": run_id,
+                    "node_id": node_id,
+                    "path": str(sandbox_dir),
+                    "error_type": exc.__class__.__name__,
+                },
             )
             raise WorkspaceArtifactIOError(
                 f"workspace sandbox access failed: {sandbox_dir} ({exc.__class__.__name__})"

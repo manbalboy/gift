@@ -128,3 +128,13 @@ export type HumanGateStaleAlert = {
   pending_since: string;
   overdue_seconds: number;
 };
+
+export type SystemAlertEntry = {
+  id: string;
+  created_at: string;
+  level: 'warning' | 'error' | 'info';
+  code: string;
+  message: string;
+  source: string;
+  context: Record<string, unknown>;
+};

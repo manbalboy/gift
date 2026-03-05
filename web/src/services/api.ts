@@ -4,6 +4,7 @@ import type {
   HumanGateAuditDecision,
   HumanGateStaleAlert,
   StatusArtifactAuditListResponse,
+  SystemAlertEntry,
   WebhookBlockedEvent,
   Workflow,
   WorkflowGraphValidationResult,
@@ -187,4 +188,6 @@ export const api = {
     return request<HumanGateStaleAlert[]>(`/runs/human-gate-alerts/scan?${params.toString()}`, { method: 'POST' });
   },
   cancelApproval: (approvalId: number) => requestHumanGateAction(`/approvals/${approvalId}/cancel`),
+  listSystemAlerts: (limit = 50) =>
+    request<SystemAlertEntry[]>(`/logs/system-alerts?limit=${Math.max(1, Math.min(limit, 50))}`),
 };

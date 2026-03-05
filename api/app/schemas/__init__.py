@@ -1,4 +1,5 @@
 from app.schemas.agent import AgentCreate, AgentOut, AgentTaskRequest, AgentTaskResult, AgentUpdate
+from app.schemas.logs import SystemAlertOut
 from app.schemas.webhook import WebhookBlockedEventOut, WebhookEventOut
 from app.schemas.workflow import (
     HumanGateDecisionAuditOut,
@@ -31,4 +32,5 @@ __all__ = [
     "WorkflowRunOut",
     "HumanGateDecisionAuditOut",
     "RunEventOut",
+    "SystemAlertOut",
 ]

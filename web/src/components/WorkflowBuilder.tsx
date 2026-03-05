@@ -139,6 +139,7 @@ function TaskNode({
   attemptLimit?: number;
   errorSnippet?: string;
   onRetryNode?: (nodeId: string) => void;
+  onOpenErrorTooltip?: (payload: { nodeId: string; snippet: string; anchor: HTMLButtonElement }) => void;
   nodeId: string;
 }>) {
   const status = normalizeNodeStatus(data.status);
@@ -155,18 +156,36 @@ function TaskNode({
       </div>
       <div className="workflow-node-attempt mono">{`Attempt ${attemptCount}/${attemptLimit}`}</div>
       {status === 'failed' && (
-        <button
-          type="button"
-          className="workflow-node-retry"
-          title={snippet || '실패 로그가 없습니다.'}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            data.onRetryNode?.(data.nodeId);
-          }}
-        >
-          Retry Node
-        </button>
+        <div className="workflow-node-actions">
+          <button
+            type="button"
+            className="workflow-node-retry"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              data.onRetryNode?.(data.nodeId);
+            }}
+          >
+            Retry Node
+          </button>
+          <button
+            type="button"
+            className="workflow-node-error"
+            disabled={!snippet}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!snippet) return;
+              data.onOpenErrorTooltip?.({
+                nodeId: data.nodeId,
+                snippet,
+                anchor: event.currentTarget,
+              });
+            }}
+          >
+            오류 보기
+          </button>
+        </div>
       )}
       <Handle type="source" position={Position.Right} />
     </div>
@@ -266,6 +285,12 @@ export default function WorkflowBuilder({
   const [nodeSequence, setNodeSequence] = useState(6);
   const [isDryRunning, setIsDryRunning] = useState(false);
   const [validationSummary, setValidationSummary] = useState<string>('');
+  const [errorTooltip, setErrorTooltip] = useState<{
+    nodeId: string;
+    snippet: string;
+    left: number;
+    top: number;
+  } | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance | null>(null);
   const nodeTypes = useMemo(() => ({ taskNode: TaskNode }), []);
@@ -283,6 +308,13 @@ export default function WorkflowBuilder({
             attemptLimit: nodeMeta?.[node.id]?.attemptLimit ?? 1,
             errorSnippet: nodeMeta?.[node.id]?.errorSnippet ?? '',
             onRetryNode,
+            onOpenErrorTooltip: ({ nodeId, snippet, anchor }: { nodeId: string; snippet: string; anchor: HTMLButtonElement }) => {
+              const canvasRect = canvasWrapRef.current?.getBoundingClientRect();
+              const anchorRect = anchor.getBoundingClientRect();
+              const left = canvasRect ? anchorRect.left - canvasRect.left : 16;
+              const top = canvasRect ? anchorRect.bottom - canvasRect.top + 8 : 16;
+              setErrorTooltip({ nodeId, snippet, left, top });
+            },
             nodeId: node.id,
           },
         };
@@ -296,6 +328,7 @@ export default function WorkflowBuilder({
     setNodes(initial.nodes);
     setEdges(initial.edges);
     setSelectedNodeId(null);
+    setErrorTooltip(null);
     const nextSequence =
       initial.nodes.reduce((maxValue, node) => {
         const extracted = Number.parseInt(node.id.replace(/^node-/, ''), 10);
@@ -446,6 +479,7 @@ export default function WorkflowBuilder({
 
   const onPaneClick = useCallback(() => {
     setSelectedNodeId(null);
+    setErrorTooltip(null);
   }, []);
 
   return (
@@ -530,6 +564,26 @@ export default function WorkflowBuilder({
             />
           )}
         </ReactFlow>
+        {errorTooltip && (
+          <>
+            <div className="workflow-error-sheet-backdrop" onClick={() => setErrorTooltip(null)} aria-hidden="true" />
+            <section
+              className="workflow-error-tooltip"
+              role="dialog"
+              aria-modal="false"
+              aria-label="노드 오류 툴팁"
+              style={{ left: `${errorTooltip.left}px`, top: `${errorTooltip.top}px` }}
+            >
+              <div className="workflow-error-tooltip-header">
+                <strong className="mono">{errorTooltip.nodeId}</strong>
+                <button type="button" className="btn btn-ghost" onClick={() => setErrorTooltip(null)}>
+                  닫기
+                </button>
+              </div>
+              <pre className="workflow-error-tooltip-body mono">{errorTooltip.snippet}</pre>
+            </section>
+          </>
+        )}
       </div>
       <section className="node-detail-panel" aria-label="selected-node-panel">
         <h3>선택 노드</h3>

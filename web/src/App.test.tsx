@@ -119,6 +119,7 @@ jest.mock('./services/api', () => {
       sendMalformedDevIntegrationWebhook: jest.fn(),
       subscribeWorkflowRuns: jest.fn(),
       listWebhookBlockedEvents: jest.fn(),
+      listSystemAlerts: jest.fn(),
       getStatusArtifactAudits: jest.fn(),
       scanStaleHumanGateAlerts: jest.fn(),
       cancelApproval: jest.fn(),
@@ -173,6 +174,7 @@ describe('App', () => {
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
     (api.subscribeWorkflowRuns as jest.Mock).mockReturnValue(() => undefined);
     (api.listWebhookBlockedEvents as jest.Mock).mockResolvedValue([]);
+    (api.listSystemAlerts as jest.Mock).mockResolvedValue([]);
     (api.getStatusArtifactAudits as jest.Mock).mockResolvedValue({
       items: [],
       total_count: 0,

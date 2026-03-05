@@ -62,6 +62,40 @@ def test_write_artifact_retries_on_permission_lock(monkeypatch):
     assert calls["count"] == 3
 
 
+def test_read_artifact_retries_on_open_lock_contention(monkeypatch):
+    workspace = WorkspaceService()
+    workspace.write_artifact(run_id=7, node_id="read-lock", content="hello")
+    calls = {"count": 0}
+    original_open = Path.open
+
+    def flaky_open(path_obj: Path, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise PermissionError("file is temporarily locked")
+        return original_open(path_obj, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flaky_open)
+    chunk, has_more, next_offset = workspace.read_artifact_chunk(run_id=7, node_id="read-lock", offset=0, limit=16)
+
+    assert chunk == "hello"
+    assert has_more is False
+    assert next_offset == len("hello".encode("utf-8"))
+    assert calls["count"] == 3
+
+
+def test_read_artifact_raises_on_lock_contention_exhausted(monkeypatch):
+    workspace = WorkspaceService()
+    workspace.write_artifact(run_id=8, node_id="read-fail", content="hello")
+
+    def always_locked(*_args, **_kwargs):
+        raise PermissionError("permanently locked")
+
+    monkeypatch.setattr(Path, "open", always_locked)
+
+    with pytest.raises(WorkspaceArtifactIOError):
+        workspace.read_artifact_chunk(run_id=8, node_id="read-fail", offset=0, limit=16)
+
+
 def test_human_gate_rejects_cross_workspace_approval_with_403(monkeypatch):
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
