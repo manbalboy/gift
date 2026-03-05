@@ -18,6 +18,9 @@ from .conftest import client
         "https://manbalboy.com",
         "http://manbalboy.com:3102",
         "http://ssh.manbalboy.com:3105",
+        "http://localhost:7000",
+        "https://127.0.0.1:7099",
+        "http://ssh.manbalboy.com:7008",
     ],
 )
 def test_cors_allows_expected_origins(origin: str):
@@ -296,3 +299,15 @@ def test_config_safe_float_parser_falls_back_on_invalid_values():
     assert _as_float("", 0.5) == 0.5
     assert _as_float("NaNNaN", 0.5) == 0.5
     assert _as_float("1.25", 0.5) == 1.25
+
+
+def test_workflow_control_rbac_map_parser(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "workflow_control_rbac_map",
+        "admin:*,operator:loop:start|loop:pause|loop:resume, reviewer:loop:inject ",
+    )
+    parsed = settings.workflow_control_permissions_by_role
+    assert parsed["admin"] == {"*"}
+    assert parsed["operator"] == {"loop:start", "loop:pause", "loop:resume"}
+    assert parsed["reviewer"] == {"loop:inject"}

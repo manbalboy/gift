@@ -215,5 +215,12 @@ export const api = {
   getLoopEngineStatus: () => request<LoopEngineStatus>('/loop/status'),
   startLoopEngine: () => request<LoopEngineStatus>('/loop/start', { method: 'POST', headers: workflowControlHeaders() }),
   pauseLoopEngine: () => request<LoopEngineStatus>('/loop/pause', { method: 'POST', headers: workflowControlHeaders() }),
+  resumeLoopEngine: () => request<LoopEngineStatus>('/loop/resume', { method: 'POST', headers: workflowControlHeaders() }),
   stopLoopEngine: () => request<LoopEngineStatus>('/loop/stop', { method: 'POST', headers: workflowControlHeaders() }),
+  injectLoopInstruction: (instruction: string) =>
+    request<LoopEngineStatus>('/loop/inject', {
+      method: 'POST',
+      headers: workflowControlHeaders(),
+      body: JSON.stringify({ instruction }),
+    }),
 };

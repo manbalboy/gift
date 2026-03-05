@@ -199,6 +199,16 @@ class Settings:
         4.0,
         "DEVFLOW_SSE_REDIS_FALLBACK_TTL_SECONDS",
     )
+    sse_stream_event_buffer_max_items: int = _as_int(
+        os.getenv("DEVFLOW_SSE_STREAM_EVENT_BUFFER_MAX_ITEMS"),
+        256,
+        "DEVFLOW_SSE_STREAM_EVENT_BUFFER_MAX_ITEMS",
+    )
+    sse_stream_event_buffer_max_bytes: int = _as_int(
+        os.getenv("DEVFLOW_SSE_STREAM_EVENT_BUFFER_MAX_BYTES"),
+        262144,
+        "DEVFLOW_SSE_STREAM_EVENT_BUFFER_MAX_BYTES",
+    )
     sse_trusted_proxy_ips: str = os.getenv("DEVFLOW_SSE_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
     webhook_rate_limit_per_window: int = _as_int(
         os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_PER_WINDOW"),
@@ -218,6 +228,7 @@ class Settings:
     )
     workflow_control_token: str = os.getenv("DEVFLOW_WORKFLOW_CONTROL_TOKEN", "")
     workflow_control_roles: str = os.getenv("DEVFLOW_WORKFLOW_CONTROL_ROLES", "")
+    workflow_control_rbac_map: str = os.getenv("DEVFLOW_WORKFLOW_CONTROL_RBAC_MAP", "")
     workflow_node_iteration_budget: int = _as_int(
         os.getenv("DEVFLOW_WORKFLOW_NODE_ITERATION_BUDGET"),
         8,
@@ -312,6 +323,24 @@ class Settings:
     @property
     def allowed_workflow_control_roles(self) -> set[str]:
         return _as_csv_set(self.workflow_control_roles, lower=True)
+
+    @property
+    def workflow_control_permissions_by_role(self) -> dict[str, set[str]]:
+        if not isinstance(self.workflow_control_rbac_map, str):
+            return {}
+        role_map: dict[str, set[str]] = {}
+        for chunk in self.workflow_control_rbac_map.split(","):
+            item = chunk.strip()
+            if not item or ":" not in item:
+                continue
+            role_raw, perms_raw = item.split(":", maxsplit=1)
+            role = role_raw.strip().lower()
+            if not role:
+                continue
+            perms = {perm.strip().lower() for perm in perms_raw.split("|") if perm.strip()}
+            if perms:
+                role_map[role] = perms
+        return role_map
 
     @property
     def spoof_guard_ports(self) -> set[int]:

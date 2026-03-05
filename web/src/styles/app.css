@@ -935,6 +935,25 @@ select {
   gap: var(--space-8);
 }
 
+.loop-engine-inject {
+  margin-top: var(--space-16);
+  display: grid;
+  gap: var(--space-8);
+}
+
+.loop-engine-inject label {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
+.loop-engine-inject-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-8);
+  align-items: center;
+}
+
 .system-alert-widget {
   border-color: color-mix(in srgb, var(--color-status-warning) 22%, var(--color-border-default));
 }
@@ -1603,6 +1622,14 @@ select {
   }
 
   .failed-alert .btn-danger {
+    height: 44px;
+  }
+
+  .loop-engine-inject-row {
+    grid-template-columns: 1fr;
+  }
+
+  .loop-engine-inject-row .btn {
     height: 44px;
   }
 

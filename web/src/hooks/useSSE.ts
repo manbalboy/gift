@@ -32,6 +32,39 @@ export function subscribeSSE<TPayload>({
   let reconnectAttempt = 0;
   let isConnecting = false;
   let lastEventId: string | null = null;
+  let lastNumericEventId = -1;
+  const seenEventIds = new Set<string>();
+  const seenEventIdQueue: string[] = [];
+  const MAX_SEEN_EVENT_IDS = 512;
+
+  const trackSeenEventId = (eventId: string) => {
+    if (seenEventIds.has(eventId)) return;
+    seenEventIds.add(eventId);
+    seenEventIdQueue.push(eventId);
+    if (seenEventIdQueue.length > MAX_SEEN_EVENT_IDS) {
+      const removed = seenEventIdQueue.shift();
+      if (removed) seenEventIds.delete(removed);
+    }
+  };
+
+  const shouldProcessEvent = (eventIdRaw: string | null): boolean => {
+    if (!eventIdRaw) return true;
+    const eventId = eventIdRaw.trim();
+    if (!eventId) return true;
+
+    if (/^\d+$/.test(eventId)) {
+      const numericId = Number(eventId);
+      if (Number.isFinite(numericId)) {
+        if (numericId <= lastNumericEventId) return false;
+        lastNumericEventId = numericId;
+        return true;
+      }
+    }
+
+    if (seenEventIds.has(eventId)) return false;
+    trackSeenEventId(eventId);
+    return true;
+  };
 
   const closeStream = (target?: EventSource) => {
     if (!stream) return;
@@ -80,9 +113,9 @@ export function subscribeSSE<TPayload>({
     nextStream.addEventListener(eventName, (event) => {
       if (stream !== nextStream) return;
       const message = event as MessageEvent<string>;
-      if (typeof message.lastEventId === 'string' && message.lastEventId.trim()) {
-        lastEventId = message.lastEventId.trim();
-      }
+      const eventId = typeof message.lastEventId === 'string' ? message.lastEventId.trim() : '';
+      if (!shouldProcessEvent(eventId || null)) return;
+      if (eventId) lastEventId = eventId;
       onEvent(parse(message.data));
     });
     nextStream.onerror = (event) => {

@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "PORT=${WEB_PORT:-3100} && vite preview --host 0.0.0.0 --port $PORT",
     "test": "jest --runInBand",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "security:scan": "node ./scripts/check-sanitize-security.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.19",

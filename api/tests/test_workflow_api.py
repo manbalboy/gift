@@ -128,6 +128,29 @@ def test_cors_allows_localhost_31xx():
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3108"
 
 
+def test_cors_allows_preview_port_7000_range():
+    response = client.options(
+        "/api/workflows",
+        headers={
+            "Origin": "http://localhost:7007",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:7007"
+
+
+def test_cors_blocks_preview_out_of_range_port():
+    response = client.options(
+        "/api/workflows",
+        headers={
+            "Origin": "http://localhost:7100",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 400
+
+
 def test_cors_blocks_manbalboy_unsupported_port():
     response = client.options(
         "/api/workflows",
@@ -315,6 +338,24 @@ def test_workflow_runs_stream_rate_limit_returns_429(monkeypatch):
 
     second = client.get(f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1")
     assert second.status_code == 429
+
+
+def test_stream_event_buffer_applies_item_and_memory_cap(monkeypatch):
+    workflows_api.workflow_stream_event_buffer.clear()
+    monkeypatch.setattr(workflows_api.settings, "sse_stream_event_buffer_max_items", 3)
+    monkeypatch.setattr(workflows_api.settings, "sse_stream_event_buffer_max_bytes", 40)
+
+    workflow_id = 9_999
+    workflows_api._append_stream_event(workflow_id, 1, "A" * 10)
+    workflows_api._append_stream_event(workflow_id, 2, "B" * 10)
+    workflows_api._append_stream_event(workflow_id, 3, "C" * 10)
+    workflows_api._append_stream_event(workflow_id, 4, "D" * 10)
+
+    buffered = workflows_api.workflow_stream_event_buffer.get(workflow_id, [])
+    assert buffered
+    assert len(buffered) <= 3
+    assert sum(item[2] for item in buffered) <= 40
+    assert buffered[-1][0] == 4
 
 
 def test_workflow_runs_stream_ignores_untrusted_forwarded_for(monkeypatch):

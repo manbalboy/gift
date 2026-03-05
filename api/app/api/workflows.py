@@ -43,7 +43,7 @@ active_stream_connections = 0
 active_stream_connections_lock = Lock()
 workflow_stream_generation: dict[int, int] = {}
 workflow_stream_event_sequence: dict[int, int] = {}
-workflow_stream_event_buffer: dict[int, list[tuple[int, str]]] = {}
+workflow_stream_event_buffer: dict[int, list[tuple[int, str, int]]] = {}
 reconnect_rate_limiter = create_sse_reconnect_limiter()
 logger = logging.getLogger(__name__)
 HUMAN_GATE_SESSION_COOKIE = "devflow_human_gate_session"
@@ -72,17 +72,23 @@ def _next_stream_event_id(workflow_id: int) -> int:
 
 
 def _append_stream_event(workflow_id: int, event_id: int, payload: str) -> None:
+    payload_size = len(payload.encode("utf-8"))
+    max_items = max(1, int(settings.sse_stream_event_buffer_max_items or MAX_STREAM_EVENT_BUFFER_SIZE))
+    max_bytes = max(1, int(settings.sse_stream_event_buffer_max_bytes or 262_144))
     with active_stream_connections_lock:
         buffered = workflow_stream_event_buffer.setdefault(workflow_id, [])
-        buffered.append((event_id, payload))
-        if len(buffered) > MAX_STREAM_EVENT_BUFFER_SIZE:
-            workflow_stream_event_buffer[workflow_id] = buffered[-MAX_STREAM_EVENT_BUFFER_SIZE:]
+        buffered.append((event_id, payload, payload_size))
+
+        total_bytes = sum(item[2] for item in buffered)
+        while buffered and (len(buffered) > max_items or total_bytes > max_bytes):
+            _event_id, _event_payload, removed_size = buffered.pop(0)
+            total_bytes -= removed_size
 
 
 def _stream_events_after(workflow_id: int, last_event_id: int) -> list[tuple[int, str]]:
     with active_stream_connections_lock:
         buffered = workflow_stream_event_buffer.get(workflow_id, [])
-        return [item for item in buffered if item[0] > last_event_id]
+        return [(event_id, payload) for event_id, payload, _size in buffered if event_id > last_event_id]
 
 
 def _extract_client_key(request: Request) -> str:

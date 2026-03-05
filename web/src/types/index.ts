@@ -150,6 +150,7 @@ export type LoopEngineStatus = {
   current_stage: string | null;
   cycle_count: number;
   emitted_alert_count: number;
+  pending_instruction_count: number;
   quality_score: number | null;
   started_at: string | null;
   updated_at: string;

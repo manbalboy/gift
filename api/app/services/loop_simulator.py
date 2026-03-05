@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
@@ -30,6 +31,7 @@ class LoopStatus:
     current_stage: str | None
     cycle_count: int
     emitted_alert_count: int
+    pending_instruction_count: int
     quality_score: int | None
     started_at: datetime | None
     updated_at: datetime
@@ -40,6 +42,7 @@ class LoopStatus:
             "current_stage": self.current_stage,
             "cycle_count": self.cycle_count,
             "emitted_alert_count": self.emitted_alert_count,
+            "pending_instruction_count": self.pending_instruction_count,
             "quality_score": self.quality_score,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
@@ -56,6 +59,7 @@ class LoopSimulator:
         self._current_stage: str | None = None
         self._cycle_count = 0
         self._emitted_alert_count = 0
+        self._pending_instructions: deque[str] = deque()
         self._quality_score: int | None = None
         self._started_at: datetime | None = None
         self._updated_at = datetime.now(timezone.utc)
@@ -82,14 +86,7 @@ class LoopSimulator:
                 return self._snapshot_locked().to_payload()
 
             if self._thread and self._thread.is_alive() and self._mode == "paused":
-                self._mode = "running"
-                self._touch_locked()
-                self._emit_lifecycle_alert_locked(
-                    code="LOOP_RESUME",
-                    message="Self-Improvement Loop Engine 재개",
-                    level="info",
-                )
-                return self._snapshot_locked().to_payload()
+                return self._resume_locked()
 
             self._stop_event = Event()
             self._pause_event = Event()
@@ -97,6 +94,7 @@ class LoopSimulator:
             self._current_stage = _LOOP_STAGES[0]
             self._cycle_count = 0
             self._emitted_alert_count = 0
+            self._pending_instructions.clear()
             self._quality_score = 62
             self._started_at = datetime.now(timezone.utc)
             self._touch_locked()
@@ -108,6 +106,38 @@ class LoopSimulator:
 
             self._thread = Thread(target=self._run_forever, name="loop-simulator", daemon=True)
             self._thread.start()
+            return self._snapshot_locked().to_payload()
+
+    def resume(self) -> dict[str, object]:
+        with self._lock:
+            return self._resume_locked()
+
+    def _resume_locked(self) -> dict[str, object]:
+        if self._mode == "running":
+            return self._snapshot_locked().to_payload()
+        if self._mode == "paused" and self._thread and self._thread.is_alive():
+            self._mode = "running"
+            self._touch_locked()
+            self._emit_lifecycle_alert_locked(
+                code="LOOP_RESUME",
+                message="Self-Improvement Loop Engine 재개",
+                level="info",
+            )
+            return self._snapshot_locked().to_payload()
+        return self._snapshot_locked().to_payload()
+
+    def inject_instruction(self, instruction: str) -> dict[str, object]:
+        sanitized = " ".join(instruction.strip().split())
+        with self._lock:
+            if not sanitized:
+                return self._snapshot_locked().to_payload()
+            self._pending_instructions.append(sanitized[:2000])
+            self._touch_locked()
+            self._emit_lifecycle_alert_locked(
+                code="LOOP_INJECT_QUEUED",
+                message=f"Inject Instruction 등록: {sanitized[:120]}",
+                level="warning",
+            )
             return self._snapshot_locked().to_payload()
 
     def pause(self) -> dict[str, object]:
@@ -162,6 +192,7 @@ class LoopSimulator:
             self._current_stage = None
             self._cycle_count = 0
             self._emitted_alert_count = 0
+            self._pending_instructions.clear()
             self._quality_score = None
             self._started_at = None
             self._release_execution_lock_locked()
@@ -177,6 +208,8 @@ class LoopSimulator:
                 if self._is_paused():
                     time.sleep(0.12)
                     continue
+
+                self._drain_next_instruction()
 
                 stage = _LOOP_STAGES[stage_idx]
                 quality = self._quality_for_stage(stage, stage_idx)
@@ -238,6 +271,34 @@ class LoopSimulator:
                     "status": self._mode,
                 },
                 "risk_score": max(5, 100 - quality),
+            },
+        )
+
+        with self._lock:
+            self._emitted_alert_count += 1
+            self._touch_locked()
+
+    def _drain_next_instruction(self) -> None:
+        with self._lock:
+            if self._mode != "running" or not self._pending_instructions:
+                return
+            instruction = self._pending_instructions.popleft()
+            cycle = self._cycle_count + 1
+            stage = self._current_stage
+            self._touch_locked()
+
+        record_system_alert(
+            level="warning",
+            code="LOOP_INJECT_APPLIED",
+            source="loop-engine",
+            message=f"Inject Instruction 반영: {instruction[:180]}",
+            context={
+                "loop": {
+                    "status": self._mode,
+                    "stage": stage,
+                    "cycle": cycle,
+                },
+                "instruction": instruction[:200],
             },
         )
 
@@ -320,6 +381,7 @@ class LoopSimulator:
             current_stage=self._current_stage,
             cycle_count=self._cycle_count,
             emitted_alert_count=self._emitted_alert_count,
+            pending_instruction_count=len(self._pending_instructions),
             quality_score=self._quality_score,
             started_at=self._started_at,
             updated_at=self._updated_at,

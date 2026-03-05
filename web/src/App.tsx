@@ -59,6 +59,7 @@ export default function App() {
   const [systemAlertsActionLoading, setSystemAlertsActionLoading] = useState(false);
   const [loopEngineStatus, setLoopEngineStatus] = useState<LoopEngineStatus | null>(null);
   const [loopEngineActionLoading, setLoopEngineActionLoading] = useState(false);
+  const [loopInjectInstruction, setLoopInjectInstruction] = useState('');
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectTargetNodeId, setRejectTargetNodeId] = useState<string | null>(null);
@@ -762,6 +763,40 @@ export default function App() {
     }
   };
 
+  const handleResumeLoopEngine = async () => {
+    if (loopEngineActionLoading) return;
+    setLoopEngineActionLoading(true);
+    try {
+      const next = await api.resumeLoopEngine();
+      setLoopEngineStatus(next);
+      enqueueToast('warning', 'Loop Engine을 재개했습니다.');
+    } catch (error) {
+      const message = resolveErrorMessage(error, 'Loop Engine 재개 실패');
+      enqueueToast('error', `Loop Engine 재개 실패 (${message})`);
+    } finally {
+      setLoopEngineActionLoading(false);
+      void syncLoopEngineStatus();
+    }
+  };
+
+  const handleInjectLoopInstruction = async () => {
+    const instruction = loopInjectInstruction.trim();
+    if (!instruction || loopEngineActionLoading) return;
+    setLoopEngineActionLoading(true);
+    try {
+      const next = await api.injectLoopInstruction(instruction);
+      setLoopEngineStatus(next);
+      setLoopInjectInstruction('');
+      enqueueToast('warning', 'Inject Instruction을 큐에 등록했습니다.');
+    } catch (error) {
+      const message = resolveErrorMessage(error, 'Inject Instruction 등록 실패');
+      enqueueToast('error', `Inject Instruction 등록 실패 (${message})`);
+    } finally {
+      setLoopEngineActionLoading(false);
+      void syncLoopEngineStatus();
+    }
+  };
+
   return (
     <div className="app-shell">
       <div className="toast-stack" data-testid="toast-stack" style={{ zIndex: LAYER_Z_INDEX.toast }} aria-label="시스템 알림">
@@ -859,6 +894,7 @@ export default function App() {
               <span>Cycle: {loopEngineStatus?.cycle_count ?? 0}</span>
               <span>Quality: {loopEngineStatus?.quality_score ?? '-'}</span>
               <span>Events: {loopEngineStatus?.emitted_alert_count ?? 0}</span>
+              <span>Queued: {loopEngineStatus?.pending_instruction_count ?? 0}</span>
             </div>
             <div className="loop-engine-actions">
               <button
@@ -883,6 +919,16 @@ export default function App() {
               </button>
               <button
                 type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  void handleResumeLoopEngine();
+                }}
+                disabled={loopEngineActionLoading || loopEngineStatus?.mode !== 'paused'}
+              >
+                재개
+              </button>
+              <button
+                type="button"
                 className="btn btn-danger"
                 onClick={() => {
                   void handleStopLoopEngine();
@@ -892,6 +938,34 @@ export default function App() {
                 중지
               </button>
             </div>
+            <form
+              className="loop-engine-inject"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleInjectLoopInstruction();
+              }}
+            >
+              <label htmlFor="loop-instruction-input" className="mono">
+                Inject Instruction
+              </label>
+              <div className="loop-engine-inject-row">
+                <input
+                  id="loop-instruction-input"
+                  value={loopInjectInstruction}
+                  onChange={(event) => setLoopInjectInstruction(event.target.value)}
+                  maxLength={2000}
+                  placeholder="예: 동일 실패가 반복되면 자동 일시정지로 전환"
+                  disabled={loopEngineActionLoading}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-ghost"
+                  disabled={loopEngineActionLoading || loopInjectInstruction.trim().length === 0}
+                >
+                  등록
+                </button>
+              </div>
+            </form>
           </section>
           <SystemAlertWidget
             alerts={systemAlerts}
