@@ -90,6 +90,7 @@ export const api = {
   rejectRunNode: (runId: number, nodeId: string) =>
     requestHumanGateAction(`/runs/${runId}/reject?node_id=${encodeURIComponent(nodeId)}`),
   cancelRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/cancel`, { method: 'POST' }),
+  resumeRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/resume`, { method: 'POST' }),
   getArtifactChunk: (runId: number, nodeId: string, offset = 0, limit = 16384) =>
     request<ArtifactChunkResponse>(
       `/runs/${runId}/artifacts/${encodeURIComponent(nodeId)}?offset=${Math.max(0, offset)}&limit=${Math.max(1, limit)}`,

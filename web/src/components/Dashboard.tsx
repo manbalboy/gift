@@ -22,6 +22,7 @@ export default function Dashboard({
   onApproveHumanGate,
   onRejectHumanGate,
   onCancelRun,
+  onResumeRun,
 }: {
   run: WorkflowRun | null;
   blockedEvents?: WebhookBlockedEvent[];
@@ -30,6 +31,7 @@ export default function Dashboard({
   onApproveHumanGate?: (nodeId: string) => Promise<void>;
   onRejectHumanGate?: (nodeId: string) => Promise<void>;
   onCancelRun?: () => Promise<void>;
+  onResumeRun?: () => Promise<void>;
 }) {
   const nodeRuns = run?.node_runs ?? [];
   const doneCount = nodeRuns.filter((n) => n.status === 'done').length;
@@ -62,6 +64,23 @@ export default function Dashboard({
       </div>
       {run ? (
         <>
+          {run.status === 'paused' && (
+            <section className="pause-alert" role="status" aria-live="polite">
+              <div>
+                <strong>실행 일시정지 감지</strong>
+                <p className="mono">보호 로직으로 중단되었습니다. 원인 확인 후 재개하세요.</p>
+              </div>
+              <button
+                className="btn btn-warning"
+                type="button"
+                onClick={() => {
+                  void onResumeRun?.();
+                }}
+              >
+                Run 재개
+              </button>
+            </section>
+          )}
           <div className="run-kpi-grid">
             <article>
               <span>Run ID</span>
@@ -146,6 +165,16 @@ export default function Dashboard({
             }}
           >
             Run 취소
+          </button>
+          <button
+            className="btn btn-warning"
+            type="button"
+            disabled={!run || run.status !== 'paused'}
+            onClick={() => {
+              void onResumeRun?.();
+            }}
+          >
+            Run 재개
           </button>
         </div>
       </section>

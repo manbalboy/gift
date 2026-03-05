@@ -3,6 +3,7 @@ export type WorkflowNode = {
   type: string;
   label: string;
   command?: string;
+  timeout_override?: number;
 };
 
 export type WorkflowEdge = {

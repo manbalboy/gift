@@ -559,6 +559,25 @@ select {
   gap: var(--space-8);
 }
 
+.pause-alert {
+  margin-bottom: var(--space-16);
+  border: 1px solid color-mix(in srgb, var(--color-status-waiting) 60%, var(--color-border-default));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-status-waiting) 16%, var(--color-bg-elevated));
+  padding: var(--space-12);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.pause-alert p {
+  margin-top: var(--space-4);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
 .empty {
   font-size: 13px;
   line-height: 20px;
@@ -891,6 +910,12 @@ select {
   color: var(--color-status-failed);
 }
 
+.btn-warning {
+  border-color: color-mix(in srgb, var(--color-status-waiting) 58%, transparent);
+  background: color-mix(in srgb, var(--color-status-waiting) 18%, transparent);
+  color: var(--color-text-primary);
+}
+
 .auth-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1002,6 +1027,15 @@ select {
     flex-direction: column;
     align-items: flex-start;
     padding: var(--space-8) var(--space-12);
+  }
+
+  .pause-alert {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pause-alert .btn-warning {
+    height: 44px;
   }
 
   .auth-modal-backdrop {

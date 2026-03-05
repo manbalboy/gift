@@ -9,6 +9,7 @@ class WorkflowNode(BaseModel):
     type: str = 'task'
     label: str
     command: str | None = None
+    timeout_override: float | None = None
 
 
 class WorkflowEdge(BaseModel):

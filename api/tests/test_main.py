@@ -166,7 +166,7 @@ def test_viewer_token_issue_endpoint_is_exempt_from_viewer_token_check(monkeypat
 def test_global_viewer_token_blocks_direct_api_access_without_token(monkeypatch):
     monkeypatch.setattr(settings, "viewer_token", "viewer-secret")
 
-    missing = client.get("/api/workflows")
+    missing = client.get("/api/workflows", headers={"X-Viewer-Token": ""})
     assert missing.status_code == 401
     assert missing.json()["detail"] == "missing viewer token"
 
@@ -180,3 +180,68 @@ def test_global_viewer_token_allows_request_with_valid_token(monkeypatch):
 
     response = client.get("/api/workflows", headers={"Authorization": "Bearer viewer-secret"})
     assert response.status_code == 200
+
+
+def test_viewer_token_fail_closed_when_not_configured(monkeypatch):
+    monkeypatch.setattr(settings, "viewer_token", "")
+
+    response = client.get("/api/workflows")
+    assert response.status_code == 500
+    assert response.json()["detail"] == "viewer token is not configured"
+
+
+def test_localhost_31xx_spoofed_forwarded_for_is_blocked(monkeypatch):
+    monkeypatch.setattr(settings, "viewer_token", "viewer-secret")
+    monkeypatch.setattr(settings, "preview_viewer_issue_secret", "issue-secret")
+    monkeypatch.setattr(settings, "preview_protected_port_start", 3100)
+    monkeypatch.setattr(settings, "preview_protected_port_end", 3199)
+
+    issued = client.post("/api/preview/viewer-token", headers={"X-Preview-Issue-Secret": "issue-secret"})
+    assert issued.status_code == 200
+    token = issued.json()["token"]
+
+    spoofed = client.get(
+        "/api/workflows",
+        headers={
+            "Host": "localhost:3108",
+            "X-Preview-Viewer-Token": token,
+            "X-Viewer-Token": "viewer-secret",
+            "X-Forwarded-For": "203.0.113.10",
+        },
+    )
+    assert spoofed.status_code == 403
+    assert spoofed.json()["detail"] == "blocked localhost ip spoofing attempt"
+
+
+def test_localhost_spoof_guard_ports_are_configurable(monkeypatch):
+    monkeypatch.setattr(settings, "viewer_token", "viewer-secret")
+    monkeypatch.setattr(settings, "preview_viewer_issue_secret", "issue-secret")
+    monkeypatch.setattr(settings, "preview_protected_port_start", 4100)
+    monkeypatch.setattr(settings, "preview_protected_port_end", 4100)
+    monkeypatch.setattr(settings, "localhost_spoof_guard_ports", "4100,4200-4201")
+
+    issued = client.post("/api/preview/viewer-token", headers={"X-Preview-Issue-Secret": "issue-secret"})
+    assert issued.status_code == 200
+    token = issued.json()["token"]
+
+    blocked = client.get(
+        "/api/workflows",
+        headers={
+            "Host": "localhost:4100",
+            "X-Preview-Viewer-Token": token,
+            "X-Viewer-Token": "viewer-secret",
+            "X-Forwarded-For": "203.0.113.10",
+        },
+    )
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"] == "blocked localhost ip spoofing attempt"
+
+    allowed = client.get(
+        "/api/workflows",
+        headers={
+            "Host": "localhost:3108",
+            "X-Viewer-Token": "viewer-secret",
+            "X-Forwarded-For": "203.0.113.10",
+        },
+    )
+    assert allowed.status_code == 200

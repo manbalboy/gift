@@ -69,6 +69,28 @@ def _extract_node_type(graph: dict | None, node_id: str) -> str:
     return "task"
 
 
+def _extract_node_timeout_override(graph: dict | None, node_id: str) -> float | None:
+    if not isinstance(graph, dict):
+        return None
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list):
+        return None
+
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("id") != node_id:
+            continue
+        direct = node.get("timeout_override")
+        if isinstance(direct, (int, float)) and float(direct) > 0:
+            return float(direct)
+
+        data = node.get("data")
+        if isinstance(data, dict):
+            nested = data.get("timeout_override")
+            if isinstance(nested, (int, float)) and float(nested) > 0:
+                return float(nested)
+    return None
+
+
 class WorkflowEngine:
     def __init__(self) -> None:
         self.workspace = WorkspaceService()
@@ -298,6 +320,18 @@ class WorkflowEngine:
 
         return predecessors
 
+    def _collect_missing_resume_artifacts(self, node_runs: list[NodeRun]) -> list[tuple[str, str]]:
+        missing: list[tuple[str, str]] = []
+        for node in node_runs:
+            if node.status != "done":
+                continue
+            artifact_path = (node.artifact_path or "").strip()
+            if not artifact_path:
+                continue
+            if not Path(artifact_path).is_file():
+                missing.append((node.node_id, artifact_path))
+        return missing
+
     def health_snapshot(self) -> dict[str, object]:
         with self._engine_guard:
             worker_count = len(self._workers)
@@ -500,18 +534,19 @@ class WorkflowEngine:
                         db.commit()
                         break
 
-                    timeout_seconds = max(1.0, float(settings.workflow_node_timeout_seconds))
+                    default_timeout_seconds = max(1.0, float(settings.workflow_node_timeout_seconds))
                     now = datetime.now(timezone.utc)
-                    timed_out_running_nodes: list[tuple[NodeRun, float]] = []
+                    timed_out_running_nodes: list[tuple[NodeRun, float, float]] = []
                     for candidate in nodes:
                         if candidate.status != "running":
                             continue
+                        timeout_seconds = _extract_node_timeout_override(graph, candidate.node_id) or default_timeout_seconds
                         elapsed = (now - _as_utc(candidate.updated_at)).total_seconds()
                         if elapsed > timeout_seconds:
-                            timed_out_running_nodes.append((candidate, elapsed))
+                            timed_out_running_nodes.append((candidate, elapsed, timeout_seconds))
 
                     if timed_out_running_nodes:
-                        for candidate, elapsed in timed_out_running_nodes:
+                        for candidate, elapsed, timeout_seconds in timed_out_running_nodes:
                             candidate.status = "paused"
                             previous = (candidate.log or "").strip()
                             candidate.log = (
@@ -885,4 +920,72 @@ class WorkflowEngine:
             if node_worker.is_alive():
                 node_worker.join(timeout=max(0.05, float(settings.workflow_cancel_join_timeout_seconds)))
 
+        return locked_run
+
+    def resume_run(self, db: Session, run: WorkflowRun) -> WorkflowRun:
+        run_lock = self.lock_provider.get_run_lock(run.id)
+        if not run_lock.acquire(blocking=True, timeout=2):
+            raise RuntimeError("run lock is busy")
+
+        should_start_worker = False
+        try:
+            locked_run = self._load_locked_run(db, run.id)
+            if not locked_run:
+                raise ValueError("run not found")
+            if locked_run.status != "paused":
+                raise ValueError("run is not paused")
+
+            nodes = self._load_locked_nodes(db, run.id)
+            paused_nodes = [node for node in nodes if node.status == "paused"]
+            if not paused_nodes:
+                raise ValueError("paused nodes not found")
+
+            resume_precondition_errors: list[str] = []
+            run_workspace_path = self.workspace.root / "main" / "runs" / str(run.id)
+            if not run_workspace_path.exists():
+                resume_precondition_errors.append(f"workspace missing: {run_workspace_path}")
+
+            missing_artifacts = self._collect_missing_resume_artifacts(nodes)
+            if missing_artifacts:
+                preview = ", ".join(f"{node_id}={path}" for node_id, path in missing_artifacts[:3])
+                if len(missing_artifacts) > 3:
+                    preview = f"{preview}, +{len(missing_artifacts) - 3} more"
+                resume_precondition_errors.append(f"required artifacts missing: {preview}")
+
+            if resume_precondition_errors:
+                failure_reason = "; ".join(resume_precondition_errors)
+                for node in paused_nodes:
+                    previous = (node.log or "").strip()
+                    node.status = "failed"
+                    node.log = f"[resume_failed] {failure_reason}\n{previous}".strip()
+                locked_run.status = "failed"
+                db.commit()
+                db.refresh(locked_run)
+                raise ValueError("resume failed: required runtime artifacts expired or missing")
+
+            for node in paused_nodes:
+                previous = (node.log or "").strip()
+                node.status = "queued"
+                node.log = f"[resume] node resumed by user\n{previous}".strip()
+
+            with self._engine_guard:
+                run_counts = self._node_iteration_counts.get(run.id)
+                if run_counts is not None:
+                    for node in paused_nodes:
+                        run_counts.pop(node.node_id, None)
+                    if not run_counts:
+                        self._node_iteration_counts.pop(run.id, None)
+
+            locked_run.status = "running"
+            db.commit()
+            db.refresh(locked_run)
+            should_start_worker = True
+        except SQLAlchemyError as exc:
+            db.rollback()
+            raise RuntimeError("resume failed") from exc
+        finally:
+            run_lock.release()
+
+        if should_start_worker:
+            self._start_background_worker(run.id)
         return locked_run

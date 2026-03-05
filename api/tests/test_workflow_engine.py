@@ -253,6 +253,110 @@ def test_engine_pauses_run_when_running_node_timeout_exceeded(monkeypatch):
     assert "timeout exceeded" in paused_nodes[0]["log"]
 
 
+def test_engine_timeout_override_prevents_global_timeout_pause(monkeypatch):
+    monkeypatch.setattr(settings, "workflow_node_timeout_seconds", 1.0)
+    monkeypatch.setattr(settings, "workflow_worker_poll_interval_seconds", 0.02)
+
+    payload = {
+        "name": "Timeout Override Flow",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "slow-task", "type": "task", "label": "Slow Task", "timeout_override": 3.0}],
+            "edges": [],
+        },
+    }
+    workflow = client.post("/api/workflows", json=payload).json()
+
+    class SlowRunner:
+        def run(self, _request):
+            time.sleep(1.2)
+            return AgentTaskResult(ok=True, log="completed", output={"exit_code": 0})
+
+    original_runner = workflow_engine.agent_runner
+    monkeypatch.setattr(workflow_engine, "agent_runner", SlowRunner())
+    try:
+        run = client.post(f"/api/workflows/{workflow['id']}/runs")
+        assert run.status_code == 200
+        run_id = run.json()["id"]
+
+        final = None
+        for _ in range(80):
+            response = client.get(f"/api/runs/{run_id}")
+            assert response.status_code == 200
+            body = response.json()
+            if body["status"] in {"done", "failed", "paused"}:
+                final = body
+                if body["status"] == "done":
+                    break
+            time.sleep(0.05)
+    finally:
+        monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
+
+    assert final is not None
+    assert final["status"] == "done"
+
+
+def test_engine_timeout_override_changes_outcome_vs_global_timeout(monkeypatch):
+    monkeypatch.setattr(settings, "workflow_node_timeout_seconds", 1.0)
+    monkeypatch.setattr(settings, "workflow_worker_poll_interval_seconds", 0.02)
+
+    class SlowRunner:
+        def run(self, _request):
+            time.sleep(1.2)
+            return AgentTaskResult(ok=True, log="completed", output={"exit_code": 0})
+
+    def _run_and_wait(payload: dict) -> str:
+        workflow = client.post("/api/workflows", json=payload).json()
+        run = client.post(f"/api/workflows/{workflow['id']}/runs")
+        assert run.status_code == 200
+        run_id = run.json()["id"]
+
+        terminal_status = ""
+        for _ in range(80):
+            response = client.get(f"/api/runs/{run_id}")
+            assert response.status_code == 200
+            status = response.json()["status"]
+            if status in {"done", "failed", "paused", "cancelled"}:
+                terminal_status = status
+                break
+            time.sleep(0.05)
+        return terminal_status
+
+    original_runner = workflow_engine.agent_runner
+    monkeypatch.setattr(workflow_engine, "agent_runner", SlowRunner())
+    try:
+        base_payload = {
+            "name": "Timeout Compare Base",
+            "description": "",
+            "graph": {
+                "nodes": [{"id": "slow-task", "type": "task", "label": "Slow Task"}],
+                "edges": [],
+            },
+        }
+        override_payload = {
+            "name": "Timeout Compare Override",
+            "description": "",
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "slow-task",
+                        "type": "task",
+                        "label": "Slow Task",
+                        "timeout_override": 3.0,
+                    }
+                ],
+                "edges": [],
+            },
+        }
+        base_status = _run_and_wait(base_payload)
+        override_status = _run_and_wait(override_payload)
+    finally:
+        monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
+
+    assert base_status == "paused"
+    assert override_status == "done"
+
+
 def test_engine_retries_failed_node_with_backoff(monkeypatch):
     payload = {
         "name": "Retry Flow",

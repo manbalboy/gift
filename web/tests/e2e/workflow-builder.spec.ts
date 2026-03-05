@@ -109,6 +109,107 @@ test('다중 Entry 검증 실패 응답 시 에러 문구를 노출한다', asyn
   await expect(page.getByText('드라이런 실패: 그래프 규칙을 확인해주세요.')).toBeVisible();
 });
 
+test('Pause 상태에서 Run 재개 버튼이 resume API를 호출한다', async ({ page }) => {
+  const runId = 901;
+  let runStatus: 'paused' | 'running' = 'paused';
+  let resumeCalled = false;
+
+  const pausedRun = {
+    id: runId,
+    workflow_id: 1,
+    status: 'paused',
+    started_at: '2026-03-05T00:00:00Z',
+    updated_at: '2026-03-05T00:00:05Z',
+    node_runs: [
+      {
+        id: 11,
+        node_id: 'test',
+        node_name: 'Test',
+        status: 'paused',
+        sequence: 0,
+        log: '[pause] node timeout exceeded',
+        artifact_path: null,
+        updated_at: '2026-03-05T00:00:05Z',
+      },
+    ],
+  };
+  const runningRun = {
+    ...pausedRun,
+    status: 'running',
+    node_runs: [{ ...pausedRun.node_runs[0], status: 'running', log: '[resume] node resumed by user' }],
+    updated_at: '2026-03-05T00:00:06Z',
+  };
+
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 1,
+            name: 'Paused Flow',
+            description: 'resume scenario',
+            graph: { nodes: [{ id: 'test', type: 'task', label: 'Test' }], edges: [] },
+          },
+        ]),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.route('**/api/workflows/1/runs', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(pausedRun),
+    });
+  });
+
+  await page.route('**/api/runs/901', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(runStatus === 'paused' ? pausedRun : runningRun),
+    });
+  });
+
+  await page.route('**/api/runs/901/constellation', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        run_id: runId,
+        status: runStatus,
+        nodes: [{ id: 'test', label: 'Test', status: runStatus, sequence: 0 }],
+        links: [],
+      }),
+    });
+  });
+
+  await page.route('**/api/runs/901/resume', async (route) => {
+    resumeCalled = true;
+    runStatus = 'running';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(runningRun),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Run 시작' }).click();
+  await expect(page.getByText('실행 일시정지 감지')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run 재개' }).first()).toBeEnabled();
+
+  await page.getByRole('button', { name: 'Run 재개' }).first().click();
+
+  await expect
+    .poll(() => resumeCalled, { message: 'resume endpoint should be called' })
+    .toBeTruthy();
+});
+
 test('단절/다중 Entry 그래프는 저장 전에 클라이언트에서 차단되고 에러 UI를 노출한다', async ({ page }) => {
   let saveCallCount = 0;
   await page.route('**/api/workflows', async (route) => {

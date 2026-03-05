@@ -4,12 +4,14 @@ from datetime import datetime, timedelta, timezone
 import itertools
 from pathlib import Path
 import re
+import shutil
 import time
 import pytest
 
 from app.api import workflows as workflows_api
 from app.db.session import SessionLocal
 from app.models.workflow import HumanGateDecisionAudit, NodeRun, WorkflowRun
+from app.schemas.agent import AgentTaskResult
 
 from .conftest import client
 
@@ -1097,6 +1099,180 @@ def test_cancel_run_marks_run_and_non_terminal_nodes_cancelled():
     latest = client.get(f"/api/runs/{run_id}")
     assert latest.status_code == 200
     assert latest.json()["status"] == "cancelled"
+
+
+def test_resume_run_restarts_paused_flow(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "workflow_node_timeout_seconds", 1.0)
+    monkeypatch.setattr(workflows_api.settings, "workflow_worker_poll_interval_seconds", 0.02)
+
+    payload = {
+        "name": "Resume Timeout Flow",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "slow-task", "type": "task", "label": "Slow Task"}],
+            "edges": [],
+        },
+    }
+    created = client.post("/api/workflows", json=payload)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    class SlowOnceRunner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, _request):
+            self.calls += 1
+            if self.calls == 1:
+                time.sleep(3.0)
+            return AgentTaskResult(ok=True, log="completed", output={"exit_code": 0})
+
+    original_runner = workflows_api.engine.agent_runner
+    monkeypatch.setattr(workflows_api.engine, "agent_runner", SlowOnceRunner())
+    try:
+        run = client.post(f"/api/workflows/{workflow_id}/runs")
+        assert run.status_code == 200
+        run_id = run.json()["id"]
+
+        paused = None
+        for _ in range(80):
+            current = client.get(f"/api/runs/{run_id}")
+            assert current.status_code == 200
+            body = current.json()
+            if body["status"] == "paused":
+                paused = body
+                break
+            time.sleep(0.05)
+        assert paused is not None
+
+        resumed = client.post(f"/api/runs/{run_id}/resume")
+        assert resumed.status_code == 200
+        assert resumed.json()["status"] == "running"
+
+        done = None
+        for _ in range(80):
+            current = client.get(f"/api/runs/{run_id}")
+            assert current.status_code == 200
+            body = current.json()
+            if body["status"] == "done":
+                done = body
+                break
+            time.sleep(0.05)
+        assert done is not None
+        assert done["status"] == "done"
+    finally:
+        monkeypatch.setattr(workflows_api.engine, "agent_runner", original_runner)
+
+
+def test_resume_run_rejects_non_paused_run():
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+    run = client.post(f"/api/workflows/{workflow_id}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    resumed = client.post(f"/api/runs/{run_id}/resume")
+    assert resumed.status_code == 409
+    assert resumed.json()["detail"] == "run is not paused"
+
+
+def test_resume_run_concurrent_requests_are_idempotent():
+    payload = {
+        "name": "Concurrent Resume Flow",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "slow-task", "type": "task", "label": "Slow Task"}],
+            "edges": [],
+        },
+    }
+    created = client.post("/api/workflows", json=payload)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    db = SessionLocal()
+    try:
+        run = WorkflowRun(workflow_id=workflow_id, status="paused")
+        db.add(run)
+        db.flush()
+        db.add(
+            NodeRun(
+                run_id=run.id,
+                node_id="slow-task",
+                node_name="Slow Task",
+                status="paused",
+                sequence=0,
+                log="[pause] seeded for concurrency test",
+            )
+        )
+        db.commit()
+        run_id = run.id
+    finally:
+        db.close()
+
+    def _resume_once(_index: int) -> tuple[int, str]:
+        response = client.post(f"/api/runs/{run_id}/resume")
+        detail = response.json().get("detail", "")
+        return response.status_code, detail
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(_resume_once, range(4)))
+
+    success_count = sum(1 for status_code, _ in results if status_code == 200)
+    conflict_count = sum(
+        1
+        for status_code, detail in results
+        if status_code == 409 and detail in {"run is not paused", "run lock is busy", "paused nodes not found"}
+    )
+    assert success_count == 1
+    assert conflict_count >= 1
+
+
+def test_resume_run_fails_gracefully_when_runtime_workspace_missing():
+    payload = {
+        "name": "Graceful Resume Failure",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "slow-task", "type": "task", "label": "Slow Task"}],
+            "edges": [],
+        },
+    }
+    created = client.post("/api/workflows", json=payload)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    db = SessionLocal()
+    try:
+        run = WorkflowRun(workflow_id=workflow_id, status="paused")
+        db.add(run)
+        db.flush()
+        db.add(
+            NodeRun(
+                run_id=run.id,
+                node_id="slow-task",
+                node_name="Slow Task",
+                status="paused",
+                sequence=0,
+                log="[pause] seeded for missing workspace test",
+            )
+        )
+        db.commit()
+        run_id = run.id
+        workspace = workflows_api.engine.workspace.root / "main" / "runs" / str(run_id)
+        shutil.rmtree(workspace, ignore_errors=True)
+
+        resumed = client.post(f"/api/runs/{run_id}/resume")
+        assert resumed.status_code == 409
+        assert resumed.json()["detail"] == "resume failed: required runtime artifacts expired or missing"
+
+        latest = client.get(f"/api/runs/{run_id}")
+        assert latest.status_code == 200
+        assert latest.json()["status"] == "failed"
+        failed_nodes = [node for node in latest.json()["node_runs"] if node["status"] == "failed"]
+        assert failed_nodes
+        assert "[resume_failed] workspace missing" in failed_nodes[0]["log"]
+    finally:
+        db.close()
 
 
 def test_artifact_chunk_endpoint_returns_partial_content():

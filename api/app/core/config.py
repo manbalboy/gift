@@ -8,6 +8,31 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_ports_csv(value: str) -> set[int]:
+    parsed: set[int] = set()
+    for token in value.split(","):
+        chunk = token.strip()
+        if not chunk:
+            continue
+        if "-" in chunk:
+            start_text, end_text = chunk.split("-", maxsplit=1)
+            if not (start_text.strip().isdigit() and end_text.strip().isdigit()):
+                continue
+            start = int(start_text.strip())
+            end = int(end_text.strip())
+            if start > end:
+                start, end = end, start
+            for port in range(start, end + 1):
+                if 1 <= port <= 65535:
+                    parsed.add(port)
+            continue
+        if chunk.isdigit():
+            port = int(chunk)
+            if 1 <= port <= 65535:
+                parsed.add(port)
+    return parsed
+
+
 class Settings:
     app_name: str = "DevFlow Agent Hub API"
     api_prefix: str = "/api"
@@ -76,6 +101,7 @@ class Settings:
     preview_viewer_token_ttl_seconds: int = int(os.getenv("DEVFLOW_PREVIEW_VIEWER_TOKEN_TTL_SECONDS", "180"))
     preview_protected_port_start: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_START", "3100"))
     preview_protected_port_end: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_END", "3199"))
+    localhost_spoof_guard_ports: str = os.getenv("DEVFLOW_LOCALHOST_SPOOF_GUARD_PORTS", "3100-3199")
 
     @property
     def database_url(self) -> str:
@@ -108,6 +134,10 @@ class Settings:
         if not parsed:
             return {self.default_workspace_id.strip().lower() or "main"}
         return parsed
+
+    @property
+    def spoof_guard_ports(self) -> set[int]:
+        return _parse_ports_csv(self.localhost_spoof_guard_ports)
 
 
 settings = Settings()

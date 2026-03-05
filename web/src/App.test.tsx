@@ -113,6 +113,7 @@ jest.mock('./services/api', () => {
       approveRunNode: jest.fn(),
       rejectRunNode: jest.fn(),
       cancelRun: jest.fn(),
+      resumeRun: jest.fn(),
       getArtifactChunk: jest.fn(),
       sendDevIntegrationWebhook: jest.fn(),
       sendMalformedDevIntegrationWebhook: jest.fn(),

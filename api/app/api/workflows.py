@@ -848,6 +848,21 @@ def cancel_run(run_id: int, db: Session = Depends(get_db)):
     return updated
 
 
+@run_router.post("/{run_id}/resume", response_model=WorkflowRunOut)
+def resume_run(run_id: int, db: Session = Depends(get_db)):
+    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    try:
+        updated = engine.resume_run(db, run)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return updated
+
+
 @run_router.get("/{run_id}/artifacts/{node_id}")
 def get_artifact_chunk(run_id: int, node_id: str, offset: int = 0, limit: int = 16384):
     try:

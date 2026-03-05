@@ -456,6 +456,21 @@ export default function App() {
     }
   };
 
+  const handleResumeRun = async () => {
+    if (!run) return;
+    try {
+      const resumed = await api.resumeRun(run.id);
+      setRun(resumed);
+      await refreshRunAndConstellation(resumed.id);
+      clearApiDegraded();
+      enqueueToast('warning', '중단된 실행을 재개했습니다.');
+    } catch (error) {
+      const message = resolveErrorMessage(error, '실행 재개 실패');
+      markApiDegraded(error, '서버 상태가 불안정합니다');
+      enqueueToast('error', `실행 재개 실패 (${message})`);
+    }
+  };
+
   const handleCancelPendingApproval = async () => {
     if (!run || !pendingApprovalNode) return;
     try {
@@ -620,6 +635,7 @@ export default function App() {
             onApproveHumanGate={handleApproveHumanGate}
             onRejectHumanGate={handleRejectHumanGate}
             onCancelRun={handleCancelRun}
+            onResumeRun={handleResumeRun}
           />
           <WorkflowBuilder
             workflow={activeWorkflow}
