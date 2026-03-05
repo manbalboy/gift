@@ -181,6 +181,26 @@ p {
   z-index: 20;
 }
 
+.network-banner {
+  position: fixed;
+  top: 76px;
+  left: var(--space-16);
+  right: var(--space-16);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: var(--space-8) var(--space-16);
+  border: 1px solid color-mix(in srgb, var(--color-status-failed) 42%, var(--color-border-default));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-status-failed) 16%, var(--color-bg-base));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
 .top-bar h1 {
   font-size: 20px;
   line-height: 28px;
@@ -359,6 +379,15 @@ label {
 }
 
 input {
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-default);
+  background: #0d1424;
+  color: var(--color-text-primary);
+  padding: 0 var(--space-12);
+}
+
+select {
   height: 40px;
   border-radius: 10px;
   border: 1px solid var(--color-border-default);
@@ -722,6 +751,20 @@ input {
   gap: var(--space-8);
 }
 
+.audit-controls {
+  display: grid;
+  gap: var(--space-8);
+}
+
+.audit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
 .btn {
   border-radius: 10px;
   border: 1px solid var(--color-border-default);
@@ -760,6 +803,13 @@ input {
   background: var(--color-bg-surface);
   display: grid;
   gap: var(--space-12);
+}
+
+.sheet-modal {
+  margin-top: auto;
+  border-radius: 16px 16px 0 0;
+  max-height: 78vh;
+  overflow: auto;
 }
 
 .auth-modal h2 {
@@ -819,6 +869,26 @@ input {
   .top-actions .btn-primary {
     height: 44px;
   }
+
+  .network-banner {
+    top: 72px;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: var(--space-8) var(--space-12);
+  }
+
+  .auth-modal-backdrop {
+    align-items: end;
+    justify-items: stretch;
+    padding: 0;
+  }
+
+  .auth-modal.sheet-modal {
+    width: 100%;
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    border-bottom: 0;
+  }
 }
 
 @media (min-width: 768px) {
@@ -836,6 +906,12 @@ input {
   .layout-grid {
     grid-template-columns: 220px minmax(0, 1fr) 320px;
     padding: var(--space-24);
+  }
+
+  .network-banner {
+    left: auto;
+    right: var(--space-24);
+    width: min(540px, calc(100vw - 48px));
   }
 
   .left-nav {

@@ -88,3 +88,12 @@ export type HumanGateAuditEntry = {
   decided_at: string;
   payload: Record<string, unknown>;
 };
+
+export type HumanGateAuditDecision = 'approved' | 'rejected' | 'cancelled';
+
+export type HumanGateAuditListResponse = {
+  items: HumanGateAuditEntry[];
+  total_count: number;
+  limit: number;
+  offset: number;
+};

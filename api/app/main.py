@@ -9,7 +9,7 @@ from app.api import workflows as workflows_api
 from app.api.agents import router as agents_router
 from app.api.webhooks import router as webhooks_router
 from app.api.workflows import router as workflows_router
-from app.api.workflows import run_router, engine as workflow_engine
+from app.api.workflows import approval_router, run_router, engine as workflow_engine
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
@@ -127,5 +127,6 @@ def health():
 
 app.include_router(workflows_router, prefix=settings.api_prefix)
 app.include_router(run_router, prefix=settings.api_prefix)
+app.include_router(approval_router, prefix=settings.api_prefix)
 app.include_router(agents_router, prefix=settings.api_prefix)
 app.include_router(webhooks_router, prefix=settings.api_prefix)

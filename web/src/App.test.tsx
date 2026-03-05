@@ -109,6 +109,7 @@ jest.mock('./services/api', () => {
       subscribeWorkflowRuns: jest.fn(),
       listWebhookBlockedEvents: jest.fn(),
       getHumanGateAudits: jest.fn(),
+      cancelApproval: jest.fn(),
     },
   };
 });
@@ -160,7 +161,12 @@ describe('App', () => {
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
     (api.subscribeWorkflowRuns as jest.Mock).mockReturnValue(() => undefined);
     (api.listWebhookBlockedEvents as jest.Mock).mockResolvedValue([]);
-    (api.getHumanGateAudits as jest.Mock).mockResolvedValue([]);
+    (api.getHumanGateAudits as jest.Mock).mockResolvedValue({
+      items: [],
+      total_count: 0,
+      limit: 10,
+      offset: 0,
+    });
   });
 
   test('동일 fallback 시그니처 알림은 한 번만 노출된다', async () => {
@@ -412,23 +418,33 @@ describe('App', () => {
       nodes: [{ id: 'review', label: 'Review', status: 'done', sequence: 0 }],
       links: [],
     });
-    (api.getHumanGateAudits as jest.Mock).mockResolvedValue([
-      {
-        id: 1,
-        run_id: 302,
-        node_id: 'review',
-        decision: 'approved',
-        decided_by: 'reviewer@main',
-        decided_at: '2026-03-05T00:00:10Z',
-        payload: { workspace_id: 'main' },
-      },
-    ]);
+    (api.getHumanGateAudits as jest.Mock).mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          run_id: 302,
+          node_id: 'review',
+          decision: 'approved',
+          decided_by: 'reviewer@main',
+          decided_at: '2026-03-05T00:00:10Z',
+          payload: { workspace_id: 'main' },
+        },
+      ],
+      total_count: 1,
+      limit: 10,
+      offset: 0,
+    });
 
     render(<App />);
     await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: 'Run 시작' }));
     await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(api.getHumanGateAudits).toHaveBeenCalledWith(302));
+    await waitFor(() =>
+      expect(api.getHumanGateAudits).toHaveBeenCalledWith(
+        302,
+        expect.objectContaining({ limit: 10, offset: 0, status: 'all', dateRange: 'all' }),
+      ),
+    );
 
     fireEvent.click(screen.getByRole('button', { name: '이력 보기' }));
     await waitFor(() => {
@@ -436,5 +452,40 @@ describe('App', () => {
       expect(screen.getByText('approved')).toBeInTheDocument();
       expect(screen.getByText('node: review · by: reviewer@main')).toBeInTheDocument();
     });
+  });
+
+  test('SSE 재연결 상태가 되면 상단 네트워크 배너를 노출한다', async () => {
+    let capturedHandlers:
+      | {
+          onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void;
+          onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
+          onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
+        }
+      | undefined;
+
+    (api.subscribeWorkflowRuns as jest.Mock).mockImplementation(
+      (
+        _workflowId: number,
+        handlers: {
+          onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void;
+          onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
+          onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
+        },
+      ) => {
+        capturedHandlers = handlers;
+        return () => undefined;
+      },
+    );
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      capturedHandlers?.onStateChange?.('reconnecting');
+      capturedHandlers?.onReconnectSchedule?.({ attempt: 2, delayMs: 1500 });
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent('네트워크 복구 중');
+    expect(screen.getByText('1.50s 후 2회차 재연결 시도')).toBeInTheDocument();
   });
 });

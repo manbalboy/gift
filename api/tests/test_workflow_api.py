@@ -1,9 +1,12 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 import itertools
 import time
 import pytest
 
 from app.api import workflows as workflows_api
+from app.db.session import SessionLocal
+from app.models.workflow import HumanGateDecisionAudit
 
 from .conftest import client
 
@@ -544,14 +547,125 @@ def test_human_gate_decision_creates_audit_log_and_can_be_listed(monkeypatch):
 
     audits = client.get(f"/api/runs/{run_id}/human-gate-audits")
     assert audits.status_code == 200
-    rows = audits.json()
-    assert len(rows) >= 1
-    latest = rows[0]
+    body = audits.json()
+    assert body["total_count"] >= 1
+    assert body["limit"] == 20
+    assert body["offset"] == 0
+    latest = body["items"][0]
     assert latest["run_id"] == run_id
     assert latest["node_id"] == "review"
     assert latest["decision"] == "approved"
     assert latest["decided_by"] == "reviewer@main"
     assert latest["payload"]["workspace_id"] == "main"
+
+
+def test_human_gate_approve_is_idempotent_for_same_decider(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_workspaces", "main")
+    payload = {
+        "name": "Human Gate Idempotent",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "review", "type": "human_gate", "label": "Review"},
+            ],
+            "edges": [{"id": "e1", "source": "idea", "target": "review"}],
+        },
+    }
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    run_id = run.json()["id"]
+
+    for _ in range(30):
+        current = client.get(f"/api/runs/{run_id}")
+        if any(node["status"] == "approval_pending" for node in current.json()["node_runs"]):
+            break
+        time.sleep(0.1)
+
+    headers = {
+        "X-Approver-Token": "secret-approver",
+        "X-Approver-Role": "reviewer",
+        "X-Workspace-Id": "main",
+    }
+    first = client.post(f"/api/runs/{run_id}/approve?node_id=review", headers=headers)
+    second = client.post(f"/api/runs/{run_id}/approve?node_id=review", headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+
+def test_human_gate_audit_supports_pagination_and_filters():
+    created = client.post("/api/workflows", json=PAYLOAD)
+    workflow_id = created.json()["id"]
+    run = client.post(f"/api/workflows/{workflow_id}/runs")
+    run_id = run.json()["id"]
+
+    now = datetime.now(timezone.utc)
+    db = SessionLocal()
+    try:
+        for idx in range(25):
+            db.add(
+                HumanGateDecisionAudit(
+                    run_id=run_id,
+                    node_id="review",
+                    decision="approved" if idx % 2 == 0 else "rejected",
+                    decided_by="reviewer@main",
+                    decided_at=now - timedelta(hours=idx),
+                    payload={"idx": idx},
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    paged = client.get(f"/api/runs/{run_id}/human-gate-audits?limit=10&offset=0")
+    assert paged.status_code == 200
+    body = paged.json()
+    assert body["total_count"] >= 25
+    assert body["limit"] == 10
+    assert len(body["items"]) == 10
+
+    filtered = client.get(f"/api/runs/{run_id}/human-gate-audits?limit=10&status=approved&date_range=24h")
+    assert filtered.status_code == 200
+    filtered_body = filtered.json()
+    assert all(item["decision"] == "approved" for item in filtered_body["items"])
+
+
+def test_cancel_pending_approval_resets_node_to_queue(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_workspaces", "main")
+    payload = {
+        "name": "Human Gate Cancel Approval",
+        "description": "",
+        "graph": {"nodes": [{"id": "review", "type": "human_gate", "label": "Review"}], "edges": []},
+    }
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    run_id = run.json()["id"]
+
+    pending_node = None
+    for _ in range(25):
+        current = client.get(f"/api/runs/{run_id}")
+        node = next((item for item in current.json()["node_runs"] if item["node_id"] == "review"), None)
+        if node and node["status"] == "approval_pending":
+            pending_node = node
+            break
+        time.sleep(0.1)
+    assert pending_node is not None
+
+    cancelled = client.post(
+        f"/api/approvals/{pending_node['id']}/cancel",
+        headers={
+            "X-Approver-Token": "secret-approver",
+            "X-Approver-Role": "reviewer",
+            "X-Workspace-Id": "main",
+        },
+    )
+    assert cancelled.status_code == 200
+    refreshed_node = next(item for item in cancelled.json()["node_runs"] if item["node_id"] == "review")
+    assert refreshed_node["status"] == "queued"
 
 
 def test_cancel_run_marks_run_and_non_terminal_nodes_cancelled():

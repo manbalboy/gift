@@ -42,6 +42,33 @@ def test_run_status_progression():
     assert len(constellation.json()["nodes"]) > 0
 
 
+def test_single_node_workflow_transitions_to_done_without_edges():
+    payload = {
+        "name": "Single Node",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "idea", "type": "task", "label": "Idea"}],
+            "edges": [],
+        },
+    }
+    workflow = client.post("/api/workflows", json=payload).json()
+    run = client.post(f"/api/workflows/{workflow['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    latest = None
+    for _ in range(25):
+        response = client.get(f"/api/runs/{run_id}")
+        latest = response.json()
+        if latest["status"] == "done":
+            break
+        time.sleep(0.1)
+
+    assert latest is not None
+    assert latest["status"] == "done"
+    assert latest["node_runs"][0]["status"] == "done"
+
+
 def test_parallel_polling_does_not_spawn_additional_execution(monkeypatch):
     calls = {"count": 0}
     original_runner = workflow_engine.agent_runner

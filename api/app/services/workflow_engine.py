@@ -618,6 +618,68 @@ class WorkflowEngine:
             self._start_background_worker(run.id)
         return locked_run
 
+    def cancel_human_gate_pending(
+        self,
+        db: Session,
+        run: WorkflowRun,
+        node_id: str,
+        *,
+        cancelled_by: str = "system",
+        payload: dict | None = None,
+    ) -> WorkflowRun:
+        run_lock = self.lock_provider.get_run_lock(run.id)
+        if not run_lock.acquire(blocking=False):
+            raise RuntimeError("run lock is busy")
+
+        try:
+            locked_run = self._load_locked_run(db, run.id)
+            if not locked_run:
+                raise ValueError("run not found")
+            if locked_run.status in {"done", "failed", "cancelled"}:
+                raise ValueError("run cannot be cancelled in terminal state")
+
+            node = (
+                db.query(NodeRun)
+                .filter(NodeRun.run_id == run.id, NodeRun.node_id == node_id)
+                .with_for_update()
+                .first()
+            )
+            if not node:
+                raise ValueError("node not found in run")
+            if node.status != "approval_pending":
+                raise ValueError("node is not approval_pending")
+
+            previous = (node.log or "").strip()
+            node.status = "queued"
+            node.log = f"[human_gate] approval cancelled\n{previous}".strip()
+
+            all_nodes = self._load_locked_nodes(db, run.id)
+            self._sync_run_status(locked_run, all_nodes)
+            if any(item.status == "queued" for item in all_nodes):
+                locked_run.status = "running"
+
+            audit = HumanGateDecisionAudit(
+                run_id=run.id,
+                node_id=node_id,
+                decision="cancelled",
+                decided_by=cancelled_by,
+                decided_at=datetime.now(timezone.utc),
+                payload=payload or {},
+            )
+            db.add(audit)
+            db.commit()
+            db.refresh(locked_run)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            raise RuntimeError("approval cancellation failed") from exc
+        finally:
+            run_lock.release()
+
+        approval_event = self._get_approval_event(run.id, node_id)
+        approval_event.set()
+        self._start_background_worker(run.id)
+        return locked_run
+
     def cancel_run(self, db: Session, run: WorkflowRun) -> WorkflowRun:
         cancel_event = self._get_cancel_event(run.id)
         cancel_event.set()

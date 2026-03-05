@@ -150,24 +150,29 @@ test('Human Gate 대기 후 승인하면 워크플로우가 재개되어 완료�
       body: JSON.stringify(approved ? doneRun : waitingRun),
     });
   });
-  await page.route('**/api/runs/101/human-gate-audits', async (route) => {
+  await page.route('**/api/runs/101/human-gate-audits**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(
         approved
-          ? [
-              {
-                id: 1,
-                run_id: 101,
-                node_id: 'review',
-                decision: 'approved',
-                decided_by: 'reviewer@main',
-                decided_at: '2026-03-05T00:00:10Z',
-                payload: { workspace_id: 'main' },
-              },
-            ]
-          : [],
+          ? {
+              items: [
+                {
+                  id: 1,
+                  run_id: 101,
+                  node_id: 'review',
+                  decision: 'approved',
+                  decided_by: 'reviewer@main',
+                  decided_at: '2026-03-05T00:00:10Z',
+                  payload: { workspace_id: 'main' },
+                },
+              ],
+              total_count: 1,
+              limit: 10,
+              offset: 0,
+            }
+          : { items: [], total_count: 0, limit: 10, offset: 0 },
       ),
     });
   });
@@ -296,24 +301,29 @@ test('Human Gate 반려 시 run이 failed로 전이된다', async ({ page }) => 
       body: JSON.stringify(rejected ? failedRun : waitingRun),
     });
   });
-  await page.route('**/api/runs/202/human-gate-audits', async (route) => {
+  await page.route('**/api/runs/202/human-gate-audits**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(
         rejected
-          ? [
-              {
-                id: 2,
-                run_id: 202,
-                node_id: 'review',
-                decision: 'rejected',
-                decided_by: 'reviewer@main',
-                decided_at: '2026-03-05T00:00:09Z',
-                payload: { workspace_id: 'main' },
-              },
-            ]
-          : [],
+          ? {
+              items: [
+                {
+                  id: 2,
+                  run_id: 202,
+                  node_id: 'review',
+                  decision: 'rejected',
+                  decided_by: 'reviewer@main',
+                  decided_at: '2026-03-05T00:00:09Z',
+                  payload: { workspace_id: 'main' },
+                },
+              ],
+              total_count: 1,
+              limit: 10,
+              offset: 0,
+            }
+          : { items: [], total_count: 0, limit: 10, offset: 0 },
       ),
     });
   });
@@ -404,8 +414,12 @@ test('Human Gate 권한이 없으면 403 안내 모달이 표시된다', async (
       body: JSON.stringify(waitingRun),
     });
   });
-  await page.route('**/api/runs/303/human-gate-audits', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  await page.route('**/api/runs/303/human-gate-audits**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [], total_count: 0, limit: 10, offset: 0 }),
+    });
   });
   await page.route('**/api/webhooks/blocked-events**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
@@ -415,4 +429,45 @@ test('Human Gate 권한이 없으면 403 안내 모달이 표시된다', async (
   await page.getByRole('button', { name: 'Run 시작' }).click();
   await page.getByRole('button', { name: 'Human Gate 승인' }).click();
   await expect(page.getByRole('dialog', { name: '권한 안내' })).toBeVisible();
+});
+
+test('네트워크 오프라인 전환 후 온라인 복구 시 재연결 배너가 표시되고 사라진다', async ({ page, context }) => {
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 1,
+          name: 'Reconnect Flow',
+          description: 'offline reconnect',
+          graph: { nodes: [{ id: 'idea', type: 'task', label: 'Idea' }], edges: [] },
+        },
+      ]),
+    });
+  });
+  await page.route('**/api/workflows/1/runs/stream**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'event: run_status\ndata: {"workflow_id":1,"runs":[]}\n\n',
+    });
+  });
+  await page.route('**/api/webhooks/blocked-events**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  await page.goto('/');
+  await expect(page.locator('.network-banner')).toHaveCount(0);
+
+  await context.setOffline(true);
+  await expect(page.locator('.network-banner')).toBeVisible();
+
+  await context.setOffline(false);
+  await expect(page.locator('.live-indicator')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run 시작' })).toBeVisible();
 });

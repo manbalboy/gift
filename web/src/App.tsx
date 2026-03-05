@@ -7,11 +7,19 @@ import WorkflowBuilder from './components/WorkflowBuilder';
 import { useViewport } from './hooks/useViewport';
 import { LAYER_Z_INDEX } from './constants/layers';
 import { ApiError, api } from './services/api';
-import type { ConstellationData, HumanGateAuditEntry, WebhookBlockedEvent, Workflow, WorkflowRun } from './types';
+import type {
+  ConstellationData,
+  HumanGateAuditDecision,
+  HumanGateAuditEntry,
+  WebhookBlockedEvent,
+  Workflow,
+  WorkflowRun,
+} from './types';
 import { createToastId } from './utils/toastId';
 
 export default function App() {
   const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'reconnecting' | 'closed'>('closed');
+  const [reconnectMeta, setReconnectMeta] = useState<{ attempt: number; delayMs: number } | null>(null);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [run, setRun] = useState<WorkflowRun | null>(null);
@@ -27,6 +35,11 @@ export default function App() {
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [blockedWebhookEvents, setBlockedWebhookEvents] = useState<WebhookBlockedEvent[]>([]);
   const [humanGateAudits, setHumanGateAudits] = useState<HumanGateAuditEntry[]>([]);
+  const [humanGateAuditTotalCount, setHumanGateAuditTotalCount] = useState(0);
+  const [humanGateAuditLimit] = useState(10);
+  const [humanGateAuditOffset, setHumanGateAuditOffset] = useState(0);
+  const [humanGateAuditStatusFilter, setHumanGateAuditStatusFilter] = useState<HumanGateAuditDecision | 'all'>('all');
+  const [humanGateAuditDateRange, setHumanGateAuditDateRange] = useState<'all' | '24h' | '7d' | '30d'>('all');
   const [humanGateAuditsLoading, setHumanGateAuditsLoading] = useState(false);
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -149,6 +162,7 @@ export default function App() {
     let cancelled = false;
     if (!run) {
       setHumanGateAudits([]);
+      setHumanGateAuditTotalCount(0);
       return () => {
         cancelled = true;
       };
@@ -157,13 +171,20 @@ export default function App() {
     const syncAudits = async () => {
       setHumanGateAuditsLoading(true);
       try {
-        const records = await api.getHumanGateAudits(run.id);
+        const response = await api.getHumanGateAudits(run.id, {
+          limit: humanGateAuditLimit,
+          offset: humanGateAuditOffset,
+          status: humanGateAuditStatusFilter,
+          dateRange: humanGateAuditDateRange,
+        });
         if (!cancelled) {
-          setHumanGateAudits(records);
+          setHumanGateAudits(response.items);
+          setHumanGateAuditTotalCount(response.total_count);
         }
       } catch {
         if (!cancelled) {
           setHumanGateAudits([]);
+          setHumanGateAuditTotalCount(0);
         }
       } finally {
         if (!cancelled) {
@@ -176,7 +197,11 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [run?.id, run?.updated_at]);
+  }, [run?.id, run?.updated_at, humanGateAuditLimit, humanGateAuditOffset, humanGateAuditStatusFilter, humanGateAuditDateRange]);
+
+  useEffect(() => {
+    setHumanGateAuditOffset(0);
+  }, [run?.id, humanGateAuditStatusFilter, humanGateAuditDateRange]);
 
   useEffect(() => {
     if (!activeWorkflow) return;
@@ -205,12 +230,19 @@ export default function App() {
       onStateChange: (state) => {
         setStreamState(state);
       },
+      onReconnectSchedule: (payload) => {
+        setReconnectMeta(payload.attempt > 0 ? payload : null);
+      },
     });
 
     return unsubscribe;
   }, [activeWorkflow?.id]);
 
   const runStatus = useMemo(() => run?.status ?? 'queued', [run?.status]);
+  const pendingApprovalNode = useMemo(
+    () => run?.node_runs.find((node) => node.status === 'approval_pending') ?? null,
+    [run?.node_runs],
+  );
   const streamStateLabel = useMemo(() => {
     if (streamState === 'connected') return '연결됨';
     if (streamState === 'connecting') return '연결 중';
@@ -316,6 +348,23 @@ export default function App() {
     }
   };
 
+  const handleCancelPendingApproval = async () => {
+    if (!run || !pendingApprovalNode) return;
+    try {
+      const updated = await api.cancelApproval(pendingApprovalNode.id);
+      setRun(updated);
+      await refreshRunAndConstellation(updated.id);
+      enqueueToast('warning', `승인 대기(${pendingApprovalNode.node_id})가 철회되었습니다.`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) {
+        setAuthModalMessage('승인 대기 철회 권한이 없습니다. reviewer/admin 역할과 workspace 접근 권한을 확인하세요.');
+        setAuthModalOpen(true);
+      }
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '승인 대기 철회 실패';
+      enqueueToast('error', `승인 대기 철회 실패 (${message})`);
+    }
+  };
+
   const handleLoadArtifact = async (nodeId: string, reset: boolean) => {
     if (!run) return;
     const offset = reset || selectedArtifactNodeId !== nodeId ? 0 : artifactNextOffset;
@@ -394,6 +443,12 @@ export default function App() {
           </button>
         </div>
       </header>
+      {streamState === 'reconnecting' && reconnectMeta && (
+        <section className="network-banner" role="status" aria-live="polite">
+          <strong>네트워크 복구 중</strong>
+          <span className="mono">{`${(reconnectMeta.delayMs / 1000).toFixed(2)}s 후 ${reconnectMeta.attempt}회차 재연결 시도`}</span>
+        </section>
+      )}
 
       <div className="layout-grid">
         <aside className={`left-nav ${navOpen ? 'open' : ''}`}>
@@ -524,7 +579,7 @@ export default function App() {
             <div className="audit-summary">
               <div className="artifact-viewer-header">
                 <strong>Human Gate 감사 로그</strong>
-                <span className="mono">{humanGateAudits.length}건</span>
+                <span className="mono">총 {humanGateAuditTotalCount}건</span>
               </div>
               <div className="webhook-actions-row">
                 <button
@@ -541,7 +596,7 @@ export default function App() {
                   ? '감사 로그를 불러오는 중입니다.'
                   : humanGateAudits[0]
                     ? `${humanGateAudits[0].decision} · ${humanGateAudits[0].decided_by}`
-                    : '기록된 Human Gate 결정 이력이 없습니다.'}
+                    : '조회 조건에 맞는 Human Gate 결정 이력이 없습니다.'}
               </p>
             </div>
           </section>
@@ -550,7 +605,7 @@ export default function App() {
       {authModalOpen && (
         <div className="auth-modal-backdrop" role="presentation" onClick={() => setAuthModalOpen(false)}>
           <div
-            className="auth-modal card"
+            className={`auth-modal card ${isMobilePortrait ? 'sheet-modal' : ''}`}
             role="dialog"
             aria-modal="true"
             aria-label="권한 안내"
@@ -570,7 +625,7 @@ export default function App() {
       {humanGateAuditModalOpen && (
         <div className="auth-modal-backdrop" role="presentation" onClick={() => setHumanGateAuditModalOpen(false)}>
           <div
-            className="auth-modal card audit-modal"
+            className={`auth-modal card audit-modal ${isMobilePortrait ? 'sheet-modal' : ''}`}
             role="dialog"
             aria-modal="true"
             aria-label="Human Gate 감사 로그"
@@ -578,6 +633,32 @@ export default function App() {
           >
             <h2>Human Gate 감사 로그</h2>
             <p>승인/반려 이력을 읽기 전용으로 제공합니다.</p>
+            <div className="audit-controls">
+              <label>
+                상태 필터
+                <select
+                  value={humanGateAuditStatusFilter}
+                  onChange={(event) => setHumanGateAuditStatusFilter(event.target.value as HumanGateAuditDecision | 'all')}
+                >
+                  <option value="all">전체</option>
+                  <option value="approved">승인</option>
+                  <option value="rejected">반려</option>
+                  <option value="cancelled">철회</option>
+                </select>
+              </label>
+              <label>
+                기간 필터
+                <select
+                  value={humanGateAuditDateRange}
+                  onChange={(event) => setHumanGateAuditDateRange(event.target.value as 'all' | '24h' | '7d' | '30d')}
+                >
+                  <option value="all">전체 기간</option>
+                  <option value="24h">최근 24시간</option>
+                  <option value="7d">최근 7일</option>
+                  <option value="30d">최근 30일</option>
+                </select>
+              </label>
+            </div>
             {humanGateAuditsLoading ? (
               <p className="mono">로딩 중...</p>
             ) : humanGateAudits.length === 0 ? (
@@ -598,7 +679,42 @@ export default function App() {
                 ))}
               </div>
             )}
+            <div className="audit-pagination mono">
+              <span>
+                {humanGateAuditTotalCount === 0
+                  ? '0-0 / 0'
+                  : `${humanGateAuditOffset + 1}-${Math.min(humanGateAuditOffset + humanGateAudits.length, humanGateAuditTotalCount)} / ${humanGateAuditTotalCount}`}
+              </span>
+              <div className="webhook-actions-row">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={humanGateAuditOffset <= 0 || humanGateAuditsLoading}
+                  onClick={() => setHumanGateAuditOffset((current) => Math.max(0, current - humanGateAuditLimit))}
+                >
+                  이전
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={humanGateAuditOffset + humanGateAuditLimit >= humanGateAuditTotalCount || humanGateAuditsLoading}
+                  onClick={() => setHumanGateAuditOffset((current) => current + humanGateAuditLimit)}
+                >
+                  다음
+                </button>
+              </div>
+            </div>
             <div className="builder-actions">
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={!pendingApprovalNode}
+                onClick={() => {
+                  void handleCancelPendingApproval();
+                }}
+              >
+                승인 대기 철회
+              </button>
               <button type="button" className="btn btn-primary" onClick={() => setHumanGateAuditModalOpen(false)}>
                 닫기
               </button>

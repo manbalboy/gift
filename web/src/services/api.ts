@@ -1,7 +1,8 @@
 import type {
   ArtifactChunkResponse,
   ConstellationData,
-  HumanGateAuditEntry,
+  HumanGateAuditListResponse,
+  HumanGateAuditDecision,
   WebhookBlockedEvent,
   Workflow,
   WorkflowGraphValidationResult,
@@ -12,7 +13,6 @@ import { calculateReconnectDelayMs } from './reconnect';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3101/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
-const WEBHOOK_SECRET = import.meta.env.VITE_WEBHOOK_SECRET ?? '';
 const HUMAN_GATE_APPROVER_TOKEN = import.meta.env.VITE_HUMAN_GATE_APPROVER_TOKEN ?? '';
 const HUMAN_GATE_APPROVER_ROLE = import.meta.env.VITE_HUMAN_GATE_APPROVER_ROLE ?? 'reviewer';
 const WORKSPACE_ID = import.meta.env.VITE_WORKSPACE_ID ?? 'main';
@@ -40,14 +40,6 @@ type WebhookResponse = {
   triggered: boolean;
   triggered_run_id: number | null;
 };
-
-function buildWebhookHeaders(base?: HeadersInit): HeadersInit {
-  if (!WEBHOOK_SECRET) return base ?? {};
-  return {
-    ...(base ?? {}),
-    'X-API-Secret': WEBHOOK_SECRET,
-  };
-}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -113,14 +105,12 @@ export const api = {
     request<WebhookResponse>('/webhooks/dev-integration', {
       method: 'POST',
       body: JSON.stringify(payload),
-      headers: buildWebhookHeaders(),
     }),
   sendMalformedDevIntegrationWebhook: async () => {
     const response = await fetch(`${API_BASE}/webhooks/dev-integration`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...buildWebhookHeaders(),
       },
       body: '{"provider":"jenkins"',
     });
@@ -146,6 +136,7 @@ export const api = {
       onRunStatus: (payload: WorkflowRunsStreamEvent) => void;
       onError?: (event: Event) => void;
       onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
+      onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
     },
   ) => {
     let closedByClient = false;
@@ -170,6 +161,7 @@ export const api = {
       handlers.onStateChange?.('reconnecting');
       reconnectAttempt += 1;
       const delayMs = calculateReconnectDelayMs(reconnectAttempt);
+      handlers.onReconnectSchedule?.({ attempt: reconnectAttempt, delayMs });
       clearReconnectTimer();
       reconnectTimer = window.setTimeout(() => {
         connect();
@@ -185,6 +177,7 @@ export const api = {
       stream.addEventListener('open', () => {
         reconnectAttempt = 0;
         handlers.onStateChange?.('connected');
+        handlers.onReconnectSchedule?.({ attempt: 0, delayMs: 0 });
       });
       stream.addEventListener('run_status', (event) => {
         const message = event as MessageEvent<string>;
@@ -207,5 +200,37 @@ export const api = {
   },
   listWebhookBlockedEvents: (limit = 20) =>
     request<WebhookBlockedEvent[]>(`/webhooks/blocked-events?limit=${Math.max(1, Math.min(limit, 50))}`),
-  getHumanGateAudits: (runId: number) => request<HumanGateAuditEntry[]>(`/runs/${runId}/human-gate-audits`),
+  getHumanGateAudits: (
+    runId: number,
+    options?: {
+      limit?: number;
+      offset?: number;
+      status?: HumanGateAuditDecision | 'all';
+      dateRange?: 'all' | '24h' | '7d' | '30d';
+    },
+  ) => {
+    const limit = Math.max(1, Math.min(options?.limit ?? 10, 100));
+    const offset = Math.max(0, options?.offset ?? 0);
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
+    if (options?.status && options.status !== 'all') {
+      params.set('status', options.status);
+    }
+    if (options?.dateRange && options.dateRange !== 'all') {
+      params.set('date_range', options.dateRange);
+    }
+    return request<HumanGateAuditListResponse>(`/runs/${runId}/human-gate-audits?${params.toString()}`);
+  },
+  cancelApproval: (approvalId: number) =>
+    request<WorkflowRun>(`/approvals/${approvalId}/cancel`, {
+      method: 'POST',
+      headers: HUMAN_GATE_APPROVER_TOKEN
+        ? {
+            'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN,
+            'X-Approver-Role': HUMAN_GATE_APPROVER_ROLE,
+            'X-Workspace-Id': WORKSPACE_ID,
+          }
+        : { 'X-Workspace-Id': WORKSPACE_ID },
+    }),
 };

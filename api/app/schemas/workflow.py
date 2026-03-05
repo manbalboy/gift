@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -113,6 +114,16 @@ class HumanGateDecisionAuditOut(BaseModel):
     payload: dict
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class HumanGateAuditListOut(BaseModel):
+    items: list[HumanGateDecisionAuditOut]
+    total_count: int
+    limit: int
+    offset: int
+
+
+HumanGateDecisionStatus = Literal["approved", "rejected", "cancelled"]
 
 
 class RunEventOut(BaseModel):

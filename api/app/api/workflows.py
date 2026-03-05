@@ -1,6 +1,7 @@
 import asyncio
 import json
 import hmac
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 import logging
 from ipaddress import ip_address
@@ -14,7 +15,8 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.workflow import HumanGateDecisionAudit, NodeRun, WorkflowDefinition, WorkflowRun
 from app.schemas.workflow import (
-    HumanGateDecisionAuditOut,
+    HumanGateAuditListOut,
+    HumanGateDecisionStatus,
     RunEventOut,
     WorkflowCreate,
     WorkflowGraph,
@@ -29,6 +31,7 @@ from app.services.workspace import InvalidNodeIdError
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 run_router = APIRouter(prefix="/runs", tags=["runs"])
+approval_router = APIRouter(prefix="/approvals", tags=["approvals"])
 engine = WorkflowEngine()
 active_stream_connections = 0
 active_stream_connections_lock = Lock()
@@ -290,6 +293,51 @@ def _build_decider_identity(role: str, workspace: str) -> str:
     return f"{safe_role}@{safe_workspace}"
 
 
+def _load_run_or_404(db: Session, run_id: int) -> WorkflowRun:
+    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    return run
+
+
+def _is_idempotent_human_gate_decision(
+    db: Session,
+    *,
+    run_id: int,
+    node_id: str,
+    decision: HumanGateDecisionStatus,
+    decided_by: str,
+) -> bool:
+    latest = (
+        db.query(HumanGateDecisionAudit)
+        .filter(
+            HumanGateDecisionAudit.run_id == run_id,
+            HumanGateDecisionAudit.node_id == node_id,
+            HumanGateDecisionAudit.decision == decision,
+            HumanGateDecisionAudit.decided_by == decided_by,
+        )
+        .order_by(HumanGateDecisionAudit.decided_at.desc(), HumanGateDecisionAudit.id.desc())
+        .first()
+    )
+    return latest is not None
+
+
+def _parse_audit_date_range_or_400(date_range: str | None) -> datetime | None:
+    if not date_range:
+        return None
+    value = date_range.strip().lower()
+    now = datetime.now(timezone.utc)
+    if value == "24h":
+        return now - timedelta(hours=24)
+    if value == "7d":
+        return now - timedelta(days=7)
+    if value == "30d":
+        return now - timedelta(days=30)
+    if value == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    raise HTTPException(status_code=400, detail="invalid date_range")
+
+
 @run_router.post("/{run_id}/approve", response_model=WorkflowRunOut)
 def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
     configured_token = settings.human_gate_approver_token.strip()
@@ -312,9 +360,8 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
     if approver_workspace not in settings.allowed_human_gate_workspaces:
         raise HTTPException(status_code=403, detail="insufficient approver workspace")
 
-    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="run not found")
+    decided_by = _build_decider_identity(approver_role, approver_workspace)
+    run = _load_run_or_404(db, run_id)
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
     workflow_workspace = _resolve_workflow_workspace_id(workflow)
     if workflow_workspace != approver_workspace:
@@ -323,8 +370,24 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
     if not node:
         raise HTTPException(status_code=404, detail="node not found in run")
     if node.status != "approval_pending":
+        if _is_idempotent_human_gate_decision(
+            db,
+            run_id=run_id,
+            node_id=node_id,
+            decision="approved",
+            decided_by=decided_by,
+        ):
+            return _load_run_or_404(db, run_id)
         raise HTTPException(status_code=409, detail="node is not approval_pending")
     if run.status not in {"waiting", "running"}:
+        if _is_idempotent_human_gate_decision(
+            db,
+            run_id=run_id,
+            node_id=node_id,
+            decision="approved",
+            decided_by=decided_by,
+        ):
+            return _load_run_or_404(db, run_id)
         raise HTTPException(status_code=409, detail="run is not waiting for approval")
 
     try:
@@ -332,7 +395,7 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
             db,
             run=run,
             node_id=node_id,
-            decided_by=_build_decider_identity(approver_role, approver_workspace),
+            decided_by=decided_by,
             payload={
                 "node_id": node_id,
                 "decision": "approved",
@@ -343,6 +406,14 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
+        if str(exc) == "node is not approval_pending" and _is_idempotent_human_gate_decision(
+            db,
+            run_id=run_id,
+            node_id=node_id,
+            decision="approved",
+            decided_by=decided_by,
+        ):
+            return _load_run_or_404(db, run_id)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return updated
 
@@ -369,9 +440,8 @@ def reject_human_gate(run_id: int, node_id: str, request: Request, db: Session =
     if approver_workspace not in settings.allowed_human_gate_workspaces:
         raise HTTPException(status_code=403, detail="insufficient approver workspace")
 
-    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="run not found")
+    decided_by = _build_decider_identity(approver_role, approver_workspace)
+    run = _load_run_or_404(db, run_id)
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
     workflow_workspace = _resolve_workflow_workspace_id(workflow)
     if workflow_workspace != approver_workspace:
@@ -380,8 +450,24 @@ def reject_human_gate(run_id: int, node_id: str, request: Request, db: Session =
     if not node:
         raise HTTPException(status_code=404, detail="node not found in run")
     if node.status != "approval_pending":
+        if _is_idempotent_human_gate_decision(
+            db,
+            run_id=run_id,
+            node_id=node_id,
+            decision="rejected",
+            decided_by=decided_by,
+        ):
+            return _load_run_or_404(db, run_id)
         raise HTTPException(status_code=409, detail="node is not approval_pending")
     if run.status not in {"waiting", "running"}:
+        if _is_idempotent_human_gate_decision(
+            db,
+            run_id=run_id,
+            node_id=node_id,
+            decision="rejected",
+            decided_by=decided_by,
+        ):
+            return _load_run_or_404(db, run_id)
         raise HTTPException(status_code=409, detail="run is not waiting for approval")
 
     try:
@@ -389,7 +475,7 @@ def reject_human_gate(run_id: int, node_id: str, request: Request, db: Session =
             db,
             run=run,
             node_id=node_id,
-            decided_by=_build_decider_identity(approver_role, approver_workspace),
+            decided_by=decided_by,
             payload={
                 "node_id": node_id,
                 "decision": "rejected",
@@ -400,23 +486,104 @@ def reject_human_gate(run_id: int, node_id: str, request: Request, db: Session =
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
+        if str(exc) == "node is not approval_pending" and _is_idempotent_human_gate_decision(
+            db,
+            run_id=run_id,
+            node_id=node_id,
+            decision="rejected",
+            decided_by=decided_by,
+        ):
+            return _load_run_or_404(db, run_id)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return updated
 
 
-@run_router.get("/{run_id}/human-gate-audits", response_model=list[HumanGateDecisionAuditOut])
-def list_human_gate_audits(run_id: int, db: Session = Depends(get_db)):
-    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="run not found")
+@run_router.get("/{run_id}/human-gate-audits", response_model=HumanGateAuditListOut)
+def list_human_gate_audits(
+    run_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    status: HumanGateDecisionStatus | None = None,
+    date_range: str | None = None,
+    db: Session = Depends(get_db),
+):
+    _load_run_or_404(db, run_id)
+    safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+    since = _parse_audit_date_range_or_400(date_range)
 
+    query = db.query(HumanGateDecisionAudit).filter(HumanGateDecisionAudit.run_id == run_id)
+    if status:
+        query = query.filter(HumanGateDecisionAudit.decision == status)
+    if since:
+        query = query.filter(HumanGateDecisionAudit.decided_at >= since)
+
+    total_count = query.count()
     records = (
-        db.query(HumanGateDecisionAudit)
-        .filter(HumanGateDecisionAudit.run_id == run_id)
-        .order_by(HumanGateDecisionAudit.decided_at.desc(), HumanGateDecisionAudit.id.desc())
+        query.order_by(HumanGateDecisionAudit.decided_at.desc(), HumanGateDecisionAudit.id.desc())
+        .offset(safe_offset)
+        .limit(safe_limit)
         .all()
     )
-    return records
+    return {
+        "items": records,
+        "total_count": total_count,
+        "limit": safe_limit,
+        "offset": safe_offset,
+    }
+
+
+@approval_router.post("/{approval_id}/cancel", response_model=WorkflowRunOut)
+def cancel_pending_approval(approval_id: int, request: Request, db: Session = Depends(get_db)):
+    configured_token = settings.human_gate_approver_token.strip()
+    if not configured_token:
+        raise HTTPException(status_code=403, detail="human gate approver token is not configured")
+
+    provided_token = _extract_approver_token(request)
+    if not provided_token:
+        raise HTTPException(status_code=401, detail="missing approver token")
+    if not hmac.compare_digest(provided_token, configured_token):
+        raise HTTPException(status_code=403, detail="invalid approver token")
+
+    approver_role = _extract_approver_role(request)
+    if not approver_role:
+        raise HTTPException(status_code=403, detail="missing approver role")
+    if approver_role not in settings.allowed_human_gate_roles:
+        raise HTTPException(status_code=403, detail="insufficient approver role")
+    approver_workspace = _extract_workspace_id(request)
+    if not approver_workspace:
+        raise HTTPException(status_code=403, detail="missing approver workspace")
+    if approver_workspace not in settings.allowed_human_gate_workspaces:
+        raise HTTPException(status_code=403, detail="insufficient approver workspace")
+
+    node = db.query(NodeRun).filter(NodeRun.id == approval_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="approval not found")
+    run = _load_run_or_404(db, node.run_id)
+    workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
+    workflow_workspace = _resolve_workflow_workspace_id(workflow)
+    if workflow_workspace != approver_workspace:
+        raise HTTPException(status_code=403, detail="workspace does not match workflow")
+
+    try:
+        updated = engine.cancel_human_gate_pending(
+            db,
+            run=run,
+            node_id=node.node_id,
+            cancelled_by=_build_decider_identity(approver_role, approver_workspace),
+            payload={
+                "approval_id": approval_id,
+                "node_id": node.node_id,
+                "decision": "cancelled",
+                "role": approver_role,
+                "workspace_id": approver_workspace,
+            },
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return updated
 
 
 @run_router.post("/{run_id}/cancel", response_model=WorkflowRunOut)
