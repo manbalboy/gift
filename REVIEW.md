@@ -1,27 +1,24 @@
-```markdown
 # REVIEW
 
 ## Functional bugs
-- **CORS 포트 정책 오류**: `api/app/main.py`의 `_CORS_ALLOWED_PORT_PATTERN`이 `(?:31\d{2})`로 설정되어 있어 3100~3199 포트만 허용됩니다. SPEC의 Deployment 요구사항인 "Preview 외부 노출 포트는 7000-7099 범위를 사용합니다." (예: `http://ssh.manbalboy.com:7000`)에 위배되어, 실제 배포/Preview 환경에서 프론트엔드 API 호출 시 CORS 차단 버그가 발생합니다.
-- **Loop Engine 좀비 상태 버그**: `api/app/services/loop_simulator.py`의 백그라운드 스레드 루프(`_run_forever`) 내부에 `try-except Exception` 글로벌 예외 처리 블록이 없습니다. 루프 안에서 예기치 않은 오류가 발생하면 스레드가 종료되지만, `finally` 블록의 구조적 한계로 인해 `self._mode`가 `"running"` 상태로 남게 됩니다. 이후 `/start` API를 호출해도 상태 오판으로 인해 엔진이 재시작되지 않는 좀비(Zombie) 상태에 빠집니다.
+- `LoopSimulator`에 `max_loop_count` 및 `budget_limit`을 설정하고, 한도 도달 시 엔진 루프를 중지(`stopped` 또는 `idle`)하는 로직이 구현되지 않았습니다. 메인 틱 루프(`_run_forever`) 내에 관련 제어 조건이 누락되어 있어, 시스템이 강제로 종료될 때까지 무한 반복되는 결함이 존재합니다.
 
 ## Security concerns
-- **XSS 필터 우회 잠재 취약점**: `web/src/utils/security.ts`의 `SAFE_GENERIC_PATTERN`은 ReDoS 방지 처리가 잘 되어 있으나, `<img onerror>` 같은 속성 기반 태그가 입력될 경우 `UNSAFE_GENERIC_KEYWORDS` 필터망을 통과하고 `DOMPurify` 실행 이후에 그대로 복원(`restoreSafeGenericTokens`)되는 구조입니다. 현재 React 환경에서 텍스트로 바인딩되어 즉각적인 XSS 실행 위험은 낮지만, 향후 `dangerouslySetInnerHTML` 등의 방식으로 렌더링 될 경우 스크립트가 실행될 수 있는 잠재적 취약점입니다.
+- `web/src/utils/security.ts` 내 `sanitizeAlertText`는 `DOMPurify` 정제 후 정규식을 통해 모든 HTML 태그를 제거하여 순수 텍스트를 반환합니다. 현재 이 반환값을 React의 Text Node로 사용하여 XSS 위협을 차단하고 있으나, 향후 이 함수의 결과를 안전한 마크업(HTML)으로 오인하여 컴포넌트의 `dangerouslySetInnerHTML` 등에 주입할 경우 잠재적인 보안 위험 및 렌더링 오류를 야기할 수 있습니다. 
 
 ## Missing tests / weak test coverage
-- **백그라운드 스레드 제어 커버리지 취약**: `api/tests/test_loop_engine_api.py` 등 API 단위 테스트는 작성되었지만, `LoopSimulator`의 스레드가 크래시 났을 때 시스템이 멈추는지, 혹은 예산(budget) 초과 및 최대 루프 수(`max_loop_count`)에 도달했을 때 안전 모드(Safe mode)로 올바르게 전환되는지에 대한 상세 백그라운드 모듈 단위 테스트가 누락되어 있습니다.
-- **제네릭 복원 로직 교차 검증 부족**: `security.test.ts`에 ReDoS나 단순 XSS 방어에 대한 테스트는 통과했으나, 특이 속성(예: 이벤트 핸들러가 값 없이 포함된 태그)이 주입된 엣지 케이스에 대해 DOMPurify 복원 안전성을 증명하는 테스트가 부족합니다.
+- **API 테스트 누락**: `PLAN.md`에 명시된 "예산(Budget) 초과 정지, 최대 루프 도달 시 상태 전이"를 검증하는 백엔드 모듈 단위 테스트(pytest)가 작성되지 않았습니다. 런타임 크래시에 대한 복구 모의 테스트만 존재합니다.
+- **Web UI 테스트 부족**: `web/src/components/ErrorLogModal.test.tsx`에서 대용량 로그 가상화/페이지네이션 검증 시 25,000자의 단순 영문('A') 문자열만 사용하여 테스트하고 있습니다. `PLAN.md`에 요구된 "10만 자 이상의 더미 텍스트(한글/이모지 포함)" 처리 및 "멀티바이트 깨짐 여부 검증" 테스트 케이스가 누락되었습니다.
 
 ## Edge cases
-- **에러 로그 전문 렌더링 프리징 (UI/UX 엣지 케이스)**: `web/src/components/ErrorLogModal.tsx`에서 5000자 Truncation 기능은 구현되었으나, '전체 보기(expanded)' 버튼을 눌렀을 때의 뷰포트 대비책이 없습니다. 만약 수만~수십만 자의 에러 로그가 들어올 경우, 클릭 즉시 DOM에 거대 텍스트가 렌더링되면서 브라우저 메인 스레드가 멈추는(Freezing) 현상이 발생할 수 있습니다.
-- **문자열 절삭 시 멀티바이트 깨짐**: 5000자 자르기 로직(`payload.slice(0, MAX_VISIBLE_LOG_CHARS)`) 수행 시, 경계선에 한글, 이모지 등 멀티바이트 문자가 위치하면 문자가 깨진 채로 렌더링될 우려가 있습니다.
+- **문자열 경계 잘림 (Grapheme Cluster Break)**: `ErrorLogModal`의 로그 페이지네이션 로직에서 `Array.from()`을 사용해 Code Point 단위로 배열 슬라이싱을 수행합니다. 이는 기본 이모지와 같은 Surrogate Pair 형태는 방어하지만, Zero Width Joiner(ZWJ)로 묶인 조합형 이모지(예: 👨‍👩‍👧‍👦)나 복합 한글 텍스트의 경우 특정 페이지 단위 분할 지점(Boundary)에서 잘리면 글자가 깨져 보일 수 있는 엣지 케이스가 존재합니다.
 
 ---
 
-## TODO
-- [ ] `api/app/main.py`의 CORS 포트 정규식을 Preview 환경에 맞게 `(?:31\d{2}|70\d{2})` 형식으로 수정하여 7000~7099 대역을 허용하도록 변경.
-- [ ] `api/app/services/loop_simulator.py`의 `_run_forever` 메인 틱 루프 안에 전역 `try-except Exception` 구문을 추가하고, 비정상 크래시 발생 시 `self._mode`를 `"stopped"` 또는 `"idle"`로 초기화하는 복구 로직 반영.
-- [ ] `ErrorLogModal.tsx`에서 '전체 보기' 전환 시 발생할 수 있는 UI 프리징을 방지하기 위해 가상화 렌더링(Virtualization) 또는 청크 단위 페이지네이션 적용.
-- [ ] `security.ts`의 `sanitizeAlertText` 함수 반환값 사용 처에 대한 XSS 안전성 주석 추가 및 `restoreSafeGenericTokens` 복원 시 허용할 속성/태그 화이트리스트 교차 검증 로직 강화.
-- [ ] 백그라운드 루프 시뮬레이터 비정상 종료 시 재시작 및 예산 초과로 인한 정지 상황을 검증하는 모듈 단위 테스트(pytest) 추가.
-```
+## TODO (for coder)
+
+- [ ] API: `LoopSimulator`에 `max_loop_count` 및 `budget_limit` 한도 설정 로직을 추가하고, 조건 만족 시 엔진을 안전하게 중지하는 기능 구현.
+- [ ] API: 루프 엔진이 예산 초과 및 최대 사이클에 도달했을 때 정상적으로 상태 전이(`stopped`)가 일어나는지 검증하는 `pytest` 추가.
+- [ ] Web: 10만 자 이상의 한글 및 조합형 이모지가 포함된 더미 텍스트를 주입하여 렌더링 프리징과 글자 깨짐 여부를 검증하는 프론트엔드 테스트 보강.
+- [ ] Web: `ErrorLogModal`에서 대용량 문자열을 청크 단위로 분할할 때 문자가 깨지는 것을 방지하도록, 줄바꿈 기준 분할 방식이나 `Intl.Segmenter` 기반의 안전한 텍스트 자르기 로직 적용.
+- [ ] Web: `sanitizeAlertText` 함수의 반환값이 HTML이 아닌 '순수 평문 텍스트'임을 명확히 안내하는 JSDoc 주석 또는 TypeScript Branded Type을 추가해 오남용을 방지.
