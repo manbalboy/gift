@@ -2,8 +2,8 @@
 
 ## Summary
 - Stage: `ux_e2e_review`
-- Verdict: `PASS`
-- Test status: `PASS`
+- Verdict: `NEEDS_FIX`
+- Test status: `FAIL`
 - Preview URL: http://ssh.manbalboy.com:7005
 - Health URL: http://127.0.0.1:7005/
 
