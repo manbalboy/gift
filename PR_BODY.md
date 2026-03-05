@@ -1,86 +1,72 @@
 ## Summary
 
-이슈 #67 "[초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략"의 1차 구현 범위로, **Workflow Engine v2 안정화**와 **Human Gate 보안 강화**를 완료했습니다.
+이슈 #67 "초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략"에서 정의된 장기 로드맵 중, **Phase 1~2 핵심 보안 수정 및 안정성 개선** 항목을 우선 구현합니다.
 
-기존 MVP(`ex-code`)를 분석하여 확인된 치명적 결함(메모리 누수, DAG 누락 노드, 권한 미검증)을 수정하고, 워크스페이스 기반 RBAC 권한 제어 및 HTTP 표준 예외 처리를 도입했습니다. 이번 PR은 SPEC의 Phase 1(Workflow Engine v2)·Phase 2(Human Gate) 완료 기준을 충족하며, 이후 Phase 3~6(Visual Builder, Agent Marketplace, Integrations 확장)을 위한 안정적 기반을 마련합니다.
+주요 변경 범위는 다음과 같습니다.
+
+- 클라이언트 번들에 포함된 시크릿 환경변수 노출 제거
+- 단일 노드 워크플로우 상태 전이(`running → done`) 버그 수정
+- 휴먼 게이트(Human Gate) 승인/반려/철회 API 멱등성 보장
+- Audit Log 조회 API 페이지네이션 및 상태·날짜 필터 추가
+- 네트워크 오프라인/온라인 시나리오 Playwright E2E 테스트 통합
 
 ---
 
 ## What Changed
 
-### 백엔드 — `api/`
+### P0 — 보안 및 버그 수정
 
-| 파일 | 변경 내용 |
-|---|---|
-| `api/app/api/webhooks.py` | 잘못된 `workflow_id` 및 페이로드 수신 시 HTTP **422** 예외 반환 로직 추가 |
-| `api/app/services/workflow_engine.py` | 워크플로우 강제 취소 시 `asyncio.CancelledError` 정상 핸들링 및 SSE 제너레이터 안전 종료(메모리 누수 방지) |
-| `api/app/services/workflow_engine.py` | DAG 순회 로직 보완 — 이전 노드와 연결(edge)이 없는 독립 노드도 병렬 처리 큐에 정상 진입하도록 수정 |
-| `api/app/api/workflows.py` | Human Gate 엔드포인트에 **워크스페이스 기반 RBAC** 도입, 권한 부족 시 HTTP **403** 반환 |
-| `api/app/models/` + DB 스키마 | Human Gate 의사결정 추적용 **Audit Log 테이블** 신설 (결정 주체·시간·페이로드 저장) |
+| 구분 | 변경 내용 |
+|------|-----------|
+| **시크릿 노출 제거** | `web/src/services/api.ts`에서 `VITE_WEBHOOK_SECRET` 참조를 완전 제거하고, 웹훅 서명 검증 로직을 백엔드로 이관 |
+| **단일 노드 워크플로우** | `workflow_engine` 내부에서 엣지가 없는 단일 노드 실행 완료 시 `done` 상태로 즉시 전이되도록 수정 |
 
-### 프론트엔드 — `web/`
+### P1 — 안정성 및 기능 개선
 
-| 항목 | 변경 내용 |
-|---|---|
-| 포트 고정 | 프론트엔드 **3100**, 백엔드 API **3101** 명시적 분리 |
-| SSE 재연결 | 단절 시 **Exponential Backoff + Jitter** 기반 자동 재연결 구현 (Thundering Herd 방지) |
-| 재연결 인디케이터 | 재연결 시도 중 상단 배너로 네트워크 상태 노출 |
-| 403 Fallback 모달 | 권한 없는 사용자가 Human Gate 접근 시 안내 모달 표시 |
-| Audit Log 뷰어 | Human Gate 과거 결정 이력(승인/반려/시간/주체)을 Read-Only 모달로 조회 |
+| 구분 | 변경 내용 |
+|------|-----------|
+| **Human Gate 멱등성** | Approve/Reject API에 이어 **Cancel API**(`POST /api/approvals/{id}/cancel`)에도 중복 호출 멱등성 보장 로직 추가 — 이미 `cancelled` 상태이면 `200 OK` 반환 |
+| **Audit Log 페이지네이션** | `GET /api/runs/{run_id}/human-gate-audits`에 `limit`/`offset` 파라미터 및 `total_count` 메타데이터 응답 추가 |
+| **Audit Log 필터** | `status`, `date_range` 쿼리 파라미터로 특정 상태·기간 로그만 조회 가능하도록 확장 |
+| **E2E 테스트 보강** | Playwright에 오프라인 배너 노출, 온라인 복구 UI, Human Gate Cancel 버튼 클릭 시나리오 추가 |
 
 ### 디자인 시스템 적용
 
-- 상태 시맨틱 컬러 토큰 적용: 승인(`#22C55E`) / 반려(`#EF4444`) / 대기(`#F59E0B`)
-- 카드 내부 패딩 `16px`, 섹션 간격 `24px` 준수
-- 모바일 우선(Mobile-First) 레이아웃 — 좁은 화면에서 단일 컬럼 카드 UI
+- 오프라인/에러 배너는 `color.status.failed: #EF4444` 기반 플로팅 형태로 레이아웃 비침해 구현
+- Audit Log 테이블은 `font.mono` 적용, 행 높이 `40px`, 헤더 sticky 처리
+- 모바일(`sm`) 뷰에서 로그 테이블은 카드 스택으로 폴백
 
 ---
 
 ## Test Results
 
-### 백엔드 (Pytest)
-
-| 테스트 항목 | 결과 |
-|---|---|
-| 잘못된 웹훅 페이로드 → HTTP 422 반환 검증 | ✅ 통과 |
-| `asyncio.CancelledError` 핸들링 및 좀비 커넥션 미발생 확인 | ✅ 통과 |
-| 독립 노드 DAG 큐 진입 검증 | ✅ 통과 |
-| Human Gate 역할별 403 인가 에러 반환 검증 (Admin / Reviewer / 일반 사용자) | ✅ 통과 |
-| Audit Log DB 기록 확인 (주체·시간·페이로드) | ✅ 통과 |
-
-### 프론트엔드 (Playwright E2E, `http://localhost:3100`)
-
-| 테스트 항목 | 결과 |
-|---|---|
-| Human Gate 승인/반려 UI 흐름 자동 검증 | ✅ 통과 |
-| 403 에러 수신 시 Fallback 모달 노출 확인 | ✅ 통과 |
-| 서버 단절 후 복구 시 지수적 백오프 재연결 동작 확인 | ✅ 통과 |
-| Audit Log 뷰어 Read-Only 렌더링 검증 | ✅ 통과 |
-
-### Docker Preview
-
-- 컨테이너: `docker compose up` 기준 프론트엔드 `:3100`, API `:3101` 정상 기동
-- Preview URL: `http://ssh.manbalboy.com:7000`
-- CORS 허용: `manbalboy.com` 계열 및 `localhost` 계열
+| 테스트 항목 | 방법 | 결과 |
+|------------|------|------|
+| 시크릿 미노출 확인 | 빌드 번들(`dist/`) 텍스트 검색 | `VITE_WEBHOOK_SECRET` 미검출 |
+| Human Gate 멱등성 | `pytest` 병렬 호출 통합 테스트 | 동일 페이로드 2회 모두 `200 OK` |
+| 단일 노드 워크플로우 | `pytest` 단위 테스트 | 실행 직후 DB 상태 `done` 확인 |
+| Audit Log 페이지네이션 | `pytest` — 100건 생성 후 `limit=10` 요청 | 10건 + `total_count: 100` 반환 확인 |
+| 오프라인 배너 E2E | `npm run test:e2e` (Playwright) | 오프라인 배너 노출·온라인 복구 통과 |
+| Cancel E2E | Playwright | 버튼 클릭 → 철회 성공 → 대기 상태 복구 통과 |
 
 ---
 
 ## Risks / Follow-ups
 
-### 잔여 리스크
+### 잔여 위험 (Risks)
 
-| 리스크 | 설명 | 대응 방안 |
-|---|---|---|
-| **Race Condition** | 다수 리뷰어의 동시 승인/반려 시 상태 덮어쓰기 가능성 | DB 트랜잭션 Lock(낙관적/비관적 잠금) 도입 필요 — Phase 5 예정 |
-| **Thundering Herd** | Jitter 미적용 환경에서 서버 복구 시 클라이언트 동시 재연결 부하 | 현재 Jitter 포함 구현 완료, 부하 테스트 추가 검증 권장 |
+| 위험 | 내용 | 심각도 |
+|------|------|--------|
+| **토큰 노출** | `VITE_HUMAN_GATE_APPROVER_TOKEN`이 `web/src/services/api.ts` 내 `import.meta.env` 형태로 여전히 클라이언트 번들에 포함됨 — 브라우저에서 인가 토큰 직접 노출 | **높음** |
+| **SSE 다중 연결** | 네트워크 Flapping 시 `subscribeWorkflowRuns` 타이머 충돌로 백엔드에 다중 EventSource 연결이 발생할 수 있음 | 중간 |
+| **포트 하드코딩** | 일부 에러 메시지·문서에 과거 포트가 잔존할 경우 CORS 오류 및 타임아웃 엣지 케이스 유발 가능 | 낮음 |
 
-### 이번 PR 범위 외 (후속 이슈)
+### 후속 과제 (Follow-ups)
 
-- **Visual Workflow Builder** (ReactFlow 기반 노드/엣지 편집기) — SPEC Phase 5 (P1)
-- **Agent SDK 마켓플레이스** (Agent Spec/버전 관리, CLI 어댑터 표준화) — SPEC Phase 2 (P0)
-- **Dev Integrations 확장** (PR/CI/Deploy 이벤트 버스) — SPEC Phase 6 (P1~P2)
-- **Postgres 완전 이관** (현재 SQLite/파일 혼용) — SPEC Phase 3 (P1)
-- **Live Run Constellation** 대시보드 인터랙티브 미니맵 — DESIGN_SYSTEM WOW Point
+- [ ] `VITE_HUMAN_GATE_APPROVER_TOKEN` 제거 및 서버 사이드 세션 또는 단기 토큰 발급 방식으로 인증 구조 전환 (보안 강화 Sprint 분리 권장)
+- [ ] SSE `EventSource` 재연결 로직에 디바운스 및 중복 구독 방지 처리 추가
+- [ ] Audit Log 필터(`status`, `date_range`) 조합 케이스 `pytest` 커버리지 보강
+- [ ] SPEC Phase 3~6 로드맵(Postgres 이관, Visual Builder, Agent Marketplace, Integrations 확장) 후속 이슈 등록
 
 ---
 
