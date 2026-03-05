@@ -45,6 +45,18 @@ describe('security utils', () => {
     expect(result).not.toContain('alert(1)');
   });
 
+  test('속성 형태로 우회한 태그(<img onerror>, <div onclick>)는 복원되지 않는다', () => {
+    const payload = 'before <img onerror> <div onclick> <T extends User> after token=abc123';
+    const result = sanitizeAlertText(payload);
+
+    expect(result).toContain('before');
+    expect(result).toContain('after');
+    expect(result).toContain('<T extends User>');
+    expect(result).not.toContain('<img onerror>');
+    expect(result).not.toContain('<div onclick>');
+    expect(result).toContain(`token=${MASKED_TOKEN}`);
+  });
+
   test('비정형 중첩 스크립트 페이로드(<scr<script>ipt>)를 무해화한다', () => {
     const payload = 'before <scr<script>ipt>alert(1)</scr<script>ipt> after';
     const result = sanitizeAlertText(payload);

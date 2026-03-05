@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 
 const MAX_VISIBLE_LOG_CHARS = 5000;
+const EXPANDED_LOG_PAGE_CHARS = 12000;
 const EMPTY_LOG_FALLBACK = 'No logs available';
+const GRAPHEME_FALLBACK_PATTERN = /\p{Extended_Pictographic}(?:\u200D\p{Extended_Pictographic})*|\P{Mark}\p{Mark}*|./gu;
 
 type Props = {
   title: string;
@@ -22,6 +24,22 @@ async function copyToClipboard(value: string): Promise<boolean> {
   }
 }
 
+function splitGraphemes(value: string): string[] {
+  const segmenterCtor = (globalThis as {
+    Intl?: {
+      Segmenter?: new (
+        locales?: string | string[],
+        options?: { granularity?: 'grapheme' | 'word' | 'sentence' },
+      ) => { segment: (input: string) => Iterable<{ segment: string }> };
+    };
+  }).Intl?.Segmenter;
+  if (segmenterCtor) {
+    const segmenter = new segmenterCtor('ko', { granularity: 'grapheme' });
+    return Array.from(segmenter.segment(value), (part) => part.segment);
+  }
+  return value.match(GRAPHEME_FALLBACK_PATTERN) ?? [];
+}
+
 export default function ErrorLogModal({
   title,
   summary,
@@ -32,6 +50,7 @@ export default function ErrorLogModal({
 }: Props) {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'failed'>('idle');
   const [expanded, setExpanded] = useState(false);
+  const [expandedPage, setExpandedPage] = useState(0);
   const payload = useMemo(() => {
     const merged = detailLines
       .map((line) => (typeof line === 'string' ? line : ''))
@@ -39,13 +58,36 @@ export default function ErrorLogModal({
       .trim();
     return merged.length > 0 ? merged : EMPTY_LOG_FALLBACK;
   }, [detailLines]);
-  const isTruncated = payload.length > MAX_VISIBLE_LOG_CHARS;
-  const visiblePayload = isTruncated && !expanded ? `${payload.slice(0, MAX_VISIBLE_LOG_CHARS)}\n\n... (생략됨)` : payload;
+  const payloadGraphemes = useMemo(() => splitGraphemes(payload), [payload]);
+  const payloadLength = payloadGraphemes.length;
+  const isTruncated = payloadLength > MAX_VISIBLE_LOG_CHARS;
+  const expandedTotalPages = Math.max(1, Math.ceil(payloadLength / EXPANDED_LOG_PAGE_CHARS));
+  const safeExpandedPage = Math.min(expandedPage, expandedTotalPages - 1);
+  const { text: visiblePayload, length: visiblePayloadLength } = useMemo(() => {
+    if (!isTruncated || !expanded) return { text: payload, length: payloadLength };
+    const start = safeExpandedPage * EXPANDED_LOG_PAGE_CHARS;
+    const end = start + EXPANDED_LOG_PAGE_CHARS;
+    const page = payloadGraphemes.slice(start, end);
+    return { text: page.join(''), length: page.length };
+  }, [expanded, isTruncated, payload, payloadGraphemes, payloadLength, safeExpandedPage]);
+  const collapsedPreview = useMemo(() => {
+    if (!isTruncated) return payload;
+    return `${payloadGraphemes.slice(0, MAX_VISIBLE_LOG_CHARS).join('')}\n\n... (생략됨)`;
+  }, [isTruncated, payload, payloadGraphemes]);
 
   useEffect(() => {
     setExpanded(false);
+    setExpandedPage(0);
     setCopyStatus('idle');
   }, [payload]);
+
+  useEffect(() => {
+    if (!expanded) {
+      setExpandedPage(0);
+      return;
+    }
+    setExpandedPage((current) => Math.min(current, expandedTotalPages - 1));
+  }, [expanded, expandedTotalPages]);
 
   const handleCopy = async () => {
     const ok = await copyToClipboard(payload);
@@ -65,12 +107,36 @@ export default function ErrorLogModal({
       >
         <h2>{title}</h2>
         <p>{summary}</p>
-        <pre className="mono error-log-detail">{visiblePayload}</pre>
+        <pre className="mono error-log-detail">{expanded && isTruncated ? visiblePayload : collapsedPreview}</pre>
         {isTruncated && (
           <div className="error-log-truncation-meta">
-            <p className="mono">표시 {visiblePayload.length.toLocaleString()} / 전체 {payload.length.toLocaleString()} chars</p>
+            <p className="mono">
+              {expanded
+                ? `페이지 ${safeExpandedPage + 1}/${expandedTotalPages} · 표시 ${visiblePayloadLength.toLocaleString()} chars · 전체 ${payloadLength.toLocaleString()} chars`
+                : `표시 ${MAX_VISIBLE_LOG_CHARS.toLocaleString()} / 전체 ${payloadLength.toLocaleString()} chars`}
+            </p>
             <button type="button" className="btn btn-ghost" onClick={() => setExpanded((prev) => !prev)}>
               {expanded ? '접기' : '전체 보기'}
+            </button>
+          </div>
+        )}
+        {expanded && isTruncated && expandedTotalPages > 1 && (
+          <div className="error-log-pagination">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={safeExpandedPage <= 0}
+              onClick={() => setExpandedPage((prev) => Math.max(0, prev - 1))}
+            >
+              이전 페이지
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={safeExpandedPage >= expandedTotalPages - 1}
+              onClick={() => setExpandedPage((prev) => Math.min(expandedTotalPages - 1, prev + 1))}
+            >
+              다음 페이지
             </button>
           </div>
         )}

@@ -269,6 +269,16 @@ class Settings:
         25,
         "DEVFLOW_LOOP_SAFE_MODE_DROP_THRESHOLD",
     )
+    loop_max_loop_count: int = _as_int(
+        os.getenv("DEVFLOW_LOOP_MAX_LOOP_COUNT"),
+        120,
+        "DEVFLOW_LOOP_MAX_LOOP_COUNT",
+    )
+    loop_budget_limit: int = _as_int(
+        os.getenv("DEVFLOW_LOOP_BUDGET_LIMIT"),
+        8000,
+        "DEVFLOW_LOOP_BUDGET_LIMIT",
+    )
     workflow_human_gate_stale_hours: int = _as_int(
         os.getenv("DEVFLOW_WORKFLOW_HUMAN_GATE_STALE_HOURS"),
         24,

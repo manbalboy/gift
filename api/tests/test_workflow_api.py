@@ -128,7 +128,7 @@ def test_cors_allows_localhost_31xx():
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3108"
 
 
-def test_cors_blocks_preview_port_7000_range():
+def test_cors_allows_preview_port_7000_range():
     response = client.options(
         "/api/workflows",
         headers={
@@ -136,7 +136,8 @@ def test_cors_blocks_preview_port_7000_range():
             "Access-Control-Request-Method": "GET",
         },
     )
-    assert response.status_code == 400
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:7007"
 
 
 def test_cors_blocks_preview_out_of_range_port():

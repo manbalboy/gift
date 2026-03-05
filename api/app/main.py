@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 _CORS_ALLOWED_HOST_PATTERN = r"(?:(?:localhost|127\.0\.0\.1)|(?:[A-Za-z0-9-]+\.)*manbalboy\.com)"
-_CORS_ALLOWED_PORT_PATTERN = r"(?:31\d{2})"
+_CORS_ALLOWED_PORT_PATTERN = r"(?:31\d{2}|70\d{2})"
 _CORS_ORIGIN_PATTERN = re.compile(rf"^https?://{_CORS_ALLOWED_HOST_PATTERN}(?::{_CORS_ALLOWED_PORT_PATTERN})?$")
 
 

@@ -374,3 +374,37 @@ def test_loop_component_mock_routes_validate_required_fields():
         },
     )
     assert invalid_policy.status_code == 422
+
+
+def test_loop_evaluator_mock_transitions_to_needs_review_when_max_loop_reached():
+    response = client.post(
+        '/api/loop/evaluator/mock',
+        json={
+            'summary': '최대 루프 도달 검증',
+            'max_loop_count': 2,
+            'budget_remaining': 1000,
+            'previous_score': 82,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['component'] == 'evaluator'
+    assert payload['status'] == 'needs_review'
+    assert payload['next_component'] is None
+
+
+def test_loop_executor_mock_halts_when_budget_is_exhausted():
+    response = client.post(
+        '/api/loop/executor/mock',
+        json={
+            'summary': 'budget 초과로 중단',
+            'max_loop_count': 80,
+            'budget_remaining': 0,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['component'] == 'executor'
+    assert payload['accepted'] is False
+    assert payload['status'] == 'halted'
+    assert payload['next_component'] is None

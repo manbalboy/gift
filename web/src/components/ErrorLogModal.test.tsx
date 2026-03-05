@@ -59,16 +59,49 @@ describe('ErrorLogModal', () => {
   });
 
   test('긴 로그는 기본적으로 잘라서 보여주고 전체 보기로 확장할 수 있다', () => {
-    const longLine = 'A'.repeat(6000);
+    const longLine = 'A'.repeat(25000);
     render(<ErrorLogModal title="긴 로그" summary="요약" detailLines={[longLine]} onClose={jest.fn()} />);
 
-    expect(screen.getByText(/표시 5,0\d{2} \/ 전체 6,000 chars/)).toBeInTheDocument();
+    expect(screen.getByText(/표시 5,000 \/ 전체 25,000 chars/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '전체 보기' })).toBeInTheDocument();
     expect(screen.getByText(/\.\.\. \(생략됨\)$/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '전체 보기' }));
-    expect(screen.getByText('표시 6,000 / 전체 6,000 chars')).toBeInTheDocument();
+    expect(screen.getByText('페이지 1/3 · 표시 12,000 chars · 전체 25,000 chars')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '다음 페이지' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '다음 페이지' }));
+    expect(screen.getByText('페이지 2/3 · 표시 12,000 chars · 전체 25,000 chars')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '접기' })).toBeInTheDocument();
+  });
+
+  test('10만 자 이상 한글/ZWJ 이모지 로그를 페이지네이션해도 글자 경계가 깨지지 않는다', () => {
+    const pattern = '한글로그👨‍👩‍👧‍👦-라인';
+    const largeText = `${pattern}\n`.repeat(8000).trim();
+    expect(largeText.length).toBeGreaterThan(100000);
+
+    const { container } = render(
+      <ErrorLogModal title="대용량 로그" summary="요약" detailLines={[largeText]} onClose={jest.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '전체 보기' }));
+
+    const logNode = container.querySelector('.error-log-detail') as HTMLElement;
+    expect(logNode).toBeTruthy();
+    expect(screen.getByText(/전체 .* chars/)).toBeInTheDocument();
+
+    let merged = '';
+    let guard = 0;
+    while (guard < 50) {
+      merged += logNode.textContent ?? '';
+      const nextButton = screen.getByRole('button', { name: '다음 페이지' });
+      if (nextButton.hasAttribute('disabled')) break;
+      fireEvent.click(nextButton);
+      guard += 1;
+    }
+
+    expect(merged).toBe(largeText);
+    expect(merged).toContain('👨‍👩‍👧‍👦');
   });
 
   test('빈 로그 입력 시 No logs available 대체 텍스트를 렌더링한다', () => {

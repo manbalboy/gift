@@ -75,7 +75,7 @@ class InstructionStatus:
 
 
 class LoopSimulator:
-    def __init__(self) -> None:
+    def __init__(self, *, max_loop_count: int | None = None, budget_limit: int | None = None) -> None:
         self._lock = RLock()
         self._thread: Thread | None = None
         self._stop_event = Event()
@@ -89,6 +89,11 @@ class LoopSimulator:
         self._instruction_statuses: OrderedDict[str, InstructionStatus] = OrderedDict()
         self._quality_score: int | None = None
         self._safe_mode_reason: str | None = None
+        resolved_max_loop_count = settings.loop_max_loop_count if max_loop_count is None else max_loop_count
+        resolved_budget_limit = settings.loop_budget_limit if budget_limit is None else budget_limit
+        self._max_loop_count = max(1, int(resolved_max_loop_count))
+        self._budget_limit = max(1, int(resolved_budget_limit))
+        self._consumed_budget = 0
         self._started_at: datetime | None = None
         self._updated_at = datetime.now(timezone.utc)
         self._last_lock_extend_at = 0.0
@@ -126,6 +131,7 @@ class LoopSimulator:
             self._pending_instructions.clear()
             self._quality_score = 62
             self._safe_mode_reason = None
+            self._consumed_budget = 0
             self._started_at = datetime.now(timezone.utc)
             self._touch_locked()
             self._emit_lifecycle_alert_locked(
@@ -261,6 +267,7 @@ class LoopSimulator:
             self._instruction_statuses.clear()
             self._quality_score = None
             self._safe_mode_reason = None
+            self._consumed_budget = 0
             self._started_at = None
             self._release_execution_lock_locked()
             self._touch_locked()
@@ -276,6 +283,9 @@ class LoopSimulator:
                     self._pause_event.wait(timeout=1.0)
                     continue
 
+                if not self._enforce_runtime_limits():
+                    break
+
                 self._drain_next_instruction()
 
                 stage = _LOOP_STAGES[stage_idx]
@@ -287,8 +297,24 @@ class LoopSimulator:
                     with self._lock:
                         self._cycle_count += 1
                         self._touch_locked()
+                with self._lock:
+                    if self._mode == "running":
+                        self._consumed_budget += 1
+                        self._touch_locked()
 
                 time.sleep(0.36)
+        except Exception as exc:
+            logger.exception("loop simulator crashed: %s", exc)
+            with self._lock:
+                self._mode = "stopped"
+                self._current_stage = None
+                self._stop_event.set()
+                self._pause_event.set()
+                self._emit_lifecycle_alert_locked(
+                    code="LOOP_RUNTIME_CRASH",
+                    message=f"Loop Engine 런타임 예외로 안전 정지합니다: {exc}",
+                    level="error",
+                )
         finally:
             with self._lock:
                 self._thread = None
@@ -296,6 +322,40 @@ class LoopSimulator:
                 if self._mode == "stopped":
                     self._mode = "idle"
                 self._touch_locked()
+
+    def _enforce_runtime_limits(self) -> bool:
+        with self._lock:
+            if self._mode != "running":
+                return True
+            if self._cycle_count >= self._max_loop_count:
+                self._mode = "stopped"
+                self._current_stage = None
+                self._stop_event.set()
+                self._pause_event.set()
+                self._emit_lifecycle_alert_locked(
+                    code="LOOP_MAX_LOOP_COUNT_REACHED",
+                    message=(
+                        f"max_loop_count({self._max_loop_count})에 도달해 "
+                        "Loop Engine을 안전 정지합니다."
+                    ),
+                    level="error",
+                )
+                return False
+            if self._consumed_budget >= self._budget_limit:
+                self._mode = "stopped"
+                self._current_stage = None
+                self._stop_event.set()
+                self._pause_event.set()
+                self._emit_lifecycle_alert_locked(
+                    code="LOOP_BUDGET_LIMIT_REACHED",
+                    message=(
+                        f"budget_limit({self._budget_limit})를 초과해 "
+                        "Loop Engine을 안전 정지합니다."
+                    ),
+                    level="error",
+                )
+                return False
+            return True
 
     def _is_paused(self) -> bool:
         with self._lock:
