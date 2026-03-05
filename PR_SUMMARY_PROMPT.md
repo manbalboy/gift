@@ -7,8 +7,8 @@
 - Design system: /home/docker/agentHub/workspaces/new-mind/manbalboy__agent-hub/DESIGN_SYSTEM.md
 
 이슈 정보:
-- Title: [초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략
-- Number: #67
+- Title: [초장기] 해당 워크 플로를 각각 상세하게 수정 구현할수 있는 형태로 개발해주세요
+- Number: #69
 
 출력 규칙:
 - markdown 본문만 출력.
@@ -18,4 +18,4 @@
   2) What Changed
   3) Test Results
   4) Risks / Follow-ups
-  5) Closes #67
+  5) Closes #69
