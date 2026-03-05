@@ -25,6 +25,7 @@ describe('LiveRunConstellation', () => {
     expect(screen.getByText('Idea')).toBeInTheDocument();
     expect(screen.getByText('Plan')).toBeInTheDocument();
     expect(screen.getByText('Test')).toBeInTheDocument();
+    expect(screen.getByText('Bottleneck Node: Plan (running)')).toBeInTheDocument();
   });
 
   test('데이터가 없어도 기본 섹션을 렌더링한다', () => {
@@ -32,5 +33,6 @@ describe('LiveRunConstellation', () => {
 
     expect(screen.getByText('Live Run Constellation')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: '실행 상태 미니맵' })).toBeInTheDocument();
+    expect(screen.getByText('Bottleneck Node: 없음')).toBeInTheDocument();
   });
 });

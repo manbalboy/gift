@@ -16,12 +16,13 @@ type Props = {
 };
 
 export default function LiveRunConstellation({ data }: Props) {
-  const { points, pointById, links } = useMemo(() => {
+  const { points, pointById, links, bottleneck } = useMemo(() => {
     if (!data || data.nodes.length === 0) {
       return {
         points: [],
         pointById: new Map<string, { id: string; x: number; y: number; status: string }>(),
         links: [] as Array<{ key: string; source: string; target: string }>,
+        bottleneck: null as { id: string; label: string; status: string } | null,
       };
     }
 
@@ -39,7 +40,8 @@ export default function LiveRunConstellation({ data }: Props) {
     const normalizedLinks = data.links
       .filter((link) => byId.has(link.source) && byId.has(link.target))
       .map((link) => ({ ...link, key: `${link.source}:${link.target}` }));
-    return { points: p, pointById: byId, links: normalizedLinks };
+    const bottleneckNode = data.nodes.find((node) => node.status === 'failed') ?? data.nodes.find((node) => node.status === 'running') ?? null;
+    return { points: p, pointById: byId, links: normalizedLinks, bottleneck: bottleneckNode };
   }, [data]);
 
   return (
@@ -106,6 +108,9 @@ export default function LiveRunConstellation({ data }: Props) {
         <span>done ✓</span>
         <span>failed !</span>
       </div>
+      <p className="constellation-bottleneck mono" aria-live="polite">
+        {bottleneck ? `Bottleneck Node: ${bottleneck.label} (${bottleneck.status})` : 'Bottleneck Node: 없음'}
+      </p>
     </section>
   );
 }

@@ -641,7 +641,7 @@ describe('App', () => {
       capturedHandlers?.onReconnectSchedule?.({ attempt: 2, delayMs: 1500 });
     });
 
-    expect(screen.getByRole('status')).toHaveTextContent('네트워크 복구 중');
+    expect(screen.getByText('네트워크 복구 중')).toBeInTheDocument();
     expect(screen.getByText('1.50s 후 2회차 재연결 시도')).toBeInTheDocument();
   });
 

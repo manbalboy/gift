@@ -500,3 +500,124 @@ test('모바일에서 오류 툴팁이 긴 로그에도 뷰포트 밖으로 이�
   expect(layout?.bodyHasHorizontalOverflow).toBeFalsy();
   expect(layout?.bodyOverflowY).toBe('auto');
 });
+
+test('필터 전환 시 목록 스크롤 위치가 최상단으로 초기화된다', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 1,
+          name: 'Alert Filter Reset',
+          description: 'scroll top reset test',
+          graph: { nodes: [{ id: 'idea', type: 'task', label: 'Idea' }], edges: [] },
+        },
+      ]),
+    });
+  });
+
+  await page.route('**/api/logs/system-alerts**', async (route) => {
+    const payload = Array.from({ length: 80 }).map((_, idx) => ({
+      id: `reset-${idx}`,
+      created_at: `2026-03-05T00:20:${String(idx % 60).padStart(2, '0')}Z`,
+      level: idx % 2 === 0 ? 'error' : 'warning',
+      code: `RESET_${idx}`,
+      message: `reset-message-${idx}`,
+      source: 'reset-tester',
+      context: {},
+      risk_score: 70,
+    }));
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: payload, next_cursor: null }),
+    });
+  });
+
+  await page.route('**/api/webhooks/blocked-events**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  await page.goto('/');
+  await expect(page.locator('.system-alert-item').first()).toBeVisible();
+
+  await page.evaluate(() => {
+    const list = document.querySelector('.system-alert-list') as HTMLElement | null;
+    if (!list) return;
+    list.scrollTop = 220;
+    list.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+
+  const before = await page.evaluate(() => (document.querySelector('.system-alert-list') as HTMLElement).scrollTop);
+  expect(before > 0).toBeTruthy();
+
+  await page.getByRole('button', { name: 'Error' }).click();
+
+  const after = await page.evaluate(() => (document.querySelector('.system-alert-list') as HTMLElement).scrollTop);
+  expect(after).toBe(0);
+});
+
+test('소수점 스크롤 오차 환경에서도 최하단 판정이 안정적으로 유지된다', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 1,
+          name: 'Alert Fractional Scroll',
+          description: 'fractional scroll bottom test',
+          graph: { nodes: [{ id: 'idea', type: 'task', label: 'Idea' }], edges: [] },
+        },
+      ]),
+    });
+  });
+
+  await page.route('**/api/logs/system-alerts**', async (route) => {
+    const payload = Array.from({ length: 64 }).map((_, idx) => ({
+      id: `fractional-${idx}`,
+      created_at: `2026-03-05T00:30:${String(idx % 60).padStart(2, '0')}Z`,
+      level: idx % 2 === 0 ? 'error' : 'warning',
+      code: `FRACTIONAL_${idx}`,
+      message: `fractional-message-${idx}`,
+      source: 'fractional-tester',
+      context: {},
+      risk_score: 80,
+    }));
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: payload, next_cursor: null }),
+    });
+  });
+
+  await page.route('**/api/webhooks/blocked-events**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  await page.goto('/');
+  await expect(page.locator('.system-alert-item').first()).toBeVisible();
+
+  await page.evaluate(() => {
+    const list = document.querySelector('.system-alert-list') as HTMLElement | null;
+    if (!list) return;
+    const nearBottom = list.scrollHeight - list.clientHeight - 15.4;
+    list.scrollTop = nearBottom;
+    list.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+
+  await expect(page.locator('.system-alert-scroll-state.live')).toHaveText('LIVE');
+});
