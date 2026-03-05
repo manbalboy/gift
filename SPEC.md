@@ -1,6 +1,3 @@
-> [!IMPORTANT]
-> 우선순위: `ex-code` 내부 코드를 분석해 현재 프로젝트에 모든 기능을 구현한다.
-
 # SPEC
 
         - Repository: manbalboy/agent-hub
