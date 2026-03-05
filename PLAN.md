@@ -1,118 +1,81 @@
+```markdown
 # PLAN
 
 ## 1. Task breakdown with priority
 
-기획 문서(SPEC.md)와 리뷰(REVIEW.md)의 요구사항을 통합하여 산정한 작업 목록 및 우선순위입니다.
+**[P0] 크리티컬 버그 수정 및 시스템 안정화**
+- `api/app/services/workflow_engine.py`: 에이전트 Budget(예산) 한도 초과 시 즉각적인 실행 중단 및 Blocked 강제 전이 로직 구현
+- `web/scripts/check-port.mjs`: 3000번대 포트 할당 경합 시 락 타임아웃 방어 및 비정상 종료 시 잔여 Lock 파일 정리 로직 추가
+- `api/app/db/system_alert_model.py` 및 마이그레이션: 대량 로그 쿼리 병목 해소를 위한 `created_at` DESC 데이터베이스 인덱스 추가
 
-**Priority High (P0)**
-- **워크플로우 엔진 V2 이관**: `workflow_id` 기반 실행, `ExecutorRegistry` 도입, 상태 재개를 위한 `node_runs` 기록 (백엔드 API).
-- **Autopilot V0 및 예산/무한루프 제어**: 장기 실행 중단/재개/지시 주입 구현 및 반복 실행 시 Agent 강제 차단(Blocked) 로직 구현.
-- **포트 할당 및 락(Lock) 충돌 해결**: `check-port.mjs`에 3100번대(3100~3199) 포트 경합 시 타임아웃 보장 및 잔여 락 해제 로직 추가.
-- **보안 및 인가(Authorization) 연동**: `system_alerts.py`에 로컬 경로/인증 토큰 치환 로직(마스킹 필터) 적용 및 `workflows.py` 제어 API에 Role 기반 또는 HMAC 인가 미들웨어 연동.
-- **백엔드 단위 테스트 강화**: `test_workflow_engine.py`에 예산 초과 차단 동작에 대한 단언(Assertion) 테스트 작성.
+**[P0] 보안 및 접근 제어 강화**
+- `api/app/services/system_alerts.py`: 로그 및 알림 내 로컬 절대 경로 및 인증 토큰 문자열을 `***[MASKED]***`로 치환하는 마스킹 필터 로직 적용 (ReDoS 방어 고려)
+- `api/app/api/workflows.py`: 워크플로우 중단/재개/실행 제어 API에 Role/HMAC 기반 인가(Authorization) 미들웨어 연동
 
-**Priority Medium (P1)**
-- **UI 레이아웃 및 알림 버그 수정**: 대시보드의 `SystemAlertWidget.tsx` 뷰포트 오버플로우를 수정하고(`overflow-y: auto`, `word-break: break-all` 적용), 워크플로우 동일 노드 반복 실패 시 Risk Score를 연동하여 알림(Warning) 표출.
-- **아티팩트 워크스페이스**: 산출물을 1급 객체로 다루기 위한 API 확장(로그 중심에서 아티팩트 중심으로 전환).
-- **Visual Workflow Builder**: ReactFlow 기반의 워크플로우 시각 편집기 및 검증 플로우 연동.
-- **테스트 및 E2E 고도화**: `test-port-timeout.sh`로 포트 타임아웃 통합 검증, `system-alert.spec.ts`에 데스크톱/모바일 뷰포트 교차 시각적 회귀(Visual Regression) 테스트 추가.
-- **데이터베이스 인덱스 성능 튜닝**: `system_alert_model.py`의 `created_at` 컬럼 내림차순 정렬 조회를 위한 Alembic 인덱스 스크립트 작성 및 반영.
+**[P1] UI/UX 개선 및 예외 모서리 사례 처리**
+- `web/src/components/SystemAlertWidget.tsx`: 긴 로그 텍스트로 인한 레이아웃 붕괴 버그 수정 (`overflow-y: auto`, `word-break: break-all` 적용)
+- 백엔드 워크플로우 노드 반복 실패 시 단순 로깅을 넘어 Risk Score를 누적하고 상태 알림과 연동하는 예외 처리 구현
 
-**Priority Low (P2)**
-- **외부 연동(Integrations) 확장**: GitHub PR/Deploy 이벤트 등 Issue 외 이벤트를 수신하는 Rule Engine 및 Event Bus 구성.
+**[P2] 테스트 커버리지 보강**
+- `api/tests/test_workflow_engine.py`: 예산 통제 및 강제 전이 단언(Assertion) 테스트 작성
+- `api/tests/test_workspace_security.py`: 마스킹 필터 정규식 성능/예외 패턴 검증 및 워크플로우 API 인가(401/403) 통제 테스트 추가
+- `web/tests/e2e/system-alert.spec.ts`: 모바일/데스크톱 뷰포트 전환 시 레이아웃 오버플로우 방지 확인용 E2E 테스트 추가
+- `web/scripts/test-port-timeout.sh`: 3000번대 포트 다중 경합 및 타임아웃 락 해제 통합 테스트 쉘 스크립트 작성
 
----
+**[고도화 플랜 (추가 기능)]**
+1. **위험도(Risk Score) 배지 시각화**
+   - **근거**: 백엔드에서 반복 실패에 대한 Risk Score를 누적하더라도, 대시보드에서 이를 텍스트로만 노출하면 즉각적인 심각성 인지가 어렵습니다. 장애 조치가 시급한 알림을 운영자가 빠르게 식별할 수 있도록 시각적 단서를 추가합니다.
+   - **구현 경계**: `web/src/components/SystemAlertWidget.tsx` 내부에 한정하여, 수신된 Risk Score 수치에 따라 색상이 변하는 배지(Badge) UI를 추가합니다.
 
 ## 2. MVP scope / out-of-scope
 
-**MVP scope**
-- FastAPI 기반 내구성 있는 워크플로우 엔진 V2 (체크포인트, 부분 재시도 포함).
-- React 대시보드를 통한 시각적 노드 빌더, 상태 모니터링 및 즉각적인 중단/재개 제어.
-- 무한 루프 차단(Budget Limit), 포트 데드락 회피, 로그 마스킹을 포함한 운영 안정화 및 보안 패치 적용.
-- 전체 스택의 로컬 구동 포트를 3000번대 영역 내에서 안정적으로 확보 및 해제하는 기능.
+**MVP scope:**
+- 에이전트 실행 시 예산 초과에 의한 무한 루프 차단 및 안전한 Blocked 상태 전이 보장
+- 로컬 환경 및 다중 워커 구동 시 3000번대 포트 할당 Deadlock 원천 차단
+- 데이터베이스 `created_at` 역순 인덱스를 통한 알림 위젯 로딩 성능 확보
+- 시스템 알림 위젯의 뷰포트 이탈 및 레이아웃 붕괴 버그 수정
+- 민감 정보 누출 방지를 위한 정규식 기반 로그 마스킹 처리 및 제어 API 접근 인가
+- 고도화 플랜으로 제안된 Risk Score 배지의 프론트엔드 시각화 연동
 
-**Out-of-scope**
-- 분산 서버(Kubernetes, 다중 노드 클러스터) 상에서의 오토 스케일링 완벽 대응.
-- 수천 줄 규모의 초당 실시간 로그를 처리하기 위한 고성능 외부 인프라(ElasticSearch 등) 도입 (현재는 DB 기반).
-- GitHub 외 10여 개 이상의 다양한 외부 SaaS(Jira, Slack 등) 네이티브 통합.
-
----
+**Out-of-scope:**
+- DevFlow Agent Hub의 ReactFlow 기반 시각적 워크플로우 빌더 전면 개편 (현재는 기존 엔진의 안정화 및 버그 픽스에 집중)
+- 시스템 알림을 외부 메신저(Slack, Discord 등)로 포워딩하는 연동 기능
+- 3000번대 로컬 포트 외의 프록시 네트워크 레이어 전면 재설계 (주어진 타임아웃 스크립트 개선으로 한정)
 
 ## 3. Completion criteria
 
-- 대시보드 UI를 통해 `workflow_id` 기반 워크플로우를 시각적으로 편집, 실행, 중단, 재개할 수 있다.
-- 에이전트 노드가 설정된 루프 횟수나 자원 예산을 초과할 경우, 무한 대기하지 않고 명시적으로 Blocked 처리되며 이에 대한 단위 테스트가 통과한다.
-- 긴 알림 텍스트가 `SystemAlertWidget` 영역을 벗어나지 않고 줄바꿈/스크롤되며, 화면 크기가 줄어들어도 레이아웃 붕괴가 일어나지 않는다.
-- 로컬 또는 다중 워커 구동 시 3100번대 포트 할당 과정에서 무한 대기 레이스 컨디션이 발생하지 않고, 실패 시 타임아웃과 함께 락 파일이 안전하게 해제된다.
-- 시스템 알림 내 절대 경로 및 시크릿 문자열이 API를 거치며 `***[MASKED]***` 형태로 안전하게 치환되어 프론트엔드에 전달된다.
-- 권한 없는 사용자가 워크플로우 제어 API를 호출하면 인가 레이어에 의해 401/403 응답으로 차단된다.
-
----
+- Budget을 초과하는 악의적/비정상 에이전트 동작이 워크플로우 엔진에 의해 즉시 차단됨을 테스트 코드로 입증해야 합니다.
+- 민감한 경로 및 키값이 포함된 로그가 `***[MASKED]***` 문구로 치환되어 API 응답으로 내려오는지 검증해야 합니다.
+- 비인가 사용자의 워크플로우 제어 API (`/api/workflows/*`) 호출 시 401/403 예외가 정확히 반환되어야 합니다.
+- `SystemAlertWidget.tsx`에 극단적으로 긴 띄어쓰기 없는 문자열을 렌더링했을 때 부모 컨테이너를 벗어나지 않고 스크롤이 생성되어야 합니다.
+- 다중 워커가 동시에 3000번대 포트 할당을 요청하더라도 Deadlock 없이 순차적 할당 또는 정상 타임아웃 해제가 이루어져야 합니다.
+- DB 마이그레이션 실행 후 시스템 알림 조회 쿼리에 지연이 없어야 합니다.
 
 ## 4. Risks and test strategy
 
-**Risks**
-- **자원 고갈**: LLM 에이전트 무한 루프로 인한 요금 발생 및 백엔드 자원 고갈 위험.
-- **동시성 버그**: 워커 동시 실행에 따른 포트 할당 락(Lock) 경합 및 시스템 프리징.
-- **성능 저하**: 로그 유입량이 폭증할 때 정규식 기반 치환 과정의 CPU 병목 현상 및 로그 조회 지연.
+**Risks:**
+- 로그 데이터 마스킹을 위한 정규 표현식이 비효율적으로 작성될 경우 대량 로그 인입 시 ReDoS(정규식 서비스 거부)로 인한 CPU 병목이 발생할 수 있습니다.
+- 포트 할당 Lock 파일의 삭제 주기가 잘못 설정될 경우 정상적인 프로세스의 포트 점유까지 해제해버리는 동시성 이슈가 생길 수 있습니다.
 
-**Test strategy**
-- **Backend Test (`api/tests/`)**: 
-  - `test_workflow_engine.py`: 에이전트의 예산(Budget) 한도 도달 시 강제 중지 로직 단위 테스트 구현.
-  - 마스킹 필터 로직에 대해 다양한 예외 패턴(모서리 사례)을 주입하여 치환 정확도 및 정규식 성능(타임아웃) 검증.
-  - 제어 라우터 미들웨어의 인가 성공/실패 단위 테스트 구성.
-- **Frontend Test (`web/tests/`)**: 
-  - `system-alert.spec.ts`: Playwright를 활용해 여러 뷰포트 폭(모바일/데스크톱)에서 컴포넌트의 오버플로우가 없는지 시각적 회귀 E2E 검증.
-- **Infrastructure Test (`scripts/`)**: 
-  - `test-port-timeout.sh`: 의도적으로 포트 경합 상황을 발생시켜 포트 할당 스크립트가 멈추지 않고 적절히 락을 해제하는지 통합 시뮬레이션 확인.
-
----
+**Test strategy:**
+- **단위 테스트 (API)**: 마스킹 유틸리티 함수에 극단적으로 길고 복잡한 로그 페이로드를 주입하여 타임아웃이 발생하지 않는지 성능 테스트를 수행합니다.
+- **통합 테스트 (Scripts)**: `test-port-timeout.sh`를 활용해 가상의 락 파일을 생성하고 3000번대 포트를 동시 선점하려는 시나리오를 자동화하여 검증합니다.
+- **E2E 시각적 테스트 (Web)**: Playwright를 사용하여 데스크톱(1024px 이상) 및 모바일(320px 수준) 뷰포트에서 위젯 레이아웃이 무너지지 않는지와 Risk Score 배지의 렌더링 상태를 확인합니다.
 
 ## 5. Design intent and style direction
 
-- **기획 의도**: 개발자나 사용자가 자동화 에이전트의 상태를 한눈에 파악하고, 예측 불가한 에이전트의 폭주를 방지하며, 필요 시 언제든지 안전하게 멈추거나 재개할 수 있는 "통제 가능한 자동화" 경험을 제공.
-- **디자인 풍**: 모던 대시보드 및 터미널 룩. 불필요한 장식 요소를 배제하고 시스템 상태 가시성에 집중하는 정보 중심 UI.
+- **기획 의도**: 개발자 및 운영자가 백그라운드 에이전트의 실패 상황과 시스템 장애를 대시보드 위젯 하나만으로도 빠르고 정확하게 인지하여 선제적으로 대응할 수 있게 돕습니다.
+- **디자인 풍**: 군더더기 없는 모던 대시보드형 뷰이며, 정보의 밀도를 높인 실용적인 디자인을 지향합니다.
 - **시각 원칙**:
-  - **컬러**: 어두운 배경 위에 상태 지시 컬러(Running: 초록, Paused/Warning: 주황, Blocked/Error: 빨강)를 사용해 터미널 환경에 익숙한 색상 대비를 유지.
-  - **패딩/마진**: 8px 배수 시스템을 준수하여 정보 그룹 간의 시각적 분리를 명확히 함.
-  - **타이포그래피**: 로그 스니펫과 코드 관련 출력은 Monospace(고정폭) 폰트를 적용하고, 상태 레이블 및 제목은 가독성 높은 폰트 적용.
-- **반응형 원칙**: 
-  - 모바일 우선(Mobile First). 모바일에서는 패널 단위 세로 스크롤로 배치하고, 화면이 넓어지면 플렉스/그리드를 활용한 다단 구조로 자동 재조정. 
-  - 긴 텍스트와 로그 데이터는 창 크기를 강제로 늘리지 못하도록 `word-break: break-all` 및 박스 내 독립 스크롤 영역으로 제한.
+  - 알림 및 로그 텍스트는 가독성이 높은 고정폭(Monospace) 또는 산세리프(Sans-serif) 폰트를 적용합니다.
+  - 마스킹 영역(`***[MASKED]***`)이나 높은 Risk Score는 사용자 시선을 끌 수 있도록 Warning(주황) 또는 Danger(빨강) 컬러로 하이라이트합니다.
+  - 여백(마진/패딩)은 일관성 있게 유지하고 말줄임 처리 및 내부 스크롤바를 통해 시각적 정돈감을 줍니다.
+- **반응형 원칙**: 모바일 우선(Mobile-First) 규칙을 적용하여 화면이 좁아져도 콘텐츠가 잘리지 않도록 컨테이너를 유연하게(Flex/Grid) 배치합니다.
 
----
+## 6. Technology ruleset
 
-## Technology ruleset
-
-- **플랫폼 분류**: web / api
-- **web**: React 기반 (Vite, Playwright, ReactFlow 활용).
-- **api**: FastAPI 기반 (비동기 처리, 워크플로우 DAG 실행, SQLAlchemy 데이터베이스).
-- 실행 스크립트 및 테스트 구동 시 포트는 충돌 회피를 위해 **3000번대(특히 3100~3199)**를 사용.
-
----
-
-## 고도화 플랜 (TODO 반영 완료)
-
-REVIEW.md의 분석 결과를 바탕으로 아래의 고도화 구현 과제를 우선적으로 실행합니다.
-
-1. **포트 충돌 완화 및 자원 정리**
-   - 변경 후보: `web/scripts/check-port.mjs`, `web/scripts/test-port-timeout.sh`
-   - 영향 범위 및 내용: 3100번대 포트 병렬 할당 시 경합 방지를 위해 락 타임아웃을 강제하고 잔여 Lock 파일을 소거하는 로직 적용.
-2. **보안 마스킹 및 제어 API 인가 연동**
-   - 변경 후보: `api/app/services/system_alerts.py`, `api/app/api/workflows.py`
-   - 영향 범위 및 내용: 로컬 호스트 경로 및 비밀키 문자열을 `***[MASKED]***`로 정규식 치환하고, 워크플로우 제어 API 라우터에 Role/HMAC 보안 미들웨어 추가.
-3. **대시보드 UI 버그 픽스 및 시각 E2E 커버리지 확대**
-   - 변경 후보: `web/src/components/SystemAlertWidget.tsx`, `web/tests/e2e/system-alert.spec.ts`
-   - 영향 범위 및 내용: CSS 속성(`overflow-y: auto`, `word-break`)을 통한 레이아웃 깨짐 버그 수정 및 교차 뷰포트 검증 테스트 구현.
-4. **워크플로우 엔진 무한 루프 차단(Blocked) 도입**
-   - 변경 후보: `api/app/services/workflow_engine.py`, `api/tests/test_workflow_engine.py`
-   - 영향 범위 및 내용: 노드 실행 예산 초과 시 즉각 Blocked 상태로 전이시키는 단언(Assertion)을 추가하고, 동일 오류 반복 시 Risk Score를 누적시켜 알림(Warning) 표출.
-5. **로그 시스템 데이터베이스 조회 최적화**
-   - 변경 후보: `api/app/db/system_alert_model.py` 및 Alembic 마이그레이션 스크립트
-   - 영향 범위 및 내용: 로그 최신순 조회 성능 병목 해소를 위한 `created_at` DESC 인덱스 반영.
-
-**추가 고도화 기능 (인접 기능 확장)**
-- **A. 노드별 부분 재시도 (Node-level Retry) UI 연동**: 
-  - 근거: 엔진에서 Blocked 처리된 이후, 시스템 알림을 통해 원인을 수정한 사용자가 전체 워크플로우를 재시작하지 않고 특정 노드부터 재개(Retry-Node)할 수 있게 하여 사용자 경험 극대화. UI의 알림 위젯 수정과 자연스럽게 연계됨.
-- **B. 마스킹 패턴 동적 업데이트 기반 마련**: 
-  - 근거: 민감 정보 마스킹 정규식을 코드 내 하드코딩하지 않고 환경 변수나 설정 파일에서 동적으로 로딩하게 처리함으로써, 향후 새로운 토큰 패턴 출현 시 백엔드 재배포 없이 보안 룰을 즉각 확장할 수 있게 함.
+- **플랫폼 분류**: web, api
+- **web**: React 기반(Vite) 프로젝트 구조를 따르며, CSS 기반의 반응형 처리를 통해 레이아웃 버그를 수정합니다.
+- **api**: FastAPI 기반 시스템으로, 워크플로우 엔진 로직 및 마스킹/인가 미들웨어를 Python으로 구현하고 DB는 Alembic을 통해 관리합니다.
+- **실행 및 배포 환경**: 로컬 스크립트 실행 시 포트는 3000번대를 사용하며, 작업 완료 후 Docker 기반 Preview 구동 시 외부 포트는 7000-7099 대역을 준수합니다.
+```
