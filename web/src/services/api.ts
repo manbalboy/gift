@@ -13,6 +13,7 @@ const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const WEBHOOK_SECRET = import.meta.env.VITE_WEBHOOK_SECRET ?? '';
 const HUMAN_GATE_APPROVER_TOKEN = import.meta.env.VITE_HUMAN_GATE_APPROVER_TOKEN ?? '';
 const HUMAN_GATE_APPROVER_ROLE = import.meta.env.VITE_HUMAN_GATE_APPROVER_ROLE ?? 'reviewer';
+const WORKSPACE_ID = import.meta.env.VITE_WORKSPACE_ID ?? 'main';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -83,8 +84,23 @@ export const api = {
     request<WorkflowRun>(`/runs/${runId}/approve?node_id=${encodeURIComponent(nodeId)}`, {
       method: 'POST',
       headers: HUMAN_GATE_APPROVER_TOKEN
-        ? { 'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN, 'X-Approver-Role': HUMAN_GATE_APPROVER_ROLE }
-        : undefined,
+        ? {
+            'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN,
+            'X-Approver-Role': HUMAN_GATE_APPROVER_ROLE,
+            'X-Workspace-Id': WORKSPACE_ID,
+          }
+        : { 'X-Workspace-Id': WORKSPACE_ID },
+    }),
+  rejectRunNode: (runId: number, nodeId: string) =>
+    request<WorkflowRun>(`/runs/${runId}/reject?node_id=${encodeURIComponent(nodeId)}`, {
+      method: 'POST',
+      headers: HUMAN_GATE_APPROVER_TOKEN
+        ? {
+            'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN,
+            'X-Approver-Role': HUMAN_GATE_APPROVER_ROLE,
+            'X-Workspace-Id': WORKSPACE_ID,
+          }
+        : { 'X-Workspace-Id': WORKSPACE_ID },
     }),
   cancelRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/cancel`, { method: 'POST' }),
   getArtifactChunk: (runId: number, nodeId: string, offset = 0, limit = 16384) =>
@@ -127,17 +143,26 @@ export const api = {
     handlers: {
       onRunStatus: (payload: WorkflowRunsStreamEvent) => void;
       onError?: (event: Event) => void;
+      onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
     },
   ) => {
+    handlers.onStateChange?.('connecting');
     const stream = new EventSource(`${API_ORIGIN}/api/workflows/${workflowId}/runs/stream?max_ticks=600`);
+    stream.addEventListener('open', () => {
+      handlers.onStateChange?.('connected');
+    });
     stream.addEventListener('run_status', (event) => {
       const message = event as MessageEvent<string>;
       handlers.onRunStatus(JSON.parse(message.data) as WorkflowRunsStreamEvent);
     });
     stream.onerror = (event) => {
+      handlers.onStateChange?.('reconnecting');
       handlers.onError?.(event);
     };
-    return () => stream.close();
+    return () => {
+      handlers.onStateChange?.('closed');
+      stream.close();
+    };
   },
   listWebhookBlockedEvents: (limit = 20) =>
     request<WebhookBlockedEvent[]>(`/webhooks/blocked-events?limit=${Math.max(1, Math.min(limit, 50))}`),

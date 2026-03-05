@@ -77,6 +77,9 @@ def test_dev_integration_webhook_rejects_invalid_github_signature(monkeypatch):
 
 def test_dev_integration_webhook_accepts_generic_ci_event(monkeypatch):
     monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
 
     response = client.post(
         "/api/webhooks/dev-integration",
@@ -84,7 +87,7 @@ def test_dev_integration_webhook_accepts_generic_ci_event(monkeypatch):
         json={
             "provider": "jenkins",
             "event_type": "ci.completed",
-            "workflow_id": 9999,
+            "workflow_id": workflow_id,
             "result": "success",
         },
     )
@@ -95,8 +98,8 @@ def test_dev_integration_webhook_accepts_generic_ci_event(monkeypatch):
     assert body["provider"] == "jenkins"
     assert body["category"] == "ci"
     assert body["event_type"] == "ci.completed"
-    assert body["triggered"] is False
-    assert body["triggered_run_id"] is None
+    assert body["triggered"] is True
+    assert isinstance(body["triggered_run_id"], int)
 
 
 def test_dev_integration_webhook_rejects_generic_missing_secret(monkeypatch):
@@ -332,6 +335,19 @@ def test_dev_integration_webhook_parses_string_workflow_id(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["workflow_id"] == workflow_id
+
+
+def test_dev_integration_webhook_rejects_unknown_workflow_id(monkeypatch):
+    monkeypatch.setattr(settings, "generic_webhook_secret", "test-generic-secret")
+
+    response = client.post(
+        "/api/webhooks/dev-integration",
+        headers={"X-API-Secret": "test-generic-secret"},
+        json={"provider": "jenkins", "event_type": "ci.completed", "workflow_id": 999999},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "workflow_id does not exist"
 
 
 @pytest.mark.parametrize("invalid_workflow_id", [-1, 1.0, "-1", "1.0", 0, "0"])

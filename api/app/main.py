@@ -110,6 +110,11 @@ def health():
     limiter_health = workflows_api.reconnect_rate_limiter.health_snapshot()
     agent_runner_health = workflow_engine.agent_runner.health_snapshot()
     workflow_health = workflow_engine.health_snapshot()
+    db = SessionLocal()
+    try:
+        dlq_health = workflow_engine.dlq_snapshot(db)
+    finally:
+        db.close()
     docker_health = _docker_health_snapshot()
     return {
         "status": "ok",
@@ -117,6 +122,7 @@ def health():
         "docker_health": docker_health,
         "agent_runner": agent_runner_health,
         "workflow_engine": workflow_health,
+        "dlq": dlq_health,
         "sse_rate_limiter": limiter_health,
     }
 

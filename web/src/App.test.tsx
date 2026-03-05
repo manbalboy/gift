@@ -2,12 +2,27 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import App from './App';
 import { LAYER_Z_INDEX } from './constants/layers';
-import { api } from './services/api';
+import { ApiError, api } from './services/api';
 import type { Workflow } from './types';
 
 jest.mock('./components/Dashboard', () => ({
   __esModule: true,
-  default: () => <section data-testid="dashboard" />,
+  default: ({
+    onApproveHumanGate,
+  }: {
+    onApproveHumanGate?: (nodeId: string) => Promise<void>;
+  }) => (
+    <section data-testid="dashboard">
+      <button
+        type="button"
+        onClick={() => {
+          void onApproveHumanGate?.('review');
+        }}
+      >
+        dashboard-approve
+      </button>
+    </section>
+  ),
 }));
 
 jest.mock('./components/LiveRunConstellation', () => ({
@@ -86,11 +101,13 @@ jest.mock('./services/api', () => {
       getRun: jest.fn(),
       getConstellation: jest.fn(),
       approveRunNode: jest.fn(),
+      rejectRunNode: jest.fn(),
       cancelRun: jest.fn(),
       getArtifactChunk: jest.fn(),
       sendDevIntegrationWebhook: jest.fn(),
       sendMalformedDevIntegrationWebhook: jest.fn(),
       subscribeWorkflowRuns: jest.fn(),
+      listWebhookBlockedEvents: jest.fn(),
     },
   };
 });
@@ -141,6 +158,7 @@ describe('App', () => {
     jest.clearAllMocks();
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
     (api.subscribeWorkflowRuns as jest.Mock).mockReturnValue(() => undefined);
+    (api.listWebhookBlockedEvents as jest.Mock).mockResolvedValue([]);
   });
 
   test('동일 fallback 시그니처 알림은 한 번만 노출된다', async () => {
@@ -319,6 +337,50 @@ describe('App', () => {
     await waitFor(() => {
       expect(api.getRun).toHaveBeenCalledTimes(6);
       expect(api.getConstellation).toHaveBeenCalledTimes(6);
+    });
+  });
+
+  test('Human Gate 403 응답 시 권한 안내 모달을 노출한다', async () => {
+    (api.startRun as jest.Mock).mockResolvedValue({
+      id: 301,
+      workflow_id: 1,
+      status: 'waiting',
+      started_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:05Z',
+      node_runs: [
+        {
+          id: 1,
+          node_id: 'review',
+          node_name: 'Review',
+          status: 'approval_pending',
+          sequence: 0,
+          log: '승인 대기 중',
+          artifact_path: null,
+          updated_at: '2026-03-05T00:00:05Z',
+        },
+      ],
+    });
+    (api.getConstellation as jest.Mock).mockResolvedValue({
+      run_id: 301,
+      status: 'waiting',
+      nodes: [{ id: 'review', label: 'Review', status: 'approval_pending', sequence: 0 }],
+      links: [],
+    });
+    (api.approveRunNode as jest.Mock).mockRejectedValue(
+      new ApiError(403, 'insufficient approver role'),
+    );
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run 시작' }));
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard-approve' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: '권한 안내' })).toBeInTheDocument();
+      expect(screen.getByText('권한이 필요합니다')).toBeInTheDocument();
     });
   });
 });

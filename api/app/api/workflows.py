@@ -136,8 +136,11 @@ def list_workflows(db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=WorkflowOut)
-def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_db)):
-    workflow = WorkflowDefinition(name=payload.name, description=payload.description, graph=payload.graph.model_dump())
+def create_workflow(payload: WorkflowCreate, request: Request, db: Session = Depends(get_db)):
+    workspace_id = _extract_workspace_id(request) or settings.default_workspace_id
+    graph_data = payload.graph.model_dump()
+    graph_data["meta"] = {"workspace_id": workspace_id}
+    workflow = WorkflowDefinition(name=payload.name, description=payload.description, graph=graph_data)
     db.add(workflow)
     db.commit()
     db.refresh(workflow)
@@ -158,7 +161,7 @@ def get_workflow(workflow_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{workflow_id}", response_model=WorkflowOut)
-def update_workflow(workflow_id: int, payload: WorkflowUpdate, db: Session = Depends(get_db)):
+def update_workflow(workflow_id: int, payload: WorkflowUpdate, request: Request, db: Session = Depends(get_db)):
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="workflow not found")
@@ -168,7 +171,10 @@ def update_workflow(workflow_id: int, payload: WorkflowUpdate, db: Session = Dep
 
     workflow.name = payload.name
     workflow.description = payload.description
-    workflow.graph = payload.graph.model_dump()
+    workspace_id = _extract_workspace_id(request) or _resolve_workflow_workspace_id(workflow)
+    graph_data = payload.graph.model_dump()
+    graph_data["meta"] = {"workspace_id": workspace_id}
+    workflow.graph = graph_data
     db.commit()
     db.refresh(workflow)
     return workflow
@@ -251,6 +257,22 @@ def _extract_approver_role(request: Request) -> str:
     return request.headers.get("X-Approver-Role", "").strip().lower()
 
 
+def _extract_workspace_id(request: Request) -> str:
+    return request.headers.get("X-Workspace-Id", "").strip().lower()
+
+
+def _resolve_workflow_workspace_id(workflow: WorkflowDefinition | None) -> str:
+    if not workflow or not isinstance(workflow.graph, dict):
+        return settings.default_workspace_id
+    graph_meta = workflow.graph.get("meta")
+    if not isinstance(graph_meta, dict):
+        return settings.default_workspace_id
+    workspace_id = graph_meta.get("workspace_id")
+    if isinstance(workspace_id, str) and workspace_id.strip():
+        return workspace_id.strip().lower()
+    return settings.default_workspace_id
+
+
 @run_router.post("/{run_id}/approve", response_model=WorkflowRunOut)
 def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
     configured_token = settings.human_gate_approver_token.strip()
@@ -267,10 +289,19 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
         raise HTTPException(status_code=403, detail="missing approver role")
     if approver_role not in settings.allowed_human_gate_roles:
         raise HTTPException(status_code=403, detail="insufficient approver role")
+    approver_workspace = _extract_workspace_id(request)
+    if not approver_workspace:
+        raise HTTPException(status_code=403, detail="missing approver workspace")
+    if approver_workspace not in settings.allowed_human_gate_workspaces:
+        raise HTTPException(status_code=403, detail="insufficient approver workspace")
 
     run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
+    workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
+    workflow_workspace = _resolve_workflow_workspace_id(workflow)
+    if workflow_workspace != approver_workspace:
+        raise HTTPException(status_code=403, detail="workspace does not match workflow")
     node = db.query(NodeRun).filter(NodeRun.run_id == run_id, NodeRun.node_id == node_id).first()
     if not node:
         raise HTTPException(status_code=404, detail="node not found in run")
@@ -281,6 +312,52 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
 
     try:
         updated = engine.approve_human_gate(db, run=run, node_id=node_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return updated
+
+
+@run_router.post("/{run_id}/reject", response_model=WorkflowRunOut)
+def reject_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
+    configured_token = settings.human_gate_approver_token.strip()
+    if not configured_token:
+        raise HTTPException(status_code=403, detail="human gate approver token is not configured")
+
+    provided_token = _extract_approver_token(request)
+    if not provided_token:
+        raise HTTPException(status_code=401, detail="missing approver token")
+    if not hmac.compare_digest(provided_token, configured_token):
+        raise HTTPException(status_code=403, detail="invalid approver token")
+    approver_role = _extract_approver_role(request)
+    if not approver_role:
+        raise HTTPException(status_code=403, detail="missing approver role")
+    if approver_role not in settings.allowed_human_gate_roles:
+        raise HTTPException(status_code=403, detail="insufficient approver role")
+    approver_workspace = _extract_workspace_id(request)
+    if not approver_workspace:
+        raise HTTPException(status_code=403, detail="missing approver workspace")
+    if approver_workspace not in settings.allowed_human_gate_workspaces:
+        raise HTTPException(status_code=403, detail="insufficient approver workspace")
+
+    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
+    workflow_workspace = _resolve_workflow_workspace_id(workflow)
+    if workflow_workspace != approver_workspace:
+        raise HTTPException(status_code=403, detail="workspace does not match workflow")
+    node = db.query(NodeRun).filter(NodeRun.run_id == run_id, NodeRun.node_id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="node not found in run")
+    if node.status != "approval_pending":
+        raise HTTPException(status_code=409, detail="node is not approval_pending")
+    if run.status not in {"waiting", "running"}:
+        raise HTTPException(status_code=409, detail="run is not waiting for approval")
+
+    try:
+        updated = engine.reject_human_gate(db, run=run, node_id=node_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:

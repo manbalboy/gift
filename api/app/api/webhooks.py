@@ -297,12 +297,22 @@ async def receive_dev_integration_webhook(request: Request, db: Session = Depend
         )
         raise HTTPException(status_code=422, detail="workflow_id must be a positive integer")
 
-    triggered_run_id: int | None = None
-    if should_trigger and workflow_id is not None:
+    workflow: WorkflowDefinition | None = None
+    if workflow_id is not None:
         workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
-        if workflow:
-            run = engine.create_run(db, workflow)
-            triggered_run_id = run.id
+        if workflow is None:
+            logger.warning(
+                "Rejected webhook due to unknown workflow_id: provider=%s event_type=%s workflow_id=%s",
+                provider,
+                normalized_event,
+                workflow_id,
+            )
+            raise HTTPException(status_code=422, detail="workflow_id does not exist")
+
+    triggered_run_id: int | None = None
+    if should_trigger and workflow is not None:
+        run = engine.create_run(db, workflow)
+        triggered_run_id = run.id
 
     return WebhookEventOut(
         accepted=True,

@@ -11,6 +11,7 @@ import type { ConstellationData, WebhookBlockedEvent, Workflow, WorkflowRun } fr
 import { createToastId } from './utils/toastId';
 
 export default function App() {
+  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'reconnecting' | 'closed'>('closed');
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
   const [run, setRun] = useState<WorkflowRun | null>(null);
@@ -25,6 +26,8 @@ export default function App() {
   const [artifactHasMore, setArtifactHasMore] = useState(false);
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [blockedWebhookEvents, setBlockedWebhookEvents] = useState<WebhookBlockedEvent[]>([]);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalMessage, setAuthModalMessage] = useState('reviewer/admin 권한 또는 workspace 접근 권한이 필요합니다.');
   const viewport = useViewport();
   const isMobilePortrait = viewport.isMobile && viewport.isPortrait;
   const activeRunRef = useRef<WorkflowRun | null>(null);
@@ -161,6 +164,9 @@ export default function App() {
       onError: () => {
         enqueueToast('error', '실시간 스트림 연결이 끊겼습니다.');
       },
+      onStateChange: (state) => {
+        setStreamState(state);
+      },
     });
 
     return unsubscribe;
@@ -227,8 +233,29 @@ export default function App() {
       await refreshRunAndConstellation(approved.id);
       enqueueToast('warning', `Human Gate(${nodeId}) 승인이 반영되었습니다.`);
     } catch (error) {
+      if (error instanceof ApiError && error.status === 403) {
+        setAuthModalMessage('승인 권한이 없습니다. reviewer/admin 역할과 올바른 workspace 접근 권한을 확인하세요.');
+        setAuthModalOpen(true);
+      }
       const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : 'Human Gate 승인 실패';
       enqueueToast('error', `Human Gate 승인 실패 (${message})`);
+    }
+  };
+
+  const handleRejectHumanGate = async (nodeId: string) => {
+    if (!run) return;
+    try {
+      const rejected = await api.rejectRunNode(run.id, nodeId);
+      setRun(rejected);
+      await refreshRunAndConstellation(rejected.id);
+      enqueueToast('warning', `Human Gate(${nodeId}) 반려가 반영되었습니다.`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) {
+        setAuthModalMessage('반려 권한이 없습니다. reviewer/admin 역할과 올바른 workspace 접근 권한을 확인하세요.');
+        setAuthModalOpen(true);
+      }
+      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : 'Human Gate 반려 실패';
+      enqueueToast('error', `Human Gate 반려 실패 (${message})`);
     }
   };
 
@@ -314,6 +341,9 @@ export default function App() {
         </button>
         <h1>DevFlow Agent Hub</h1>
         <div className="top-actions">
+          <span className={`live-indicator live-${streamState}`} aria-label={`실시간 연결 상태 ${streamState}`}>
+            {streamState}
+          </span>
           <StatusBadge status={runStatus} />
           <button className="btn btn-primary" onClick={handleStartRun} disabled={!activeWorkflow}>
             Run 시작
@@ -349,6 +379,7 @@ export default function App() {
             onTriggerMalformedWebhook={handleMalformedWebhookSimulation}
             onTriggerInvalidWorkflowWebhook={handleInvalidWorkflowWebhookSimulation}
             onApproveHumanGate={handleApproveHumanGate}
+            onRejectHumanGate={handleRejectHumanGate}
             onCancelRun={handleCancelRun}
           />
           <WorkflowBuilder
@@ -449,6 +480,26 @@ export default function App() {
           </section>
         </aside>
       </div>
+      {authModalOpen && (
+        <div className="auth-modal-backdrop" role="presentation" onClick={() => setAuthModalOpen(false)}>
+          <div
+            className="auth-modal card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="권한 안내"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>권한이 필요합니다</h2>
+            <p>{authModalMessage}</p>
+            <p className="mono">필요 권한: reviewer/admin · workspace membership</p>
+            <div className="builder-actions">
+              <button type="button" className="btn btn-primary" onClick={() => setAuthModalOpen(false)}>
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

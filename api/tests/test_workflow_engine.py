@@ -3,6 +3,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 
 from sqlalchemy.exc import OperationalError
 
@@ -109,6 +110,58 @@ def test_engine_uses_edges_for_transition_even_when_sequence_differs():
     nodes = sorted(final["node_runs"], key=lambda item: item["updated_at"])
     execution_order = [node["node_id"] for node in nodes]
     assert execution_order.index("code") < execution_order.index("plan")
+
+
+def test_engine_runs_independent_nodes_without_forced_sequential_fallback(monkeypatch):
+    payload = {
+        "name": "Independent Nodes",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "plan", "type": "task", "label": "Plan"},
+                {"id": "docs", "type": "task", "label": "Docs"},
+            ],
+            "edges": [{"id": "e1", "source": "idea", "target": "plan"}],
+        },
+    }
+    workflow = client.post("/api/workflows", json=payload).json()
+
+    started: dict[str, float] = {}
+    finished: dict[str, float] = {}
+    lock = Lock()
+
+    class SlowRunner:
+        def run(self, request):
+            with lock:
+                started[request.node_id] = time.time()
+            time.sleep(0.2)
+            with lock:
+                finished[request.node_id] = time.time()
+            return AgentTaskResult(ok=True, log="ok", output={"exit_code": 0})
+
+    original_runner = workflow_engine.agent_runner
+    monkeypatch.setattr(workflow_engine, "agent_runner", SlowRunner())
+    try:
+        run = client.post(f"/api/workflows/{workflow['id']}/runs")
+        assert run.status_code == 200
+        run_id = run.json()["id"]
+
+        final = None
+        for _ in range(40):
+            response = client.get(f"/api/runs/{run_id}")
+            assert response.status_code == 200
+            if response.json()["status"] == "done":
+                final = response.json()
+                break
+            time.sleep(0.1)
+    finally:
+        monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
+
+    assert final is not None
+    assert "idea" in started and "docs" in started and "plan" in started
+    assert abs(started["idea"] - started["docs"]) < 0.12
+    assert started["plan"] >= finished["idea"]
 
 
 def test_engine_retries_failed_node_with_backoff(monkeypatch):

@@ -193,6 +193,30 @@ p {
   align-items: center;
 }
 
+.live-indicator {
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 999px;
+  padding: 0 var(--space-8);
+  border: 1px solid var(--color-border-default);
+  font-family: var(--font-mono);
+}
+
+.live-connected {
+  color: var(--color-status-success);
+  border-color: color-mix(in srgb, var(--color-status-success) 40%, transparent);
+}
+
+.live-connecting,
+.live-reconnecting {
+  color: var(--color-status-waiting);
+  border-color: color-mix(in srgb, var(--color-status-waiting) 40%, transparent);
+}
+
+.live-closed {
+  color: var(--color-text-muted);
+}
+
 .layout-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -683,6 +707,39 @@ input {
 
 .btn-ghost {
   background: transparent;
+}
+
+.btn-danger {
+  border-color: color-mix(in srgb, var(--color-status-failed) 58%, transparent);
+  color: var(--color-status-failed);
+}
+
+.auth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid;
+  place-items: center;
+  z-index: 140;
+  padding: var(--space-16);
+}
+
+.auth-modal {
+  width: min(540px, 100%);
+  background: var(--color-bg-surface);
+  display: grid;
+  gap: var(--space-12);
+}
+
+.auth-modal h2 {
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.auth-modal p {
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--color-text-secondary);
 }
 
 .mobile-only {

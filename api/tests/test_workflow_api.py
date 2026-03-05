@@ -351,17 +351,39 @@ def test_human_gate_approve_requires_token(monkeypatch):
 
     missing_role = client.post(
         f"/api/runs/{run_id}/approve?node_id=review",
-        headers={"X-Approver-Token": "secret-approver"},
+        headers={"X-Approver-Token": "secret-approver", "X-Workspace-Id": "main"},
     )
     assert missing_role.status_code == 403
     assert missing_role.json()["detail"] == "missing approver role"
 
     insufficient_role = client.post(
         f"/api/runs/{run_id}/approve?node_id=review",
-        headers={"X-Approver-Token": "secret-approver", "X-Approver-Role": "developer"},
+        headers={
+            "X-Approver-Token": "secret-approver",
+            "X-Approver-Role": "developer",
+            "X-Workspace-Id": "main",
+        },
     )
     assert insufficient_role.status_code == 403
     assert insufficient_role.json()["detail"] == "insufficient approver role"
+
+    missing_workspace = client.post(
+        f"/api/runs/{run_id}/approve?node_id=review",
+        headers={"X-Approver-Token": "secret-approver", "X-Approver-Role": "reviewer"},
+    )
+    assert missing_workspace.status_code == 403
+    assert missing_workspace.json()["detail"] == "missing approver workspace"
+
+    mismatch_workspace = client.post(
+        f"/api/runs/{run_id}/approve?node_id=review",
+        headers={
+            "X-Approver-Token": "secret-approver",
+            "X-Approver-Role": "reviewer",
+            "X-Workspace-Id": "other",
+        },
+    )
+    assert mismatch_workspace.status_code == 403
+    assert mismatch_workspace.json()["detail"] == "insufficient approver workspace"
 
 
 def test_human_gate_approve_after_long_pending_resumes_run(monkeypatch):
@@ -401,7 +423,11 @@ def test_human_gate_approve_after_long_pending_resumes_run(monkeypatch):
 
     approved = client.post(
         f"/api/runs/{run_id}/approve?node_id=review",
-        headers={"X-Approver-Token": "secret-approver", "X-Approver-Role": "reviewer"},
+        headers={
+            "X-Approver-Token": "secret-approver",
+            "X-Approver-Role": "reviewer",
+            "X-Workspace-Id": "main",
+        },
     )
     assert approved.status_code == 200
 
@@ -418,6 +444,55 @@ def test_human_gate_approve_after_long_pending_resumes_run(monkeypatch):
     review_node = next(node for node in final.json()["node_runs"] if node["node_id"] == "review")
     assert review_node["status"] == "done"
     assert "[human_gate] approved" in review_node["log"]
+
+
+def test_human_gate_reject_marks_run_failed(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_workspaces", "main")
+    payload = {
+        "name": "Human Gate Reject",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "review", "type": "human_gate", "label": "Review"},
+                {"id": "pr", "type": "task", "label": "PR"},
+            ],
+            "edges": [
+                {"id": "e1", "source": "idea", "target": "review"},
+                {"id": "e2", "source": "review", "target": "pr"},
+            ],
+        },
+    }
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    assert created.status_code == 200
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    pending = None
+    for _ in range(25):
+        response = client.get(f"/api/runs/{run_id}")
+        if response.status_code == 200 and any(node["status"] == "approval_pending" for node in response.json()["node_runs"]):
+            pending = response.json()
+            break
+        time.sleep(0.1)
+    assert pending is not None
+
+    rejected = client.post(
+        f"/api/runs/{run_id}/reject?node_id=review",
+        headers={
+            "X-Approver-Token": "secret-approver",
+            "X-Approver-Role": "reviewer",
+            "X-Workspace-Id": "main",
+        },
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "failed"
+    review_node = next(node for node in rejected.json()["node_runs"] if node["node_id"] == "review")
+    assert review_node["status"] == "failed"
+    assert "[human_gate] rejected" in review_node["log"]
 
 
 def test_cancel_run_marks_run_and_non_terminal_nodes_cancelled():

@@ -20,6 +20,7 @@ export default function Dashboard({
   onTriggerMalformedWebhook,
   onTriggerInvalidWorkflowWebhook,
   onApproveHumanGate,
+  onRejectHumanGate,
   onCancelRun,
 }: {
   run: WorkflowRun | null;
@@ -27,6 +28,7 @@ export default function Dashboard({
   onTriggerMalformedWebhook?: () => Promise<void>;
   onTriggerInvalidWorkflowWebhook?: () => Promise<void>;
   onApproveHumanGate?: (nodeId: string) => Promise<void>;
+  onRejectHumanGate?: (nodeId: string) => Promise<void>;
   onCancelRun?: () => Promise<void>;
 }) {
   const nodeRuns = run?.node_runs ?? [];
@@ -123,6 +125,17 @@ export default function Dashboard({
             }}
           >
             Human Gate 승인
+          </button>
+          <button
+            className="btn btn-ghost btn-danger"
+            type="button"
+            disabled={!pendingApproval}
+            onClick={() => {
+              if (!pendingApproval) return;
+              void onRejectHumanGate?.(pendingApproval.node_id);
+            }}
+          >
+            Human Gate 반려
           </button>
           <button
             className="btn btn-ghost"

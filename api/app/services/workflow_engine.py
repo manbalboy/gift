@@ -75,6 +75,7 @@ class WorkflowEngine:
 
         self._engine_guard = threading.Lock()
         self._workers: dict[int, threading.Thread] = {}
+        self._node_workers: dict[int, dict[str, threading.Thread]] = {}
         self._cancel_events: dict[int, threading.Event] = {}
         self._approval_events: dict[int, dict[str, threading.Event]] = {}
 
@@ -136,8 +137,32 @@ class WorkflowEngine:
     def _clear_run_runtime_state(self, run_id: int) -> None:
         with self._engine_guard:
             self._workers.pop(run_id, None)
+            self._node_workers.pop(run_id, None)
             self._cancel_events.pop(run_id, None)
             self._approval_events.pop(run_id, None)
+
+    def _dispatch_task_node_async(self, run_id: int, node_id: str, node_name: str, command: str | None) -> None:
+        def _run_node() -> None:
+            try:
+                self._execute_task_node(run_id=run_id, node_id=node_id, node_name=node_name, command=command)
+            finally:
+                with self._engine_guard:
+                    run_workers = self._node_workers.get(run_id)
+                    if run_workers is not None:
+                        run_workers.pop(node_id, None)
+
+        with self._engine_guard:
+            run_workers = self._node_workers.setdefault(run_id, {})
+            existing = run_workers.get(node_id)
+            if existing and existing.is_alive():
+                return
+            worker = threading.Thread(
+                target=_run_node,
+                name=f"workflow-node-runner-{run_id}-{node_id}",
+                daemon=True,
+            )
+            run_workers[node_id] = worker
+            worker.start()
 
     def _start_background_worker(self, run_id: int) -> None:
         cancel_event = self._get_cancel_event(run_id)
@@ -191,16 +216,34 @@ class WorkflowEngine:
         with self._engine_guard:
             worker_count = len(self._workers)
             alive_workers = sum(1 for worker in self._workers.values() if worker.is_alive())
+            node_worker_count = sum(len(node_workers) for node_workers in self._node_workers.values())
+            node_worker_alive = sum(
+                1 for node_workers in self._node_workers.values() for worker in node_workers.values() if worker.is_alive()
+            )
             tracked_cancels = len(self._cancel_events)
             pending_approval_runs = len(self._approval_events)
             pending_approval_nodes = sum(len(nodes) for nodes in self._approval_events.values())
         return {
             "workers": {"tracked": worker_count, "alive": alive_workers},
+            "node_workers": {"tracked": node_worker_count, "alive": node_worker_alive},
             "runtime_state": {
                 "cancel_events": tracked_cancels,
                 "approval_runs": pending_approval_runs,
                 "approval_nodes": pending_approval_nodes,
             },
+        }
+
+    def dlq_snapshot(self, db: Session) -> dict[str, int]:
+        failed_nodes = db.query(NodeRun).filter(NodeRun.status == "failed").count()
+        compensated_nodes = (
+            db.query(NodeRun)
+            .filter(NodeRun.status == "failed")
+            .filter(NodeRun.log.contains("[compensation]"))
+            .count()
+        )
+        return {
+            "failed_nodes": int(failed_nodes),
+            "compensated_nodes": int(compensated_nodes),
         }
 
     def _sync_run_status(self, run: WorkflowRun, node_runs: list[NodeRun]) -> str:
@@ -328,7 +371,7 @@ class WorkflowEngine:
                     db.close()
                     break
 
-                execution_target: tuple[str, str, str | None] | None = None
+                execution_targets: list[tuple[str, str, str | None]] = []
                 wait_for_approval_event: threading.Event | None = None
                 should_sleep = False
 
@@ -372,20 +415,32 @@ class WorkflowEngine:
                     ]
 
                     if runnable:
-                        next_node = sorted(runnable, key=lambda item: item.sequence)[0]
-                        node_type = _extract_node_type(graph, next_node.node_id)
-                        if node_type == "human_gate":
-                            next_node.status = "approval_pending"
-                            next_node.log = "승인 대기 중"
-                            run.status = "waiting"
-                            wait_for_approval_event = self._get_approval_event(run.id, next_node.node_id)
-                            wait_for_approval_event.clear()
-                        else:
-                            next_node.status = "running"
-                            next_node.log = "실행 중"
+                        queued_human_gate: list[NodeRun] = []
+                        queued_tasks: list[NodeRun] = []
+                        for candidate in sorted(runnable, key=lambda item: item.sequence):
+                            if _extract_node_type(graph, candidate.node_id) == "human_gate":
+                                queued_human_gate.append(candidate)
+                            else:
+                                queued_tasks.append(candidate)
+
+                        for gate_node in queued_human_gate:
+                            gate_node.status = "approval_pending"
+                            gate_node.log = "승인 대기 중"
+                            approval_event = self._get_approval_event(run.id, gate_node.node_id)
+                            approval_event.clear()
+                            if wait_for_approval_event is None:
+                                wait_for_approval_event = approval_event
+
+                        for task_node in queued_tasks:
+                            task_node.status = "running"
+                            task_node.log = "실행 중"
+                            command = _extract_node_command(graph, task_node.node_id)
+                            execution_targets.append((task_node.node_id, task_node.node_name, command))
+
+                        if queued_tasks:
                             run.status = "running"
-                            command = _extract_node_command(graph, next_node.node_id)
-                            execution_target = (next_node.node_id, next_node.node_name, command)
+                        elif queued_human_gate:
+                            run.status = "waiting"
                         db.commit()
                     else:
                         run_status = self._sync_run_status(run, nodes)
@@ -405,9 +460,9 @@ class WorkflowEngine:
                     run_lock.release()
                     db.close()
 
-                if execution_target:
-                    node_id, node_name, command = execution_target
-                    self._execute_task_node(run_id=run_id, node_id=node_id, node_name=node_name, command=command)
+                if execution_targets:
+                    for node_id, node_name, command in execution_targets:
+                        self._dispatch_task_node_async(run_id=run_id, node_id=node_id, node_name=node_name, command=command)
                     continue
 
                 if wait_for_approval_event is not None:
@@ -498,6 +553,49 @@ class WorkflowEngine:
         self._start_background_worker(run.id)
         return locked_run
 
+    def reject_human_gate(self, db: Session, run: WorkflowRun, node_id: str) -> WorkflowRun:
+        run_lock = self.lock_provider.get_run_lock(run.id)
+        if not run_lock.acquire(blocking=False):
+            raise RuntimeError("run lock is busy")
+
+        try:
+            locked_run = self._load_locked_run(db, run.id)
+            if not locked_run:
+                raise ValueError("run not found")
+            if locked_run.status in {"done", "failed", "cancelled"}:
+                raise ValueError("run cannot be rejected in terminal state")
+
+            node = (
+                db.query(NodeRun)
+                .filter(NodeRun.run_id == run.id, NodeRun.node_id == node_id)
+                .with_for_update()
+                .first()
+            )
+            if not node:
+                raise ValueError("node not found in run")
+            if node.status != "approval_pending":
+                raise ValueError("node is not approval_pending")
+
+            node.status = "failed"
+            previous = (node.log or "").strip()
+            node.log = f"[human_gate] rejected\n{previous}".strip()
+
+            all_nodes = self._load_locked_nodes(db, run.id)
+            locked_run.status = "failed"
+            self._sync_run_status(locked_run, all_nodes)
+
+            db.commit()
+            db.refresh(locked_run)
+        except SQLAlchemyError as exc:
+            db.rollback()
+            raise RuntimeError("rejection failed") from exc
+        finally:
+            run_lock.release()
+
+        approval_event = self._get_approval_event(run.id, node_id)
+        approval_event.set()
+        return locked_run
+
     def cancel_run(self, db: Session, run: WorkflowRun) -> WorkflowRun:
         cancel_event = self._get_cancel_event(run.id)
         cancel_event.set()
@@ -529,9 +627,14 @@ class WorkflowEngine:
             event.set()
 
         worker: threading.Thread | None
+        node_workers: list[threading.Thread]
         with self._engine_guard:
             worker = self._workers.get(run.id)
+            node_workers = list(self._node_workers.get(run.id, {}).values())
         if worker and worker.is_alive():
             worker.join(timeout=max(0.1, float(settings.workflow_cancel_join_timeout_seconds)))
+        for node_worker in node_workers:
+            if node_worker.is_alive():
+                node_worker.join(timeout=max(0.05, float(settings.workflow_cancel_join_timeout_seconds)))
 
         return locked_run
