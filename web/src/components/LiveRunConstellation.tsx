@@ -4,6 +4,7 @@ import type { ConstellationData } from '../types';
 const statusColor: Record<string, string> = {
   queued: 'var(--color-status-waiting)',
   paused: 'var(--color-status-warning)',
+  blocked: 'var(--color-status-failed)',
   running: 'var(--color-status-running)',
   done: 'var(--color-status-success)',
   failed: 'var(--color-status-failed)',

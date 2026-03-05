@@ -71,6 +71,7 @@ def test_system_alerts_endpoint_masks_sensitive_tokens_and_paths():
     assert "/home/docker/" not in payload["message"]
     assert payload["context"]["path"] == "***[MASKED]***"
     assert payload["context"]["details"][0] == "***[MASKED]***"
+    assert payload["risk_score"] is None
 
     with Session(engine) as session:
         stored = (
@@ -84,3 +85,35 @@ def test_system_alerts_endpoint_masks_sensitive_tokens_and_paths():
         assert "Bearer" not in stored.message
         assert "/home/docker/" not in stored.message
         assert stored.context.get("path") == "***[MASKED]***"
+
+
+def test_system_alerts_exposes_risk_score_when_present():
+    record_system_alert(
+        level="error",
+        code="risk-score-test",
+        message="node repeated failure",
+        source="workflow-engine",
+        context={"risk_score": 91, "node_id": "code"},
+    )
+    response = client.get("/api/logs/system-alerts?limit=1")
+    assert response.status_code == 200
+    payload = response.json()[0]
+    assert payload["code"] == "risk-score-test"
+    assert payload["risk_score"] == 91
+
+
+def test_system_alerts_truncates_extreme_payload_before_masking():
+    very_long = "Bearer token " + ("x" * 20000) + " /root/private/secret.txt"
+    record_system_alert(
+        level="error",
+        code="long-payload-test",
+        message=very_long,
+        source="security-test",
+        context={},
+    )
+    response = client.get("/api/logs/system-alerts?limit=1")
+    assert response.status_code == 200
+    payload = response.json()[0]
+    assert payload["code"] == "long-payload-test"
+    assert len(payload["message"]) <= 10000
+    assert "Bearer " not in payload["message"]

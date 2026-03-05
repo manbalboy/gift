@@ -17,6 +17,7 @@ from app.models.workflow import Artifact, HumanGateDecisionAudit, NodeRun, Workf
 from app.schemas.agent import AgentTaskRequest
 from app.services.agent_runner import AgentRunner
 from app.services.lock_provider import LockProviderFactory
+from app.services.system_alerts import record_system_alert
 from app.services.workspace import InvalidNodeIdError, WorkspaceArtifactIOError, WorkspaceService, is_safe_node_id
 
 
@@ -234,6 +235,7 @@ class WorkflowEngine:
         self._cancel_events: dict[int, threading.Event] = {}
         self._approval_events: dict[int, dict[str, threading.Event]] = {}
         self._node_iteration_counts: dict[int, dict[str, int]] = {}
+        self._node_failure_streaks: dict[tuple[int, str], int] = {}
 
     def _append_human_gate_status_artifact(
         self,
@@ -380,6 +382,16 @@ class WorkflowEngine:
             run_counts[node_id] = next_count
         return next_count, budget
 
+    def _record_node_failure_streak(self, workflow_id: int, node_id: str, *, failed: bool) -> int:
+        key = (workflow_id, node_id)
+        with self._engine_guard:
+            if failed:
+                next_count = self._node_failure_streaks.get(key, 0) + 1
+                self._node_failure_streaks[key] = next_count
+                return next_count
+            self._node_failure_streaks.pop(key, None)
+        return 0
+
     def _dispatch_task_node_async(self, run_id: int, node_id: str, node_name: str, command: str | None) -> None:
         def _run_node() -> None:
             try:
@@ -505,7 +517,7 @@ class WorkflowEngine:
         }
 
     def _sync_run_status(self, run: WorkflowRun, node_runs: list[NodeRun]) -> str:
-        if run.status in {"done", "failed", "cancelled", "paused"}:
+        if run.status in {"done", "failed", "cancelled", "paused", "blocked"}:
             return run.status
 
         if any(node.status == "failed" for node in node_runs):
@@ -524,7 +536,7 @@ class WorkflowEngine:
 
     def _mark_run_cancelled_locked(self, run: WorkflowRun, nodes: list[NodeRun]) -> None:
         for node in nodes:
-            if node.status in {"done", "failed", "cancelled"}:
+            if node.status in {"done", "failed", "cancelled", "blocked"}:
                 continue
             node.status = "cancelled"
             previous = (node.log or "").strip()
@@ -610,6 +622,7 @@ class WorkflowEngine:
                 run = self._load_locked_run(db, run_id)
                 if not run:
                     return
+                workflow_id = run.workflow_id
                 nodes = self._load_locked_nodes(db, run_id)
                 node = next((item for item in nodes if item.node_id == node_id), None)
                 if not node:
@@ -625,6 +638,7 @@ class WorkflowEngine:
                 node.status = "done" if last_ok else "failed"
                 node.log = "\n".join(part for part in logs if part).strip()
                 if node.status == "done":
+                    self._record_node_failure_streak(workflow_id, node.node_id, failed=False)
                     try:
                         node.artifact_path = self.workspace.write_artifact(
                             run_id,
@@ -648,6 +662,27 @@ class WorkflowEngine:
 
                 self._sync_run_status(run, nodes)
                 db.commit()
+
+                if node.status == "failed":
+                    failure_streak = self._record_node_failure_streak(workflow_id, node.node_id, failed=True)
+                    risk_score = min(100, 30 + (failure_streak * 20) + (max(0, attempts - 1) * 10))
+                    record_system_alert(
+                        level="error" if risk_score >= 80 else "warning",
+                        code="workflow_node_failure_risk",
+                        message=(
+                            f"run_id={run_id} node_id={node.node_id} failed after retries "
+                            f"(attempts={attempts}, streak={failure_streak})"
+                        ),
+                        source="workflow_engine",
+                        context={
+                            "run_id": run_id,
+                            "workflow_id": workflow_id,
+                            "node_id": node.node_id,
+                            "attempt_limit": attempts,
+                            "failure_streak": failure_streak,
+                            "risk_score": risk_score,
+                        },
+                    )
             except SQLAlchemyError:
                 db.rollback()
             finally:
@@ -701,7 +736,7 @@ class WorkflowEngine:
                     run = self._load_locked_run(db, run_id)
                     if not run:
                         break
-                    if run.status in {"done", "failed", "cancelled", "paused"}:
+                    if run.status in {"done", "failed", "cancelled", "paused", "blocked"}:
                         db.commit()
                         break
 
@@ -758,10 +793,29 @@ class WorkflowEngine:
                         for candidate in sorted(runnable, key=lambda item: item.sequence):
                             count, budget = self._record_node_iteration(run.id, candidate.node_id)
                             if count > budget:
-                                candidate.status = "paused"
+                                candidate.status = "blocked"
                                 previous = (candidate.log or "").strip()
-                                candidate.log = f"[pause] node iteration budget exceeded ({count}>{budget})\n{previous}".strip()
-                                run.status = "paused"
+                                candidate.log = (
+                                    f"[blocked] node iteration budget exceeded ({count}>{budget})\n{previous}".strip()
+                                )
+                                run.status = "blocked"
+                                record_system_alert(
+                                    level="error",
+                                    code="workflow_node_iteration_budget_blocked",
+                                    message=(
+                                        f"run_id={run.id} node_id={candidate.node_id} iteration budget exceeded "
+                                        f"({count}>{budget}), execution blocked"
+                                    ),
+                                    source="workflow_engine",
+                                    context={
+                                        "run_id": run.id,
+                                        "workflow_id": run.workflow_id,
+                                        "node_id": candidate.node_id,
+                                        "current_iteration": count,
+                                        "iteration_budget": budget,
+                                        "risk_score": 100,
+                                    },
+                                )
                                 paused_by_budget = True
                                 break
                             node_type = _extract_node_type(graph, candidate.node_id)
@@ -789,7 +843,7 @@ class WorkflowEngine:
                         db.commit()
                     else:
                         run_status = self._sync_run_status(run, nodes)
-                        if run_status in {"done", "failed", "cancelled", "paused"}:
+                        if run_status in {"done", "failed", "cancelled", "paused", "blocked"}:
                             db.commit()
                             break
                         if any(node.status == "approval_pending" for node in nodes):
@@ -912,7 +966,7 @@ class WorkflowEngine:
             locked_run = self._load_locked_run(db, run.id)
             if not locked_run:
                 raise ValueError("run not found")
-            if locked_run.status in {"done", "failed", "cancelled"}:
+            if locked_run.status in {"done", "failed", "cancelled", "blocked"}:
                 raise ValueError("run cannot be approved in terminal state")
 
             node = (
@@ -1002,7 +1056,7 @@ class WorkflowEngine:
             locked_run = self._load_locked_run(db, run.id)
             if not locked_run:
                 raise ValueError("run not found")
-            if locked_run.status in {"done", "failed", "cancelled"}:
+            if locked_run.status in {"done", "failed", "cancelled", "blocked"}:
                 raise ValueError("run cannot be cancelled in terminal state")
 
             node = (
@@ -1076,7 +1130,7 @@ class WorkflowEngine:
             locked_run = self._load_locked_run(db, run.id)
             if not locked_run:
                 raise ValueError("run not found")
-            if locked_run.status not in {"done", "failed", "cancelled"}:
+            if locked_run.status not in {"done", "failed", "cancelled", "blocked"}:
                 nodes = self._load_locked_nodes(db, run.id)
                 self._mark_run_cancelled_locked(locked_run, nodes)
                 db.commit()

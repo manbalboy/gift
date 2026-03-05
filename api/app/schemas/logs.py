@@ -12,3 +12,4 @@ class SystemAlertOut(BaseModel):
     message: str
     source: str
     context: dict[str, Any]
+    risk_score: int | None = None

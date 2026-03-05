@@ -280,7 +280,8 @@ def update_workflow(workflow_id: int, payload: WorkflowUpdate, request: Request,
 
 
 @router.post("/{workflow_id}/runs", response_model=WorkflowRunOut)
-def create_workflow_run(workflow_id: int, db: Session = Depends(get_db)):
+def create_workflow_run(workflow_id: int, request: Request, db: Session = Depends(get_db)):
+    _authorize_workflow_control_request(request)
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="workflow not found")
@@ -367,6 +368,38 @@ def _extract_approver_token(request: Request) -> str:
     if bearer.startswith("Bearer "):
         return bearer.removeprefix("Bearer ").strip()
     return request.headers.get("X-Approver-Token", "").strip()
+
+
+def _extract_workflow_control_token(request: Request) -> str:
+    bearer = request.headers.get("Authorization", "")
+    if bearer.startswith("Bearer "):
+        return bearer.removeprefix("Bearer ").strip()
+    return request.headers.get("X-Workflow-Control-Token", "").strip()
+
+
+def _extract_workflow_control_role(request: Request) -> str:
+    return request.headers.get("X-Workflow-Control-Role", "").strip().lower()
+
+
+def _authorize_workflow_control_request(request: Request) -> str:
+    configured_token = settings.workflow_control_token.strip()
+    allowed_roles = settings.allowed_workflow_control_roles
+    provided_token = _extract_workflow_control_token(request)
+    provided_role = _extract_workflow_control_role(request)
+
+    if configured_token:
+        if not provided_token:
+            raise HTTPException(status_code=401, detail="missing workflow control token")
+        if not hmac.compare_digest(provided_token, configured_token):
+            raise HTTPException(status_code=403, detail="invalid workflow control token")
+
+    if allowed_roles:
+        if not provided_role:
+            raise HTTPException(status_code=403, detail="missing workflow control role")
+        if provided_role not in allowed_roles:
+            raise HTTPException(status_code=403, detail="insufficient workflow control role")
+
+    return provided_role or "system"
 
 
 def _session_signing_secret() -> str:
@@ -833,7 +866,8 @@ def cancel_pending_approval(approval_id: int, request: Request, db: Session = De
 
 
 @run_router.post("/{run_id}/cancel", response_model=WorkflowRunOut)
-def cancel_run(run_id: int, db: Session = Depends(get_db)):
+def cancel_run(run_id: int, request: Request, db: Session = Depends(get_db)):
+    _authorize_workflow_control_request(request)
     run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
@@ -849,7 +883,8 @@ def cancel_run(run_id: int, db: Session = Depends(get_db)):
 
 
 @run_router.post("/{run_id}/resume", response_model=WorkflowRunOut)
-def resume_run(run_id: int, db: Session = Depends(get_db)):
+def resume_run(run_id: int, request: Request, db: Session = Depends(get_db)):
+    _authorize_workflow_control_request(request)
     run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="run not found")

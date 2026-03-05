@@ -1,5 +1,6 @@
 import net from 'node:net';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -12,6 +13,8 @@ const PORT_HOLD_MS = 200;
 const LOCK_RESERVATION_MS = 6000;
 const LOCK_STALE_MS = 45_000;
 const LOCK_DIR = path.join(os.tmpdir(), 'devflow-port-locks');
+const heldLocks = new Set();
+let shouldReleaseOnExit = true;
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -25,6 +28,20 @@ async function ensureLockDir() {
 
 function lockPath(port) {
   return path.join(LOCK_DIR, `${port}.lock`);
+}
+
+function releaseHeldLocksSync() {
+  if (!shouldReleaseOnExit) {
+    return;
+  }
+  for (const port of heldLocks) {
+    try {
+      fsSync.rmSync(lockPath(port), { force: true });
+    } catch {
+      // noop
+    }
+  }
+  heldLocks.clear();
 }
 
 async function isLockStale(port) {
@@ -53,13 +70,13 @@ async function canRecycleLock(port) {
   try {
     const payload = await fs.readFile(file, 'utf8');
     const parsed = JSON.parse(payload);
+    const pid = Number(parsed?.pid);
+    if (Number.isInteger(pid) && pid > 0 && !isPidAlive(pid)) {
+      return true;
+    }
     const reservedUntil = Number(parsed?.reservedUntil ?? 0);
     if (Number.isFinite(reservedUntil) && reservedUntil > Date.now()) {
       return false;
-    }
-    const pid = Number(parsed?.pid);
-    if (Number.isInteger(pid) && pid > 0) {
-      return !isPidAlive(pid);
     }
     return await isLockStale(port);
   } catch {
@@ -80,6 +97,7 @@ async function acquirePortLock(port) {
       }),
     );
     await handle.close();
+    heldLocks.add(port);
     return true;
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST') {
@@ -103,6 +121,36 @@ async function releasePortLock(port) {
   } catch {
     // noop
   }
+  heldLocks.delete(port);
+}
+
+async function cleanupOrphanLocks() {
+  let files = [];
+  try {
+    files = await fs.readdir(LOCK_DIR);
+  } catch {
+    return;
+  }
+  for (const file of files) {
+    if (!file.endsWith('.lock')) {
+      continue;
+    }
+    const parsedPort = Number(file.replace('.lock', ''));
+    if (!Number.isInteger(parsedPort) || parsedPort < START_PORT || parsedPort > END_PORT) {
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const recyclable = await canRecycleLock(parsedPort);
+    if (!recyclable) {
+      continue;
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await fs.rm(lockPath(parsedPort));
+    } catch {
+      // noop
+    }
+  }
 }
 
 function checkPortAvailable(port) {
@@ -118,6 +166,7 @@ function checkPortAvailable(port) {
 
 async function main() {
   await ensureLockDir();
+  await cleanupOrphanLocks();
 
   for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
     for (let port = START_PORT; port <= END_PORT; port += 1) {
@@ -147,6 +196,7 @@ async function main() {
 
       const available = availableNow && stillAvailable;
       if (available) {
+        shouldReleaseOnExit = false;
         process.stdout.write(String(port));
         process.exit(0);
         return;
@@ -163,5 +213,21 @@ async function main() {
   console.error(`3100~3199 포트가 모두 사용 중입니다. (${RETRY_ATTEMPTS}회 재시도 후 종료)`);
   process.exit(1);
 }
+
+process.on('exit', () => {
+  releaseHeldLocksSync();
+});
+process.on('SIGINT', () => {
+  releaseHeldLocksSync();
+  process.exit(1);
+});
+process.on('SIGTERM', () => {
+  releaseHeldLocksSync();
+  process.exit(1);
+});
+process.on('uncaughtException', () => {
+  releaseHeldLocksSync();
+  process.exit(1);
+});
 
 void main();

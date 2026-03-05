@@ -1,9 +1,47 @@
 import type { SystemAlertEntry } from '../types';
 
+const MASKED_TOKEN = '***[MASKED]***';
+
 function formatTime(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return '-';
   return parsed.toLocaleTimeString('ko-KR', { hour12: false });
+}
+
+function resolveRiskScore(alert: SystemAlertEntry): number | null {
+  const direct = alert.risk_score;
+  if (typeof direct === 'number' && Number.isFinite(direct)) {
+    return Math.max(0, Math.min(100, Math.trunc(direct)));
+  }
+  const fromContext = alert.context?.risk_score;
+  if (typeof fromContext === 'number' && Number.isFinite(fromContext)) {
+    return Math.max(0, Math.min(100, Math.trunc(fromContext)));
+  }
+  return null;
+}
+
+function riskMeta(score: number): { label: string; className: string } {
+  if (score >= 80) return { label: 'HIGH', className: 'system-alert-risk-high' };
+  if (score >= 50) return { label: 'MED', className: 'system-alert-risk-medium' };
+  return { label: 'LOW', className: 'system-alert-risk-low' };
+}
+
+function renderMessageWithMaskedHighlight(message: string) {
+  const chunks = message.split(MASKED_TOKEN);
+  if (chunks.length <= 1) {
+    return message;
+  }
+  return (
+    <>
+      {chunks.map((chunk, idx) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <span key={`masked-chunk-${idx}`}>
+          {chunk}
+          {idx < chunks.length - 1 ? <mark className="system-alert-masked mono">{MASKED_TOKEN}</mark> : null}
+        </span>
+      ))}
+    </>
+  );
 }
 
 export default function SystemAlertWidget({
@@ -34,6 +72,8 @@ export default function SystemAlertWidget({
         <div className="system-alert-list">
           {alerts.map((alert) => {
             const level = levelMeta(alert.level);
+            const riskScore = resolveRiskScore(alert);
+            const risk = riskScore === null ? null : riskMeta(riskScore);
             return (
               <article key={alert.id} className={`system-alert-item system-alert-${alert.level}`}>
                 <div className="system-alert-head">
@@ -45,10 +85,15 @@ export default function SystemAlertWidget({
                       </span>
                       {level.label}
                     </span>
+                    {risk ? (
+                      <span className={`system-alert-risk mono ${risk.className}`}>
+                        Risk {risk.label} · {riskScore}
+                      </span>
+                    ) : null}
                   </div>
                   <span className="mono">{formatTime(alert.created_at)}</span>
                 </div>
-                <p className="system-alert-message mono">{alert.message}</p>
+                <p className="system-alert-message mono">{renderMessageWithMaskedHighlight(alert.message)}</p>
                 <p className="system-alert-meta mono">
                   {alert.source}
                   {alert.context.path ? ` · ${String(alert.context.path)}` : ''}

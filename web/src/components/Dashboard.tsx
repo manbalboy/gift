@@ -180,14 +180,14 @@ export default function Dashboard({
           >
             Human Gate 반려
           </button>
-          <button
-            className="btn btn-ghost"
-            type="button"
-            disabled={!run || ['done', 'failed', 'cancelled'].includes(run.status)}
-            onClick={() => {
-              void onCancelRun?.();
-            }}
-          >
+            <button
+              className="btn btn-ghost"
+              type="button"
+              disabled={!run || ['done', 'failed', 'cancelled', 'blocked'].includes(run.status)}
+              onClick={() => {
+                void onCancelRun?.();
+              }}
+            >
             Run 취소
           </button>
           <button

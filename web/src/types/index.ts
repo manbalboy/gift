@@ -137,4 +137,5 @@ export type SystemAlertEntry = {
   message: string;
   source: string;
   context: Record<string, unknown>;
+  risk_score?: number | null;
 };

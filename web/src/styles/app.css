@@ -470,6 +470,12 @@ select {
   background: color-mix(in srgb, var(--color-status-failed) 14%, var(--color-bg-surface));
 }
 
+.workflow-node-status-blocked {
+  color: var(--color-status-failed);
+  border-color: var(--color-status-failed);
+  background: color-mix(in srgb, var(--color-status-failed) 18%, var(--color-bg-surface));
+}
+
 .workflow-node-attempt {
   font-size: 12px;
   line-height: 18px;
@@ -524,6 +530,12 @@ select {
   border-color: var(--color-status-failed);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-failed) 34%, transparent), 0 14px 28px rgba(0, 0, 0, 0.32);
   background: color-mix(in srgb, var(--color-status-failed) 12%, var(--color-bg-elevated));
+}
+
+.react-flow__node.status-blocked .workflow-node {
+  border-color: var(--color-status-failed);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-failed) 34%, transparent), 0 14px 28px rgba(0, 0, 0, 0.32);
+  background: color-mix(in srgb, var(--color-status-failed) 18%, var(--color-bg-elevated));
 }
 
 .mobile-blocker {
@@ -813,6 +825,11 @@ select {
   border-color: var(--color-status-failed);
 }
 
+.status-blocked {
+  color: var(--color-status-failed);
+  border-color: var(--color-status-failed);
+}
+
 .status-review_needed {
   color: var(--color-status-review-needed);
   border-color: color-mix(in srgb, var(--color-status-review-needed) 40%, transparent);
@@ -907,6 +924,7 @@ select {
   align-items: center;
   gap: var(--space-8);
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .system-alert-level {
@@ -950,12 +968,47 @@ select {
   background: var(--color-status-warning);
 }
 
+.system-alert-risk {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-default);
+  padding: 0 var(--space-8);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.system-alert-risk-high {
+  color: var(--color-status-failed);
+  border-color: var(--color-status-failed);
+}
+
+.system-alert-risk-medium {
+  color: var(--color-status-warning);
+  border-color: color-mix(in srgb, var(--color-status-warning) 64%, var(--color-border-default));
+}
+
+.system-alert-risk-low {
+  color: var(--color-status-running);
+  border-color: color-mix(in srgb, var(--color-status-running) 58%, var(--color-border-default));
+}
+
+.system-alert-masked {
+  margin: 0 1px;
+  border-radius: 4px;
+  padding: 0 2px;
+  color: var(--color-bg-base);
+  background: var(--color-status-failed);
+}
+
 .system-alert-message {
   margin: 0;
   font-size: 13px;
   line-height: 20px;
   white-space: pre-wrap;
   word-break: break-all;
+  overflow-wrap: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -1247,6 +1300,11 @@ select {
 @media (max-width: 767px) {
   .system-alert-list {
     max-height: min(52vh, 360px);
+  }
+
+  .system-alert-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .toast {

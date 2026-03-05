@@ -30,6 +30,7 @@ const baseNodes = [
 const statusIcon: Record<string, string> = {
   queued: '○',
   paused: 'Ⅱ',
+  blocked: '⛔',
   running: '▶',
   done: '✓',
   failed: '!',

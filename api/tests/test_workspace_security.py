@@ -3,6 +3,7 @@ from pathlib import Path
 import time
 
 from app.api import workflows as workflows_api
+from app.services.system_alerts import _sanitize_string
 from app.services.workspace import InvalidNodeIdError, WorkspaceArtifactIOError, WorkspaceService
 from .conftest import client
 
@@ -138,3 +139,75 @@ def test_human_gate_rejects_cross_workspace_approval_with_403(monkeypatch):
     )
     assert response.status_code == 403
     assert response.json()["detail"] == "workspace does not match workflow"
+
+
+def test_system_alert_masking_handles_large_payload_without_timeout():
+    very_long = ("Bearer secret-token-123 /home/docker/private/path " * 8000).strip()
+    started = time.perf_counter()
+    sanitized = _sanitize_string(very_long)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.6
+    assert len(sanitized) <= 10000
+    assert "Bearer " not in sanitized
+    assert "/home/docker/" not in sanitized
+    assert "***[MASKED]***" in sanitized
+
+
+def test_workflow_control_api_requires_token_and_role_for_run_actions(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "workflow_control_token", "workflow-secret")
+    monkeypatch.setattr(workflows_api.settings, "workflow_control_roles", "operator,admin")
+
+    payload = {
+        "name": "Workflow Control Auth",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "idea", "type": "task", "label": "Idea"}],
+            "edges": [],
+        },
+    }
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    missing = client.post(f"/api/workflows/{workflow_id}/runs")
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "missing workflow control token"
+
+    invalid = client.post(
+        f"/api/workflows/{workflow_id}/runs",
+        headers={"X-Workflow-Control-Token": "wrong", "X-Workflow-Control-Role": "operator"},
+    )
+    assert invalid.status_code == 403
+    assert invalid.json()["detail"] == "invalid workflow control token"
+
+    missing_role = client.post(
+        f"/api/workflows/{workflow_id}/runs",
+        headers={"X-Workflow-Control-Token": "workflow-secret"},
+    )
+    assert missing_role.status_code == 403
+    assert missing_role.json()["detail"] == "missing workflow control role"
+
+    insufficient_role = client.post(
+        f"/api/workflows/{workflow_id}/runs",
+        headers={"X-Workflow-Control-Token": "workflow-secret", "X-Workflow-Control-Role": "reviewer"},
+    )
+    assert insufficient_role.status_code == 403
+    assert insufficient_role.json()["detail"] == "insufficient workflow control role"
+
+    allowed = client.post(
+        f"/api/workflows/{workflow_id}/runs",
+        headers={"X-Workflow-Control-Token": "workflow-secret", "X-Workflow-Control-Role": "operator"},
+    )
+    assert allowed.status_code == 200
+
+    missing_cancel = client.post("/api/runs/999999/cancel")
+    assert missing_cancel.status_code == 401
+    assert missing_cancel.json()["detail"] == "missing workflow control token"
+
+    invalid_resume = client.post(
+        "/api/runs/999999/resume",
+        headers={"X-Workflow-Control-Token": "workflow-secret", "X-Workflow-Control-Role": "viewer"},
+    )
+    assert invalid_resume.status_code == 403
+    assert invalid_resume.json()["detail"] == "insufficient workflow control role"

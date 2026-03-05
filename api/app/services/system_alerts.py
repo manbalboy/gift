@@ -9,6 +9,7 @@ from app.db.system_alert_model import SystemAlertLog
 
 
 _MAX_ALERTS = 500
+_MAX_SANITIZE_INPUT_CHARS = 10_000
 _MASKED = "***[MASKED]***"
 _BEARER_TOKEN_PATTERN = re.compile(r"Bearer\s+[A-Za-z0-9\-\._~+/]+=*", flags=re.IGNORECASE)
 _SENSITIVE_PATH_PATTERN = re.compile(r"(?:(?:/home/docker/|/root/)[^\s\"']*)")
@@ -21,7 +22,8 @@ def _new_session():
 
 
 def _sanitize_string(value: str) -> str:
-    masked = _BEARER_TOKEN_PATTERN.sub(_MASKED, value)
+    bounded = value[:_MAX_SANITIZE_INPUT_CHARS]
+    masked = _BEARER_TOKEN_PATTERN.sub(_MASKED, bounded)
     return _SENSITIVE_PATH_PATTERN.sub(_MASKED, masked)
 
 
@@ -37,6 +39,17 @@ def _sanitize_value(value: Any) -> Any:
     return value
 
 
+def _extract_risk_score(context: dict[str, Any]) -> int | None:
+    raw = context.get("risk_score")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return max(0, min(100, value))
+
+
 def record_system_alert(
     *,
     level: str,
@@ -47,6 +60,7 @@ def record_system_alert(
 ) -> dict[str, Any]:
     sanitized_message = _sanitize_string(message)
     sanitized_context = _sanitize_value(context or {})
+    risk_score = _extract_risk_score(sanitized_context if isinstance(sanitized_context, dict) else {})
 
     entry: dict[str, Any] = {
         "id": f"alert-{uuid4().hex[:12]}",
@@ -56,6 +70,7 @@ def record_system_alert(
         "message": sanitized_message,
         "source": source,
         "context": sanitized_context,
+        "risk_score": risk_score,
     }
 
     db = _new_session()
@@ -103,18 +118,22 @@ def list_system_alerts(limit: int = 50) -> list[dict[str, Any]]:
     finally:
         db.close()
 
-    return [
-        {
-            "id": row.id,
-            "created_at": row.created_at,
-            "level": row.level,
-            "code": row.code,
-            "message": _sanitize_string(row.message),
-            "source": row.source,
-            "context": _sanitize_value(row.context or {}),
-        }
-        for row in rows
-    ]
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        sanitized_context = _sanitize_value(row.context or {})
+        payload.append(
+            {
+                "id": row.id,
+                "created_at": row.created_at,
+                "level": row.level,
+                "code": row.code,
+                "message": _sanitize_string(row.message),
+                "source": row.source,
+                "context": sanitized_context,
+                "risk_score": _extract_risk_score(sanitized_context if isinstance(sanitized_context, dict) else {}),
+            }
+        )
+    return payload
 
 
 def reset_system_alerts_for_tests() -> None:

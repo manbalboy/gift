@@ -216,6 +216,8 @@ class Settings:
         3,
         "DEVFLOW_WORKFLOW_NODE_MAX_RETRIES",
     )
+    workflow_control_token: str = os.getenv("DEVFLOW_WORKFLOW_CONTROL_TOKEN", "")
+    workflow_control_roles: str = os.getenv("DEVFLOW_WORKFLOW_CONTROL_ROLES", "")
     workflow_node_iteration_budget: int = _as_int(
         os.getenv("DEVFLOW_WORKFLOW_NODE_ITERATION_BUDGET"),
         8,
@@ -296,6 +298,10 @@ class Settings:
         if not parsed:
             return {self.default_workspace_id.strip().lower() or "main"}
         return parsed
+
+    @property
+    def allowed_workflow_control_roles(self) -> set[str]:
+        return _as_csv_set(self.workflow_control_roles, lower=True)
 
     @property
     def spoof_guard_ports(self) -> set[int]:

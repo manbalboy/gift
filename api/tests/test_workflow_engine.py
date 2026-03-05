@@ -193,7 +193,7 @@ def test_engine_rejects_disconnected_graph_with_validation_error():
     assert "exactly one entry node" in lowered or "disconnected node(s)" in lowered
 
 
-def test_engine_pauses_run_when_node_iteration_budget_exceeded(monkeypatch):
+def test_engine_blocks_run_when_node_iteration_budget_exceeded(monkeypatch):
     monkeypatch.setattr(settings, "human_gate_approver_token", "secret-approver")
     monkeypatch.setattr(settings, "workflow_node_iteration_budget", 2)
 
@@ -222,7 +222,7 @@ def test_engine_pauses_run_when_node_iteration_budget_exceeded(monkeypatch):
         response = client.get(f"/api/runs/{run_id}")
         assert response.status_code == 200
         body = response.json()
-        if body["status"] == "paused":
+        if body["status"] == "blocked":
             final = body
             break
 
@@ -233,10 +233,76 @@ def test_engine_pauses_run_when_node_iteration_budget_exceeded(monkeypatch):
         time.sleep(0.05)
 
     assert final is not None
-    assert final["status"] == "paused"
-    paused_nodes = [node for node in final["node_runs"] if node["status"] == "paused"]
-    assert paused_nodes
-    assert "iteration budget exceeded" in paused_nodes[0]["log"]
+    assert final["status"] == "blocked"
+    blocked_nodes = [node for node in final["node_runs"] if node["status"] == "blocked"]
+    assert blocked_nodes
+    assert "iteration budget exceeded" in blocked_nodes[0]["log"]
+    alerts = client.get("/api/logs/system-alerts?limit=20")
+    assert alerts.status_code == 200
+    budget_alert = next(
+        (item for item in alerts.json() if item["code"] == "workflow_node_iteration_budget_blocked"),
+        None,
+    )
+    assert budget_alert is not None
+    assert int(budget_alert.get("risk_score") or 0) >= 95
+
+
+def test_engine_iteration_budget_boundary_blocks_only_after_exceed(monkeypatch):
+    monkeypatch.setattr(settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(settings, "workflow_node_iteration_budget", 1)
+
+    payload = {
+        "name": "Loop Budget Boundary",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "review", "type": "human_gate", "label": "Review"}],
+            "edges": [],
+        },
+    }
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    assert created.status_code == 200
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    headers = {
+        "X-Approver-Token": "secret-approver",
+        "X-Approver-Role": "reviewer",
+        "X-Workspace-Id": "main",
+    }
+
+    first_pending = None
+    for _ in range(50):
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        body = response.json()
+        if body["status"] == "blocked":
+            raise AssertionError("budget=1 에서 첫 실행(1회) 시점에는 blocked가 되면 안 됩니다.")
+        first_pending = next((node for node in body["node_runs"] if node["status"] == "approval_pending"), None)
+        if first_pending is not None:
+            break
+        time.sleep(0.05)
+
+    assert first_pending is not None
+
+    cancelled = client.post(f"/api/approvals/{first_pending['id']}/cancel", headers=headers)
+    assert cancelled.status_code in {200, 409}
+
+    final = None
+    for _ in range(60):
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        body = response.json()
+        if body["status"] == "blocked":
+            final = body
+            break
+        time.sleep(0.05)
+
+    assert final is not None
+    assert final["status"] == "blocked"
+    blocked_nodes = [node for node in final["node_runs"] if node["status"] == "blocked"]
+    assert blocked_nodes
+    assert "iteration budget exceeded (2>1)" in blocked_nodes[0]["log"]
 
 
 def test_engine_pauses_run_when_running_node_timeout_exceeded(monkeypatch):
