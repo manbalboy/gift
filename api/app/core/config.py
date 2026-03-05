@@ -31,6 +31,12 @@ class Settings:
     github_webhook_secret: str = os.getenv("DEVFLOW_GITHUB_WEBHOOK_SECRET", "")
     generic_webhook_secret: str = os.getenv("DEVFLOW_GENERIC_WEBHOOK_SECRET", "")
     human_gate_approver_token: str = os.getenv("DEVFLOW_HUMAN_GATE_APPROVER_TOKEN", "")
+    human_gate_session_secret: str = os.getenv("DEVFLOW_HUMAN_GATE_SESSION_SECRET", "")
+    human_gate_session_ttl_seconds: int = int(os.getenv("DEVFLOW_HUMAN_GATE_SESSION_TTL_SECONDS", "1800"))
+    human_gate_session_secure_cookie: bool = _as_bool(
+        os.getenv("DEVFLOW_HUMAN_GATE_SESSION_SECURE_COOKIE"),
+        default=False,
+    )
     human_gate_approver_roles: str = os.getenv("DEVFLOW_HUMAN_GATE_APPROVER_ROLES", "reviewer,admin")
     human_gate_approver_workspaces: str = os.getenv("DEVFLOW_HUMAN_GATE_APPROVER_WORKSPACES", "main")
     default_workspace_id: str = os.getenv("DEVFLOW_DEFAULT_WORKSPACE_ID", "main")

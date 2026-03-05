@@ -13,9 +13,6 @@ import { calculateReconnectDelayMs } from './reconnect';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3101/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
-const HUMAN_GATE_APPROVER_TOKEN = import.meta.env.VITE_HUMAN_GATE_APPROVER_TOKEN ?? '';
-const HUMAN_GATE_APPROVER_ROLE = import.meta.env.VITE_HUMAN_GATE_APPROVER_ROLE ?? 'reviewer';
-const WORKSPACE_ID = import.meta.env.VITE_WORKSPACE_ID ?? 'main';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -43,6 +40,7 @@ type WebhookResponse = {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
     ...options,
   });
@@ -63,6 +61,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function requestHumanGateAction(path: string): Promise<WorkflowRun> {
+  try {
+    return await request<WorkflowRun>(path, { method: 'POST' });
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 401) {
+      throw error;
+    }
+    await request<{ ok: boolean }>('/workflows/auth/human-gate-session', { method: 'POST' });
+    return request<WorkflowRun>(path, { method: 'POST' });
+  }
+}
+
 export const api = {
   listWorkflows: () => request<Workflow[]>('/workflows'),
   createWorkflow: (payload: Omit<Workflow, 'id'>) =>
@@ -75,27 +85,9 @@ export const api = {
   getRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}`),
   getConstellation: (runId: number) => request<ConstellationData>(`/runs/${runId}/constellation`),
   approveRunNode: (runId: number, nodeId: string) =>
-    request<WorkflowRun>(`/runs/${runId}/approve?node_id=${encodeURIComponent(nodeId)}`, {
-      method: 'POST',
-      headers: HUMAN_GATE_APPROVER_TOKEN
-        ? {
-            'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN,
-            'X-Approver-Role': HUMAN_GATE_APPROVER_ROLE,
-            'X-Workspace-Id': WORKSPACE_ID,
-          }
-        : { 'X-Workspace-Id': WORKSPACE_ID },
-    }),
+    requestHumanGateAction(`/runs/${runId}/approve?node_id=${encodeURIComponent(nodeId)}`),
   rejectRunNode: (runId: number, nodeId: string) =>
-    request<WorkflowRun>(`/runs/${runId}/reject?node_id=${encodeURIComponent(nodeId)}`, {
-      method: 'POST',
-      headers: HUMAN_GATE_APPROVER_TOKEN
-        ? {
-            'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN,
-            'X-Approver-Role': HUMAN_GATE_APPROVER_ROLE,
-            'X-Workspace-Id': WORKSPACE_ID,
-          }
-        : { 'X-Workspace-Id': WORKSPACE_ID },
-    }),
+    requestHumanGateAction(`/runs/${runId}/reject?node_id=${encodeURIComponent(nodeId)}`),
   cancelRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/cancel`, { method: 'POST' }),
   getArtifactChunk: (runId: number, nodeId: string, offset = 0, limit = 16384) =>
     request<ArtifactChunkResponse>(
@@ -143,9 +135,11 @@ export const api = {
     let stream: EventSource | null = null;
     let reconnectTimer: number | null = null;
     let reconnectAttempt = 0;
+    let isConnecting = false;
 
-    const closeStream = () => {
+    const closeStream = (target?: EventSource) => {
       if (!stream) return;
+      if (target && stream !== target) return;
       stream.close();
       stream = null;
     };
@@ -157,35 +151,42 @@ export const api = {
     };
 
     const scheduleReconnect = () => {
-      if (closedByClient) return;
+      if (closedByClient || reconnectTimer !== null) return;
       handlers.onStateChange?.('reconnecting');
       reconnectAttempt += 1;
       const delayMs = calculateReconnectDelayMs(reconnectAttempt);
       handlers.onReconnectSchedule?.({ attempt: reconnectAttempt, delayMs });
-      clearReconnectTimer();
       reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
         connect();
       }, delayMs);
     };
 
     const connect = () => {
-      if (closedByClient) return;
+      if (closedByClient || isConnecting || stream) return;
+      isConnecting = true;
       clearReconnectTimer();
-      closeStream();
       handlers.onStateChange?.(reconnectAttempt > 0 ? 'reconnecting' : 'connecting');
-      stream = new EventSource(`${API_ORIGIN}/api/workflows/${workflowId}/runs/stream?max_ticks=600`);
-      stream.addEventListener('open', () => {
+      const nextStream = new EventSource(`${API_ORIGIN}/api/workflows/${workflowId}/runs/stream?max_ticks=600`, {
+        withCredentials: true,
+      });
+      stream = nextStream;
+      isConnecting = false;
+      nextStream.addEventListener('open', () => {
+        if (stream !== nextStream) return;
         reconnectAttempt = 0;
         handlers.onStateChange?.('connected');
         handlers.onReconnectSchedule?.({ attempt: 0, delayMs: 0 });
       });
-      stream.addEventListener('run_status', (event) => {
+      nextStream.addEventListener('run_status', (event) => {
+        if (stream !== nextStream) return;
         const message = event as MessageEvent<string>;
         handlers.onRunStatus(JSON.parse(message.data) as WorkflowRunsStreamEvent);
       });
-      stream.onerror = (event) => {
+      nextStream.onerror = (event) => {
+        if (stream !== nextStream) return;
         handlers.onError?.(event);
-        closeStream();
+        closeStream(nextStream);
         scheduleReconnect();
       };
     };
@@ -222,15 +223,5 @@ export const api = {
     }
     return request<HumanGateAuditListResponse>(`/runs/${runId}/human-gate-audits?${params.toString()}`);
   },
-  cancelApproval: (approvalId: number) =>
-    request<WorkflowRun>(`/approvals/${approvalId}/cancel`, {
-      method: 'POST',
-      headers: HUMAN_GATE_APPROVER_TOKEN
-        ? {
-            'X-Approver-Token': HUMAN_GATE_APPROVER_TOKEN,
-            'X-Approver-Role': HUMAN_GATE_APPROVER_ROLE,
-            'X-Workspace-Id': WORKSPACE_ID,
-          }
-        : { 'X-Workspace-Id': WORKSPACE_ID },
-    }),
+  cancelApproval: (approvalId: number) => requestHumanGateAction(`/approvals/${approvalId}/cancel`),
 };

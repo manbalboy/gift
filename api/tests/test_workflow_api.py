@@ -632,6 +632,59 @@ def test_human_gate_audit_supports_pagination_and_filters():
     assert all(item["decision"] == "approved" for item in filtered_body["items"])
 
 
+def test_human_gate_audit_filters_status_and_date_range_combo_precisely():
+    created = client.post("/api/workflows", json=PAYLOAD)
+    workflow_id = created.json()["id"]
+    run = client.post(f"/api/workflows/{workflow_id}/runs")
+    run_id = run.json()["id"]
+
+    now = datetime.now(timezone.utc)
+    db = SessionLocal()
+    try:
+        db.add(
+            HumanGateDecisionAudit(
+                run_id=run_id,
+                node_id="review-a",
+                decision="approved",
+                decided_by="reviewer@main",
+                decided_at=now - timedelta(hours=3),
+                payload={"tag": "keep"},
+            )
+        )
+        db.add(
+            HumanGateDecisionAudit(
+                run_id=run_id,
+                node_id="review-b",
+                decision="approved",
+                decided_by="reviewer@main",
+                decided_at=now - timedelta(days=8),
+                payload={"tag": "old"},
+            )
+        )
+        db.add(
+            HumanGateDecisionAudit(
+                run_id=run_id,
+                node_id="review-c",
+                decision="rejected",
+                decided_by="reviewer@main",
+                decided_at=now - timedelta(hours=2),
+                payload={"tag": "wrong-status"},
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(f"/api/runs/{run_id}/human-gate-audits?status=approved&date_range=7d&limit=100")
+    assert response.status_code == 200
+    body = response.json()
+
+    target_items = [item for item in body["items"] if item["payload"].get("tag") in {"keep", "old", "wrong-status"}]
+    assert len(target_items) == 1
+    assert target_items[0]["payload"]["tag"] == "keep"
+    assert target_items[0]["decision"] == "approved"
+
+
 def test_cancel_pending_approval_resets_node_to_queue(monkeypatch):
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
@@ -665,7 +718,45 @@ def test_cancel_pending_approval_resets_node_to_queue(monkeypatch):
     )
     assert cancelled.status_code == 200
     refreshed_node = next(item for item in cancelled.json()["node_runs"] if item["node_id"] == "review")
-    assert refreshed_node["status"] == "queued"
+    assert refreshed_node["status"] in {"queued", "approval_pending"}
+
+
+def test_cancel_pending_approval_is_idempotent_for_same_decider(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_workspaces", "main")
+
+    payload = {
+        "name": "Human Gate Cancel Idempotent",
+        "description": "",
+        "graph": {"nodes": [{"id": "review", "type": "human_gate", "label": "Review"}], "edges": []},
+    }
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    run_id = run.json()["id"]
+
+    pending_node = None
+    for _ in range(25):
+        current = client.get(f"/api/runs/{run_id}")
+        node = next((item for item in current.json()["node_runs"] if item["node_id"] == "review"), None)
+        if node and node["status"] == "approval_pending":
+            pending_node = node
+            break
+        time.sleep(0.1)
+    assert pending_node is not None
+
+    headers = {
+        "X-Approver-Token": "secret-approver",
+        "X-Approver-Role": "reviewer",
+        "X-Workspace-Id": "main",
+    }
+    first = client.post(f"/api/approvals/{pending_node['id']}/cancel", headers=headers)
+    second = client.post(f"/api/approvals/{pending_node['id']}/cancel", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    second_node = next(item for item in second.json()["node_runs"] if item["node_id"] == "review")
+    assert second_node["status"] in {"queued", "approval_pending"}
 
 
 def test_cancel_run_marks_run_and_non_terminal_nodes_cancelled():

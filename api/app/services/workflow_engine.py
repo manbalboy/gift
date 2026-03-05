@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 import threading
 import time
@@ -78,6 +79,38 @@ class WorkflowEngine:
         self._node_workers: dict[int, dict[str, threading.Thread]] = {}
         self._cancel_events: dict[int, threading.Event] = {}
         self._approval_events: dict[int, dict[str, threading.Event]] = {}
+
+    def _append_human_gate_status_artifact(
+        self,
+        *,
+        run_id: int,
+        node_id: str,
+        decision: str,
+        decided_by: str,
+        payload: dict | None,
+    ) -> str | None:
+        decided_at = datetime.now(timezone.utc).isoformat()
+        encoded_payload = json.dumps(payload or {}, ensure_ascii=False, sort_keys=True)
+        artifact_entry = "\n".join(
+            [
+                f"## {decided_at} · {decision}",
+                f"- node_id: {node_id}",
+                f"- decided_by: {decided_by}",
+                f"- payload: {encoded_payload}",
+            ]
+        )
+
+        artifact_path = self.workspace.root / "main" / "runs" / str(run_id) / "status.md"
+        existing = ""
+        if artifact_path.exists():
+            existing = artifact_path.read_text(encoding="utf-8").strip()
+        if not existing:
+            existing = "# Human Gate Status Log"
+        composed = f"{existing}\n\n{artifact_entry}\n"
+        try:
+            return self.workspace.write_artifact(run_id=run_id, node_id="status", content=composed)
+        except InvalidNodeIdError:
+            return None
 
     def recover_stuck_runs(self, db: Session, stale_after_seconds: int = DEFAULT_COMPENSATION_TIMEOUT_SECONDS) -> int:
         now = datetime.now(timezone.utc)
@@ -603,6 +636,15 @@ class WorkflowEngine:
                 payload=payload or {},
             )
             db.add(audit)
+            status_artifact_path = self._append_human_gate_status_artifact(
+                run_id=run.id,
+                node_id=node_id,
+                decision=decision,
+                decided_by=decided_by,
+                payload=payload,
+            )
+            if status_artifact_path:
+                node.artifact_path = status_artifact_path
 
             db.commit()
             db.refresh(locked_run)
@@ -667,6 +709,15 @@ class WorkflowEngine:
                 payload=payload or {},
             )
             db.add(audit)
+            status_artifact_path = self._append_human_gate_status_artifact(
+                run_id=run.id,
+                node_id=node_id,
+                decision="cancelled",
+                decided_by=cancelled_by,
+                payload=payload,
+            )
+            if status_artifact_path:
+                node.artifact_path = status_artifact_path
             db.commit()
             db.refresh(locked_run)
         except SQLAlchemyError as exc:

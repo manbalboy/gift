@@ -479,6 +479,7 @@ describe('App', () => {
 
     render(<App />);
     await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(capturedHandlers).toBeDefined());
 
     act(() => {
       capturedHandlers?.onStateChange?.('reconnecting');

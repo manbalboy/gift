@@ -1,13 +1,15 @@
 import asyncio
+import base64
 import json
 import hmac
+import hashlib
 from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 import logging
 from ipaddress import ip_address
 from threading import Lock
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -38,6 +40,7 @@ active_stream_connections_lock = Lock()
 workflow_stream_generation: dict[int, int] = {}
 reconnect_rate_limiter = create_sse_reconnect_limiter()
 logger = logging.getLogger(__name__)
+HUMAN_GATE_SESSION_COOKIE = "devflow_human_gate_session"
 
 
 def _get_stream_generation(workflow_id: int) -> int:
@@ -166,6 +169,41 @@ def validate_workflow_graph(graph: WorkflowGraph):
     return {"valid": True, "node_count": len(graph.nodes), "edge_count": len(graph.edges)}
 
 
+@router.post("/auth/human-gate-session")
+def create_human_gate_session(response: Response):
+    allowed_roles = settings.allowed_human_gate_roles
+    allowed_workspaces = settings.allowed_human_gate_workspaces
+    if not allowed_roles or not allowed_workspaces:
+        raise HTTPException(status_code=403, detail="human gate session is not available")
+
+    role = "reviewer" if "reviewer" in allowed_roles else sorted(allowed_roles)[0]
+    default_workspace = settings.default_workspace_id.strip().lower()
+    workspace_id = default_workspace if default_workspace in allowed_workspaces else sorted(allowed_workspaces)[0]
+
+    ttl_seconds = max(60, settings.human_gate_session_ttl_seconds)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+    encoded_session = _encode_human_gate_session_cookie(
+        role=role,
+        workspace_id=workspace_id,
+        expires_at=expires_at,
+    )
+    response.set_cookie(
+        key=HUMAN_GATE_SESSION_COOKIE,
+        value=encoded_session,
+        max_age=ttl_seconds,
+        httponly=True,
+        secure=settings.human_gate_session_secure_cookie,
+        samesite="lax",
+        path="/api",
+    )
+    return {
+        "ok": True,
+        "role": role,
+        "workspace_id": workspace_id,
+        "expires_at": expires_at.isoformat(),
+    }
+
+
 @router.get("/{workflow_id}", response_model=WorkflowOut)
 def get_workflow(workflow_id: int, db: Session = Depends(get_db)):
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
@@ -267,12 +305,109 @@ def _extract_approver_token(request: Request) -> str:
     return request.headers.get("X-Approver-Token", "").strip()
 
 
+def _session_signing_secret() -> str:
+    configured = settings.human_gate_session_secret.strip()
+    if configured:
+        return configured
+    fallback = settings.human_gate_approver_token.strip()
+    if fallback:
+        return fallback
+    return "devflow-human-gate-local-session-secret"
+
+
+def _encode_human_gate_session_cookie(*, role: str, workspace_id: str, expires_at: datetime) -> str:
+    payload = {
+        "role": role,
+        "workspace_id": workspace_id,
+        "exp": int(expires_at.timestamp()),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    signature = hmac.new(_session_signing_secret().encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def _decode_human_gate_session_cookie(request: Request) -> dict | None:
+    token = request.cookies.get(HUMAN_GATE_SESSION_COOKIE, "").strip()
+    if not token or "." not in token:
+        return None
+
+    encoded, provided_sig = token.rsplit(".", maxsplit=1)
+    expected_sig = hmac.new(_session_signing_secret().encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(provided_sig, expected_sig):
+        return None
+
+    missing_padding = (-len(encoded)) % 4
+    encoded_padded = f"{encoded}{'=' * missing_padding}"
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(encoded_padded.encode("ascii")).decode("utf-8"))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    role = payload.get("role")
+    workspace_id = payload.get("workspace_id")
+    exp = payload.get("exp")
+    if not isinstance(role, str) or not role.strip():
+        return None
+    if not isinstance(workspace_id, str) or not workspace_id.strip():
+        return None
+    if not isinstance(exp, int):
+        return None
+    now = int(datetime.now(timezone.utc).timestamp())
+    if exp <= now:
+        return None
+    return payload
+
+
 def _extract_approver_role(request: Request) -> str:
-    return request.headers.get("X-Approver-Role", "").strip().lower()
+    role = request.headers.get("X-Approver-Role", "").strip().lower()
+    if role:
+        return role
+    claims = _decode_human_gate_session_cookie(request)
+    if not claims:
+        return ""
+    value = claims.get("role")
+    return value.strip().lower() if isinstance(value, str) else ""
 
 
 def _extract_workspace_id(request: Request) -> str:
-    return request.headers.get("X-Workspace-Id", "").strip().lower()
+    workspace = request.headers.get("X-Workspace-Id", "").strip().lower()
+    if workspace:
+        return workspace
+    claims = _decode_human_gate_session_cookie(request)
+    if not claims:
+        return ""
+    value = claims.get("workspace_id")
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def _authorize_human_gate_request(request: Request) -> tuple[str, str]:
+    configured_token = settings.human_gate_approver_token.strip()
+    provided_token = _extract_approver_token(request)
+    session_claims = _decode_human_gate_session_cookie(request)
+
+    if not configured_token and not session_claims:
+        raise HTTPException(status_code=403, detail="human gate approver token is not configured")
+    if configured_token and not session_claims:
+        if not provided_token:
+            raise HTTPException(status_code=401, detail="missing approver token")
+        if not hmac.compare_digest(provided_token, configured_token):
+            raise HTTPException(status_code=403, detail="invalid approver token")
+
+    approver_role = _extract_approver_role(request)
+    if not approver_role:
+        raise HTTPException(status_code=403, detail="missing approver role")
+    if approver_role not in settings.allowed_human_gate_roles:
+        raise HTTPException(status_code=403, detail="insufficient approver role")
+
+    approver_workspace = _extract_workspace_id(request)
+    if not approver_workspace:
+        raise HTTPException(status_code=403, detail="missing approver workspace")
+    if approver_workspace not in settings.allowed_human_gate_workspaces:
+        raise HTTPException(status_code=403, detail="insufficient approver workspace")
+    return approver_role, approver_workspace
 
 
 def _resolve_workflow_workspace_id(workflow: WorkflowDefinition | None) -> str:
@@ -340,26 +475,7 @@ def _parse_audit_date_range_or_400(date_range: str | None) -> datetime | None:
 
 @run_router.post("/{run_id}/approve", response_model=WorkflowRunOut)
 def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
-    configured_token = settings.human_gate_approver_token.strip()
-    if not configured_token:
-        raise HTTPException(status_code=403, detail="human gate approver token is not configured")
-
-    provided_token = _extract_approver_token(request)
-    if not provided_token:
-        raise HTTPException(status_code=401, detail="missing approver token")
-    if not hmac.compare_digest(provided_token, configured_token):
-        raise HTTPException(status_code=403, detail="invalid approver token")
-    approver_role = _extract_approver_role(request)
-    if not approver_role:
-        raise HTTPException(status_code=403, detail="missing approver role")
-    if approver_role not in settings.allowed_human_gate_roles:
-        raise HTTPException(status_code=403, detail="insufficient approver role")
-    approver_workspace = _extract_workspace_id(request)
-    if not approver_workspace:
-        raise HTTPException(status_code=403, detail="missing approver workspace")
-    if approver_workspace not in settings.allowed_human_gate_workspaces:
-        raise HTTPException(status_code=403, detail="insufficient approver workspace")
-
+    approver_role, approver_workspace = _authorize_human_gate_request(request)
     decided_by = _build_decider_identity(approver_role, approver_workspace)
     run = _load_run_or_404(db, run_id)
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
@@ -420,26 +536,7 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
 
 @run_router.post("/{run_id}/reject", response_model=WorkflowRunOut)
 def reject_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
-    configured_token = settings.human_gate_approver_token.strip()
-    if not configured_token:
-        raise HTTPException(status_code=403, detail="human gate approver token is not configured")
-
-    provided_token = _extract_approver_token(request)
-    if not provided_token:
-        raise HTTPException(status_code=401, detail="missing approver token")
-    if not hmac.compare_digest(provided_token, configured_token):
-        raise HTTPException(status_code=403, detail="invalid approver token")
-    approver_role = _extract_approver_role(request)
-    if not approver_role:
-        raise HTTPException(status_code=403, detail="missing approver role")
-    if approver_role not in settings.allowed_human_gate_roles:
-        raise HTTPException(status_code=403, detail="insufficient approver role")
-    approver_workspace = _extract_workspace_id(request)
-    if not approver_workspace:
-        raise HTTPException(status_code=403, detail="missing approver workspace")
-    if approver_workspace not in settings.allowed_human_gate_workspaces:
-        raise HTTPException(status_code=403, detail="insufficient approver workspace")
-
+    approver_role, approver_workspace = _authorize_human_gate_request(request)
     decided_by = _build_decider_identity(approver_role, approver_workspace)
     run = _load_run_or_404(db, run_id)
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
@@ -535,26 +632,8 @@ def list_human_gate_audits(
 
 @approval_router.post("/{approval_id}/cancel", response_model=WorkflowRunOut)
 def cancel_pending_approval(approval_id: int, request: Request, db: Session = Depends(get_db)):
-    configured_token = settings.human_gate_approver_token.strip()
-    if not configured_token:
-        raise HTTPException(status_code=403, detail="human gate approver token is not configured")
-
-    provided_token = _extract_approver_token(request)
-    if not provided_token:
-        raise HTTPException(status_code=401, detail="missing approver token")
-    if not hmac.compare_digest(provided_token, configured_token):
-        raise HTTPException(status_code=403, detail="invalid approver token")
-
-    approver_role = _extract_approver_role(request)
-    if not approver_role:
-        raise HTTPException(status_code=403, detail="missing approver role")
-    if approver_role not in settings.allowed_human_gate_roles:
-        raise HTTPException(status_code=403, detail="insufficient approver role")
-    approver_workspace = _extract_workspace_id(request)
-    if not approver_workspace:
-        raise HTTPException(status_code=403, detail="missing approver workspace")
-    if approver_workspace not in settings.allowed_human_gate_workspaces:
-        raise HTTPException(status_code=403, detail="insufficient approver workspace")
+    approver_role, approver_workspace = _authorize_human_gate_request(request)
+    cancelled_by = _build_decider_identity(approver_role, approver_workspace)
 
     node = db.query(NodeRun).filter(NodeRun.id == approval_id).first()
     if not node:
@@ -564,13 +643,33 @@ def cancel_pending_approval(approval_id: int, request: Request, db: Session = De
     workflow_workspace = _resolve_workflow_workspace_id(workflow)
     if workflow_workspace != approver_workspace:
         raise HTTPException(status_code=403, detail="workspace does not match workflow")
+    if node.status != "approval_pending":
+        if _is_idempotent_human_gate_decision(
+            db,
+            run_id=run.id,
+            node_id=node.node_id,
+            decision="cancelled",
+            decided_by=cancelled_by,
+        ):
+            return _load_run_or_404(db, run.id)
+        raise HTTPException(status_code=409, detail="node is not approval_pending")
+    if run.status not in {"waiting", "running"}:
+        if _is_idempotent_human_gate_decision(
+            db,
+            run_id=run.id,
+            node_id=node.node_id,
+            decision="cancelled",
+            decided_by=cancelled_by,
+        ):
+            return _load_run_or_404(db, run.id)
+        raise HTTPException(status_code=409, detail="run is not waiting for approval")
 
     try:
         updated = engine.cancel_human_gate_pending(
             db,
             run=run,
             node_id=node.node_id,
-            cancelled_by=_build_decider_identity(approver_role, approver_workspace),
+            cancelled_by=cancelled_by,
             payload={
                 "approval_id": approval_id,
                 "node_id": node.node_id,
@@ -582,6 +681,14 @@ def cancel_pending_approval(approval_id: int, request: Request, db: Session = De
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
+        if str(exc) == "node is not approval_pending" and _is_idempotent_human_gate_decision(
+            db,
+            run_id=run.id,
+            node_id=node.node_id,
+            decision="cancelled",
+            decided_by=cancelled_by,
+        ):
+            return _load_run_or_404(db, run.id)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return updated
 

@@ -340,6 +340,138 @@ test('Human Gate 반려 시 run이 failed로 전이된다', async ({ page }) => 
   await expect(page.locator('.status-failed').first()).toBeVisible();
 });
 
+test('Human Gate 승인 대기 철회 시 노드가 queued로 복구된다', async ({ page }) => {
+  const waitingRun = {
+    id: 404,
+    workflow_id: 1,
+    status: 'waiting',
+    started_at: '2026-03-05T00:00:00Z',
+    updated_at: '2026-03-05T00:00:05Z',
+    node_runs: [
+      { id: 11, node_id: 'review', node_name: 'Review', status: 'approval_pending', sequence: 0, log: '승인 대기 중', artifact_path: null, updated_at: '2026-03-05T00:00:03Z' },
+      { id: 12, node_id: 'pr', node_name: 'PR', status: 'queued', sequence: 1, log: '대기 중', artifact_path: null, updated_at: '2026-03-05T00:00:03Z' },
+    ],
+  };
+  const queuedRun = {
+    ...waitingRun,
+    status: 'running',
+    updated_at: '2026-03-05T00:00:10Z',
+    node_runs: [
+      { ...waitingRun.node_runs[0], status: 'queued', log: '[human_gate] approval cancelled\n승인 대기 중', updated_at: '2026-03-05T00:00:09Z' },
+      waitingRun.node_runs[1],
+    ],
+  };
+
+  let cancelled = false;
+
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 1,
+          name: 'Human Gate Flow',
+          description: 'cancel flow',
+          graph: {
+            nodes: [
+              { id: 'review', type: 'human_gate', label: 'Review' },
+              { id: 'pr', type: 'task', label: 'PR' },
+            ],
+            edges: [{ id: 'e1', source: 'review', target: 'pr' }],
+          },
+        },
+      ]),
+    });
+  });
+  await page.route('**/api/workflows/1/runs', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(waitingRun) });
+  });
+  await page.route('**/api/workflows/1/runs/stream**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'event: run_status\ndata: {"workflow_id":1,"runs":[]}\n\n',
+    });
+  });
+  await page.route('**/api/runs/404/constellation', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        run_id: 404,
+        status: cancelled ? 'running' : 'waiting',
+        nodes: [
+          { id: 'review', label: 'Review', status: cancelled ? 'queued' : 'approval_pending', sequence: 0 },
+          { id: 'pr', label: 'PR', status: 'queued', sequence: 1 },
+        ],
+        links: [{ source: 'review', target: 'pr' }],
+      }),
+    });
+  });
+  await page.route('**/api/approvals/11/cancel', async (route) => {
+    cancelled = true;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(queuedRun),
+    });
+  });
+  await page.route('**/api/runs/404', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(cancelled ? queuedRun : waitingRun),
+    });
+  });
+  await page.route('**/api/runs/404/human-gate-audits**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        cancelled
+          ? {
+              items: [
+                {
+                  id: 10,
+                  run_id: 404,
+                  node_id: 'review',
+                  decision: 'cancelled',
+                  decided_by: 'reviewer@main',
+                  decided_at: '2026-03-05T00:00:09Z',
+                  payload: { workspace_id: 'main' },
+                },
+              ],
+              total_count: 1,
+              limit: 10,
+              offset: 0,
+            }
+          : { items: [], total_count: 0, limit: 10, offset: 0 },
+      ),
+    });
+  });
+  await page.route('**/api/webhooks/blocked-events**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Run 시작' }).click();
+  await page.getByRole('button', { name: '이력 보기' }).click();
+  await expect(page.getByRole('button', { name: '승인 대기 철회' })).toBeEnabled();
+  await page.getByRole('button', { name: '승인 대기 철회' }).click();
+
+  await expect(page.locator('.status-queued').first()).toBeVisible();
+  await expect(page.getByText('cancelled · reviewer@main').first()).toBeVisible();
+});
+
 test('Human Gate 권한이 없으면 403 안내 모달이 표시된다', async ({ page }) => {
   const waitingRun = {
     id: 303,
