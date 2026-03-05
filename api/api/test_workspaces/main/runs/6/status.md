@@ -9,3 +9,13 @@
 - node_id: review
 - decided_by: admin@main
 - payload: {"workspace_id": "main", "memo": "retry"}
+
+## 2026-03-05T04:30:59.669146+00:00 · cancelled
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"approval_id": 17, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+
+## 2026-03-05T04:30:59.764758+00:00 · cancelled
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"approval_id": 17, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
