@@ -1,35 +1,24 @@
 # REVIEW
 
-본 문서는 `SPEC.md` 및 `PLAN.md`에 정의된 요구사항과 현재 저장소에 구현된 상태를 비교·분석한 리뷰 결과입니다.
-
 ## Functional bugs
-
-- **웹훅 시크릿의 프론트엔드 노출 (Critical)**: `web/src/services/api.ts` 코드 내에 `import.meta.env.VITE_WEBHOOK_SECRET`를 참조하는 부분이 존재합니다. Vite에서 `VITE_` 접두사가 붙은 환경 변수는 빌드 시 클라이언트 코드에 그대로 포함되므로, 웹훅 검증용 시크릿 키가 브라우저에 평문으로 노출되는 심각한 결함이 있습니다. 인증 토큰 및 시크릿은 백엔드에서만 관리되어야 합니다.
-- **SSE 백그라운드 태스크 정리**: `api/app/api/workflows.py`에서 `asyncio.CancelledError`를 통한 SSE 제너레이터 안전 종료는 구현되었으나, 클라이언트 연결이 끊겼을 때 워크플로우를 관장하는 `workflow_engine` 내부의 워커 스레드나 비동기 태스크가 완벽히 정리(kill)되는지 엣지 케이스 확인이 필요합니다.
+- 휴먼 게이트 승인/반려(Approve/Reject) API에는 멱등성(Idempotency) 로직이 적용되어 동일 요청 시 중복 처리 없이 정상 응답(`200 OK`)을 반환하나, **휴먼 게이트 승인 대기 철회(Cancel) API**에는 멱등성이 누락되어 있습니다. 동일한 승인 대기 건에 대해 짧은 간격으로 철회 요청을 2회 이상 호출할 경우, 두 번째 요청에서는 노드 상태가 이미 `approval_pending`이 아니라는 이유로 `409 Conflict` 오류를 반환하는 버그가 있습니다.
 
 ## Security concerns
-
-- **정적 휴먼 게이트 승인 토큰**: 현재 휴먼 게이트 API(승인/반려)가 `settings.human_gate_approver_token`이라는 단일 정적 토큰에 의존하고 있습니다. 환경 변수가 탈취될 경우, 전체 워크스페이스의 승인 권한이 넘어갈 위험이 있습니다. 토큰 로테이션 기능이나 사용자 세션 기반의 JWT 인증 체계로의 전환을 고려해야 합니다.
-- **CORS 정책 검증 강화**: `SPEC.md`에 명시된 CORS 허용 도메인(`*.manbalboy.com` 및 `localhost`)이 FastAPI의 CORS 미들웨어에 엄격하게 적용되었는지 확인해야 합니다. 와일드카드(`*`)가 포함되어 있다면 보안 취약점이 될 수 있습니다.
+- 클라이언트 빌드 산출물에서 `VITE_WEBHOOK_SECRET` 노출 문제는 정상적으로 제거되었으나, API 요청 헤더에 삽입하기 위한 `VITE_HUMAN_GATE_APPROVER_TOKEN` 환경변수가 프론트엔드 코드(`web/src/services/api.ts`) 내부에 여전히 `import.meta.env` 형태로 하드코딩되어 주입되고 있습니다. 비록 MVP 범위 내에서 정적 토큰을 사용한다고 하더라도, 인가(Authorization)를 위한 비밀 토큰 값이 브라우저 측 번들에 노출되는 것은 중대한 보안 취약점이므로 서버 사이드 세션 혹은 다른 인증 토큰 발급 방식으로 구조를 변경해야 합니다.
 
 ## Missing tests / weak test coverage
-
-- **동시성 트랜잭션 Lock 강도 테스트**: `_handle_human_gate_decision`에 애플리케이션 레벨의 Lock(`lock_provider`)이 적용되어 있으나, 다수의 DB 트랜잭션이 물리적으로 동시에 업데이트를 시도할 때(Row-level Lock 및 데드락 방지)를 가정한 고부하(Stress) 통합 테스트가 부족합니다.
-- **네트워크 단절 E2E 테스트**: `Playwright` 테스트(`human-gate.spec.ts`)에서 모달 및 기능 동작은 검증하고 있으나, 브라우저의 오프라인 모드 전환 후 복구 시 Jitter가 적용된 지수적 백오프 로직에 따라 재연결 배너가 올바르게 렌더링되는지 네트워크 상태 제어 테스트가 추가되어야 합니다.
-- **Audit Log 조회 엣지 테스트**: 감사 로그(Audit Log)가 무한정 쌓였을 경우의 Pagination 처리나 대량 데이터 응답 시의 성능 저하를 검증하는 테스트 커버리지가 필요합니다.
+- **프론트엔드 E2E 테스트 누락**: 휴먼 게이트 및 네트워크 오프라인 재연결에 대한 E2E 테스트는 Playwright에 작성되었으나, 새롭게 UI에 추가된 **휴먼 게이트 승인 대기 철회(Cancel) 기능**에 대한 E2E 테스트가 누락되어 있습니다. 사용자가 버튼을 클릭하여 성공적으로 철회가 이루어지고 UI가 다시 대기 상태로 복구되는지 검증하는 시나리오가 필요합니다.
+- **백엔드 단위 테스트 부족**: 새롭게 도입된 Audit Log API(`GET /api/runs/{run_id}/human-gate-audits`)에 적용된 상태 필터(`status`) 및 날짜 필터(`date_range`) 쿼리 파라미터 조합을 검증하는 백엔드 단위 테스트(Unit test)가 충분하지 않습니다.
 
 ## Edge cases
-
-- **멱등성(Idempotency) 처리**: 휴먼 게이트 승인 API 호출 시, 네트워크 지연으로 인해 클라이언트가 동일한 승인 요청을 여러 번 재시도할 수 있습니다. 현재 로직은 상태가 `approval_pending`이 아닐 경우 `409 Conflict`를 반환하는데, 이미 성공적으로 승인된 동일 주체의 중복 요청일 경우 오류 대신 멱등하게 성공(200) 처리하는 편이 클라이언트 UX 측면에서 더 안정적일 수 있습니다.
-- **단일 노드 워크플로우 (No Edges)**: 연결된 엣지가 전혀 없는 단일 노드로만 구성된 DAG 실행 시, 노드 1개 실행 직후 워크플로우 상태가 즉시 `done`으로 안전하게 전이되는지 추가 확인이 필요합니다.
-- **서버 재기동 시 초기 로딩 집중(Thundering Herd)**: SSE 재연결에 Jitter 백오프를 적용해 Thundering Herd를 완화했지만, 백엔드 서버가 다운되었다가 복구되는 시점에 다수의 클라이언트가 동시에 새로고침을 누르거나 초기 접속을 시도할 때 발생하는 부하에 대한 대비(서버단 Rate Limiting 등)도 고려해야 합니다.
+- 네트워크 단절 및 재연결 상황(Offline/Online)에서 브라우저가 짧은 시간 내에 여러 번 상태를 전환(Flapping)할 경우, `web/src/services/api.ts` 내부의 SSE 스트림 자동 재연결(`subscribeWorkflowRuns`) 로직의 타이머가 꼬이면서 불필요한 백엔드 다중 연결(Multiple connections)을 시도할 가능성이 존재합니다.
+- 로컬 환경 재현 시 충돌 방지를 위해 3100번대 포트(예: 프론트엔드 `http://localhost:3100`, API `http://localhost:3101`)를 사용하도록 설계되었으나, 일부 에러 메시지나 문서 가이드에 과거 포트나 하드코딩된 오리진이 남아있을 경우 CORS 오류나 타임아웃 엣지 케이스를 유발할 수 있습니다.
 
 ---
 
-## TODO Checklist
-
-- [ ] `web/src/services/api.ts` 등 프론트엔드 코드에서 `VITE_WEBHOOK_SECRET` 참조를 제거하고, 클라이언트 노출 시크릿 보안 취약점 해결.
-- [ ] 휴먼 게이트 승인/반려 처리 시, 이미 처리된 본인의 중복 요청에 대해 `409` 예외 대신 멱등성(Idempotency)을 보장하여 정상 응답하도록 API 로직 개선.
-- [ ] 프론트엔드 Playwright E2E 테스트에 `browserContext.setOffline(true/false)`를 활용한 네트워크 단절 및 재연결 배너 UI 동작 테스트 케이스 추가.
-- [ ] API 반환 시 대량의 Audit Log 데이터 처리를 위한 Pagination 로직 적용 및 관련 백엔드 단위 테스트 보강.
-- [ ] `workflow_engine` 내부에서 단일 노드 워크플로우(엣지 없음) 실행 시 완료 후 즉각적인 `done` 종료 처리가 이루어지는지 점검 및 보완.
+## TODO
+- [ ] 프론트엔드 코드(`web/src/services/api.ts`) 내부의 `VITE_HUMAN_GATE_APPROVER_TOKEN` 하드코딩 의존성을 제거하고 보안을 강화할 수 있는 안전한 인증/인가 체계로 수정.
+- [ ] 백엔드 `cancel_pending_approval` API (`POST /api/approvals/{approval_id}/cancel`)에 중복 호출 처리를 위한 멱등성(Idempotency) 로직 추가 (`409` 예외 발생 대신 상태 체크 후 `200 OK` 응답).
+- [ ] 휴먼 게이트 승인 대기 철회(Cancel) 버튼 클릭 및 API 호출 흐름에 대한 Playwright 기반 프론트엔드 E2E 테스트 케이스 보강.
+- [ ] Audit Log API의 `status` 및 `date_range` 필터링 쿼리 파라미터가 정확하게 동작하는지 검증하는 백엔드 `pytest` 케이스 추가.
+- [ ] 재연결 빈도가 짧을 때 SSE 스트림(`EventSource`)의 타이머 해제 및 중복 생성 방지가 안정적으로 작동하는지 프론트엔드 로직 더블 체크.
