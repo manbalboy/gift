@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class LoopStatusOut(BaseModel):
-    mode: Literal["idle", "running", "paused", "stopped"]
+    mode: Literal["idle", "running", "paused", "stopped", "safe_mode"]
     current_stage: str | None = None
     cycle_count: int
     emitted_alert_count: int

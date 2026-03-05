@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Protocol
@@ -24,6 +25,11 @@ from app.services.workspace import InvalidNodeIdError, WorkspaceArtifactIOError,
 DEFAULT_COMPENSATION_TIMEOUT_SECONDS = 120
 DEFAULT_LINEAR_V1_NODE_IDS = ("idea", "plan", "code", "test", "pr")
 logger = logging.getLogger(__name__)
+_WHITESPACE_NORMALIZER = re.compile(r"\s+")
+
+
+def _normalize_semantic_text(content: str) -> str:
+    return _WHITESPACE_NORMALIZER.sub(" ", content).strip()
 
 
 def _as_utc(dt: datetime) -> datetime:
@@ -639,12 +645,28 @@ class WorkflowEngine:
                 node.log = "\n".join(part for part in logs if part).strip()
                 if node.status == "done":
                     self._record_node_failure_streak(workflow_id, node.node_id, failed=False)
+                    artifact_content = (
+                        "# Artifact\n\n"
+                        f"- run_id: {run_id}\n"
+                        f"- node: {node.node_name}\n"
+                        "- result: success\n"
+                    )
                     try:
-                        node.artifact_path = self.workspace.write_artifact(
-                            run_id,
-                            node.node_id,
-                            f"# Artifact\n\n- run_id: {run_id}\n- node: {node.node_name}\n- result: success\n",
-                        )
+                        artifact_path = self.workspace.root / "main" / "runs" / str(run_id) / f"{node.node_id}.md"
+                        has_semantic_diff = True
+                        try:
+                            if artifact_path.exists():
+                                existing = artifact_path.read_text(encoding="utf-8")
+                                has_semantic_diff = (
+                                    _normalize_semantic_text(existing) != _normalize_semantic_text(artifact_content)
+                                )
+                        except OSError:
+                            has_semantic_diff = True
+                        if has_semantic_diff:
+                            node.artifact_path = self.workspace.write_artifact(run_id, node.node_id, artifact_content)
+                        else:
+                            node.artifact_path = str(artifact_path)
+                            node.log = f"{node.log}\n[dedup] semantic duplicate change skipped".strip()
                         self._upsert_artifact_record(
                             db,
                             run_id=run_id,

@@ -91,6 +91,16 @@ def _stream_events_after(workflow_id: int, last_event_id: int) -> list[tuple[int
         return [(event_id, payload) for event_id, payload, _size in buffered if event_id > last_event_id]
 
 
+def _stream_buffer_metrics() -> dict[str, int]:
+    with active_stream_connections_lock:
+        total_items = 0
+        total_bytes = 0
+        for buffered in workflow_stream_event_buffer.values():
+            total_items += len(buffered)
+            total_bytes += sum(item[2] for item in buffered)
+    return {"total_items": total_items, "total_bytes": total_bytes}
+
+
 def _extract_client_key(request: Request) -> str:
     client_host = request.client.host if request.client and request.client.host else "unknown"
     forwarded = request.headers.get("x-forwarded-for", "").strip()
@@ -287,7 +297,7 @@ def update_workflow(workflow_id: int, payload: WorkflowUpdate, request: Request,
 
 @router.post("/{workflow_id}/runs", response_model=WorkflowRunOut)
 def create_workflow_run(workflow_id: int, request: Request, db: Session = Depends(get_db)):
-    _authorize_workflow_control_request(request)
+    _authorize_workflow_control_action(request, "run:start")
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="workflow not found")
@@ -348,7 +358,14 @@ def stream_workflow_runs(
 def get_stream_metrics():
     with active_stream_connections_lock:
         active = active_stream_connections
-    return {"active_stream_connections": active}
+    buffer_metrics = _stream_buffer_metrics()
+    return {
+        "active_stream_connections": active,
+        "buffered_event_items": buffer_metrics["total_items"],
+        "buffered_event_bytes": buffer_metrics["total_bytes"],
+        "buffered_event_max_items": max(1, int(settings.sse_stream_event_buffer_max_items or MAX_STREAM_EVENT_BUFFER_SIZE)),
+        "buffered_event_max_bytes": max(1, int(settings.sse_stream_event_buffer_max_bytes or 262_144)),
+    }
 
 
 @run_router.get("/{run_id}", response_model=WorkflowRunOut)
@@ -406,6 +423,23 @@ def _authorize_workflow_control_request(request: Request) -> str:
             raise HTTPException(status_code=403, detail="insufficient workflow control role")
 
     return provided_role or "system"
+
+
+def _authorize_workflow_control_action(request: Request, permission: str) -> str:
+    authorized_role = _authorize_workflow_control_request(request)
+    permissions_by_role = settings.workflow_control_permissions_by_role
+    if not permissions_by_role:
+        return authorized_role
+
+    role = authorized_role.strip().lower()
+    required = permission.strip().lower()
+    if not role or role == "system":
+        raise HTTPException(status_code=403, detail="missing workflow control role")
+
+    granted = permissions_by_role.get(role, set())
+    if "*" in granted or required in granted:
+        return role
+    raise HTTPException(status_code=403, detail="insufficient workflow control permission")
 
 
 def _session_signing_secret() -> str:
@@ -873,7 +907,7 @@ def cancel_pending_approval(approval_id: int, request: Request, db: Session = De
 
 @run_router.post("/{run_id}/cancel", response_model=WorkflowRunOut)
 def cancel_run(run_id: int, request: Request, db: Session = Depends(get_db)):
-    _authorize_workflow_control_request(request)
+    _authorize_workflow_control_action(request, "run:cancel")
     run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
@@ -890,7 +924,7 @@ def cancel_run(run_id: int, request: Request, db: Session = Depends(get_db)):
 
 @run_router.post("/{run_id}/resume", response_model=WorkflowRunOut)
 def resume_run(run_id: int, request: Request, db: Session = Depends(get_db)):
-    _authorize_workflow_control_request(request)
+    _authorize_workflow_control_action(request, "run:resume")
     run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="run not found")

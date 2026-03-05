@@ -311,3 +311,47 @@ def test_workflow_control_rbac_map_parser(monkeypatch):
     assert parsed["admin"] == {"*"}
     assert parsed["operator"] == {"loop:start", "loop:pause", "loop:resume"}
     assert parsed["reviewer"] == {"loop:inject"}
+
+
+def test_run_control_rbac_map_enforces_action_permissions(monkeypatch):
+    monkeypatch.setattr(settings, "workflow_control_roles", "operator,admin")
+    monkeypatch.setattr(
+        settings,
+        "workflow_control_rbac_map",
+        "operator:run:start,admin:*",
+    )
+
+    create_workflow_response = client.post(
+        "/api/workflows",
+        json={
+            "name": "RBAC Run Control",
+            "description": "",
+            "graph": {
+                "nodes": [{"id": "idea", "label": "Idea"}],
+                "edges": [],
+            },
+        },
+    )
+    assert create_workflow_response.status_code == 200
+    workflow_id = create_workflow_response.json()["id"]
+
+    started = client.post(
+        f"/api/workflows/{workflow_id}/runs",
+        headers={"X-Workflow-Control-Role": "operator"},
+    )
+    assert started.status_code == 200
+    run_id = started.json()["id"]
+
+    denied_cancel = client.post(
+        f"/api/runs/{run_id}/cancel",
+        headers={"X-Workflow-Control-Role": "operator"},
+    )
+    assert denied_cancel.status_code == 403
+    assert denied_cancel.json()["detail"] == "insufficient workflow control permission"
+
+    allowed_cancel = client.post(
+        f"/api/runs/{run_id}/cancel",
+        headers={"X-Workflow-Control-Role": "admin"},
+    )
+    assert allowed_cancel.status_code in {200, 409}
+    assert allowed_cancel.status_code != 403

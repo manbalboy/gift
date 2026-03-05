@@ -919,6 +919,12 @@ select {
   border-color: color-mix(in srgb, var(--color-status-warning) 58%, var(--color-border-default));
 }
 
+.loop-mode-safe_mode {
+  color: var(--color-status-failed);
+  border-color: color-mix(in srgb, var(--color-status-failed) 58%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-status-failed) 16%, transparent);
+}
+
 .loop-mode-stopped {
   color: var(--color-status-failed);
   border-color: color-mix(in srgb, var(--color-status-failed) 58%, var(--color-border-default));

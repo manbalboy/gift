@@ -61,6 +61,7 @@ class LoopSimulator:
         self._emitted_alert_count = 0
         self._pending_instructions: deque[str] = deque()
         self._quality_score: int | None = None
+        self._safe_mode_reason: str | None = None
         self._started_at: datetime | None = None
         self._updated_at = datetime.now(timezone.utc)
         self._last_lock_extend_at = 0.0
@@ -96,6 +97,7 @@ class LoopSimulator:
             self._emitted_alert_count = 0
             self._pending_instructions.clear()
             self._quality_score = 62
+            self._safe_mode_reason = None
             self._started_at = datetime.now(timezone.utc)
             self._touch_locked()
             self._emit_lifecycle_alert_locked(
@@ -115,8 +117,9 @@ class LoopSimulator:
     def _resume_locked(self) -> dict[str, object]:
         if self._mode == "running":
             return self._snapshot_locked().to_payload()
-        if self._mode == "paused" and self._thread and self._thread.is_alive():
+        if self._mode in {"paused", "safe_mode"} and self._thread and self._thread.is_alive():
             self._mode = "running"
+            self._safe_mode_reason = None
             self._touch_locked()
             self._emit_lifecycle_alert_locked(
                 code="LOOP_RESUME",
@@ -194,6 +197,7 @@ class LoopSimulator:
             self._emitted_alert_count = 0
             self._pending_instructions.clear()
             self._quality_score = None
+            self._safe_mode_reason = None
             self._started_at = None
             self._release_execution_lock_locked()
             self._touch_locked()
@@ -232,12 +236,14 @@ class LoopSimulator:
 
     def _is_paused(self) -> bool:
         with self._lock:
-            return self._mode == "paused"
+            return self._mode in {"paused", "safe_mode"}
 
     def _quality_for_stage(self, stage: str, stage_idx: int) -> int:
         with self._lock:
             cycle = self._cycle_count
         base = 64 + ((cycle * 7 + stage_idx * 6) % 31)
+        if stage == "evaluator" and cycle > 0 and cycle % 9 == 0:
+            return max(0, min(100, 24 + (cycle % 6)))
         if stage == "evaluator":
             return max(0, min(100, base - 4))
         if stage == "executor":
@@ -248,13 +254,36 @@ class LoopSimulator:
         level = "warning" if stage == "evaluator" and quality < 72 else "info"
         stage_label = _LOOP_STAGE_LABELS.get(stage, stage)
 
+        previous_quality: int | None = None
         with self._lock:
             if self._mode != "running":
                 return
             cycle = self._cycle_count + 1
+            previous_quality = self._quality_score
             self._current_stage = stage
             self._quality_score = quality
             self._touch_locked()
+
+        safe_mode_min_quality = max(0, min(100, int(settings.loop_safe_mode_min_quality)))
+        safe_mode_drop_threshold = max(1, int(settings.loop_safe_mode_drop_threshold))
+        quality_drop = (
+            previous_quality - quality
+            if isinstance(previous_quality, int)
+            else 0
+        )
+        should_enter_safe_mode = (
+            stage == "evaluator"
+            and isinstance(previous_quality, int)
+            and quality <= safe_mode_min_quality
+            and quality_drop >= safe_mode_drop_threshold
+        )
+        if should_enter_safe_mode:
+            self._enter_safe_mode(
+                quality=quality,
+                previous_quality=previous_quality,
+                cycle=cycle,
+            )
+            return
 
         record_system_alert(
             level=level,
@@ -277,6 +306,23 @@ class LoopSimulator:
         with self._lock:
             self._emitted_alert_count += 1
             self._touch_locked()
+
+    def _enter_safe_mode(self, *, quality: int, previous_quality: int, cycle: int) -> None:
+        reason = (
+            f"quality score 급락 감지: prev={previous_quality}, current={quality}, "
+            f"drop={previous_quality - quality}, cycle={cycle}"
+        )
+        with self._lock:
+            if self._mode != "running":
+                return
+            self._mode = "safe_mode"
+            self._safe_mode_reason = reason
+            self._touch_locked()
+            self._emit_lifecycle_alert_locked(
+                code="LOOP_SAFE_MODE",
+                message=f"Safe Mode 전환: {reason}",
+                level="error",
+            )
 
     def _drain_next_instruction(self) -> None:
         with self._lock:

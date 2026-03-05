@@ -59,3 +59,14 @@ def test_sse_reconnect_local_fallback_uses_conservative_limit(monkeypatch):
 
     assert sum(1 for item in allowed if item) == 5
     assert calls["count"] == 1
+
+
+def test_stream_metrics_exposes_buffer_caps():
+    response = client.get("/api/runs/stream-metrics/active-connections")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_stream_connections"] >= 0
+    assert payload["buffered_event_items"] >= 0
+    assert payload["buffered_event_bytes"] >= 0
+    assert payload["buffered_event_max_items"] >= 1
+    assert payload["buffered_event_max_bytes"] >= 1

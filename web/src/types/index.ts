@@ -146,7 +146,7 @@ export type SystemAlertPageResponse = {
 };
 
 export type LoopEngineStatus = {
-  mode: 'idle' | 'running' | 'paused' | 'stopped';
+  mode: 'idle' | 'running' | 'paused' | 'stopped' | 'safe_mode';
   current_stage: string | null;
   cycle_count: number;
   emitted_alert_count: number;

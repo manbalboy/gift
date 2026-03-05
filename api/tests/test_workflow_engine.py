@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.schemas.agent import AgentTaskRequest, AgentTaskResult
 from app.services.agent_runner import AgentRunner, DockerRunner
 from app.services.lock_provider import LockProviderFactory, RedisLockProvider
+from app.services.workflow_engine import _normalize_semantic_text
 
 from .conftest import client
 from .test_workflow_api import PAYLOAD
@@ -39,6 +40,12 @@ def test_run_status_progression():
     constellation = client.get(f"/api/runs/{run_id}/constellation")
     assert constellation.status_code == 200
     assert len(constellation.json()["nodes"]) > 0
+
+
+def test_duplicate_change_detection_normalizes_whitespace_only_diff():
+    before = "# Title\n\n- item: one\n- item: two\n"
+    after = " #   Title \n - item: one \n\n - item:   two   "
+    assert _normalize_semantic_text(before) == _normalize_semantic_text(after)
 
 
 def test_single_node_workflow_transitions_to_done_without_edges():

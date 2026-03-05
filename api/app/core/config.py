@@ -259,6 +259,16 @@ class Settings:
         2.0,
         "DEVFLOW_WORKFLOW_CANCEL_JOIN_TIMEOUT_SECONDS",
     )
+    loop_safe_mode_min_quality: int = _as_int(
+        os.getenv("DEVFLOW_LOOP_SAFE_MODE_MIN_QUALITY"),
+        35,
+        "DEVFLOW_LOOP_SAFE_MODE_MIN_QUALITY",
+    )
+    loop_safe_mode_drop_threshold: int = _as_int(
+        os.getenv("DEVFLOW_LOOP_SAFE_MODE_DROP_THRESHOLD"),
+        25,
+        "DEVFLOW_LOOP_SAFE_MODE_DROP_THRESHOLD",
+    )
     workflow_human_gate_stale_hours: int = _as_int(
         os.getenv("DEVFLOW_WORKFLOW_HUMAN_GATE_STALE_HOURS"),
         24,

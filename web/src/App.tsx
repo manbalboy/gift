@@ -402,6 +402,7 @@ export default function App() {
   const loopModeLabel = useMemo(() => {
     if (loopEngineStatus?.mode === 'running') return '실행 중';
     if (loopEngineStatus?.mode === 'paused') return '일시정지';
+    if (loopEngineStatus?.mode === 'safe_mode') return '안전 모드';
     if (loopEngineStatus?.mode === 'stopped') return '중지됨';
     return '대기 중';
   }, [loopEngineStatus?.mode]);

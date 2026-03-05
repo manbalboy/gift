@@ -207,3 +207,30 @@ def test_loop_engine_rbac_map_denies_missing_permission(monkeypatch):
 
     allowed = client.post('/api/loop/inject', headers=_loop_control_headers(role='admin'), json={'instruction': 'x'})
     assert allowed.status_code == 200
+
+
+def test_loop_engine_enters_safe_mode_on_quality_score_freefall(monkeypatch):
+    monkeypatch.setattr(loop_engine_api.settings, 'loop_safe_mode_min_quality', 35)
+    monkeypatch.setattr(loop_engine_api.settings, 'loop_safe_mode_drop_threshold', 20)
+
+    def fake_quality(stage: str, _stage_idx: int) -> int:
+        if stage == 'analyzer':
+            return 90
+        if stage == 'evaluator':
+            return 20
+        return 86
+
+    monkeypatch.setattr(loop_engine_api.loop_simulator, '_quality_for_stage', fake_quality)
+
+    started = client.post('/api/loop/start')
+    assert started.status_code == 200
+
+    assert _wait_until(
+        lambda: client.get('/api/loop/status').json().get('mode') == 'safe_mode',
+        timeout=3.0,
+    )
+
+    resumed = client.post('/api/loop/resume')
+    assert resumed.status_code == 200
+    assert resumed.json()['mode'] == 'running'
+    client.post('/api/loop/stop')
