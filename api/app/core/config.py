@@ -57,6 +57,7 @@ class Settings:
     webhook_rate_limit_window_seconds: float = float(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_WINDOW_SECONDS", "5"))
     webhook_trusted_proxy_ips: str = os.getenv("DEVFLOW_WEBHOOK_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
     workflow_node_max_retries: int = int(os.getenv("DEVFLOW_WORKFLOW_NODE_MAX_RETRIES", "3"))
+    workflow_node_iteration_budget: int = int(os.getenv("DEVFLOW_WORKFLOW_NODE_ITERATION_BUDGET", "8"))
     workflow_retry_backoff_seconds: float = float(os.getenv("DEVFLOW_WORKFLOW_RETRY_BACKOFF_SECONDS", "0.25"))
     workflow_worker_poll_interval_seconds: float = float(
         os.getenv("DEVFLOW_WORKFLOW_WORKER_POLL_INTERVAL_SECONDS", "0.1")
@@ -71,8 +72,8 @@ class Settings:
     preview_viewer_token_secret: str = os.getenv("DEVFLOW_PREVIEW_VIEWER_TOKEN_SECRET", "")
     preview_viewer_issue_secret: str = os.getenv("DEVFLOW_PREVIEW_VIEWER_ISSUE_SECRET", "")
     preview_viewer_token_ttl_seconds: int = int(os.getenv("DEVFLOW_PREVIEW_VIEWER_TOKEN_TTL_SECONDS", "180"))
-    preview_protected_port_start: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_START", "7000"))
-    preview_protected_port_end: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_END", "7099"))
+    preview_protected_port_start: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_START", "3100"))
+    preview_protected_port_end: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_END", "3199"))
 
     @property
     def database_url(self) -> str:

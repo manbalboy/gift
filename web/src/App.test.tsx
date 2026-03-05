@@ -447,6 +447,46 @@ describe('App', () => {
     );
   });
 
+  test('반려 사유가 개행으로 끝날 때 프리셋 병합은 단일 개행을 유지한다', async () => {
+    (api.startRun as jest.Mock).mockResolvedValue({
+      id: 304,
+      workflow_id: 1,
+      status: 'waiting',
+      started_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:05Z',
+      node_runs: [
+        {
+          id: 1,
+          node_id: 'review',
+          node_name: 'Review',
+          status: 'approval_pending',
+          sequence: 0,
+          log: '승인 대기 중',
+          artifact_path: null,
+          updated_at: '2026-03-05T00:00:05Z',
+        },
+      ],
+    });
+    (api.getConstellation as jest.Mock).mockResolvedValue({
+      run_id: 304,
+      status: 'waiting',
+      nodes: [{ id: 'review', label: 'Review', status: 'approval_pending', sequence: 0 }],
+      links: [],
+    });
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Run 시작' }));
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard-reject' }));
+    const textarea = await screen.findByRole('textbox', { name: '반려 사유' });
+    fireEvent.change(textarea, { target: { value: '선행 검토 의견\n' } });
+    fireEvent.click(screen.getByRole('button', { name: '프리셋 2' }));
+
+    expect(textarea).toHaveValue('선행 검토 의견\n핵심 오류가 재현되어 수정 후 재검토가 필요합니다.');
+  });
+
   test('감사 로그 이력 보기 모달을 열어 Human Gate 이력을 확인한다', async () => {
     (api.startRun as jest.Mock).mockResolvedValue({
       id: 302,

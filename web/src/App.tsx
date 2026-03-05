@@ -409,11 +409,12 @@ export default function App() {
     setRejectReason((current) => {
       const normalizedPreset = preset.trim();
       if (!normalizedPreset) return current;
+      const hadTrailingNewline = /\r?\n\s*$/.test(current);
       const body = current.trimEnd();
       if (!body) return normalizedPreset;
       const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       if (lines.includes(normalizedPreset)) return body;
-      const separator = /\n$/.test(body) ? '\n' : '\n\n';
+      const separator = hadTrailingNewline ? '\n' : '\n\n';
       return `${body}${separator}${normalizedPreset}`;
     });
   };
@@ -626,6 +627,9 @@ export default function App() {
             onValidate={api.validateWorkflowGraph}
             mobileViewOnly={isMobilePortrait}
             nodeStatuses={nodeStatuses}
+            onClientValidationError={(message) => {
+              enqueueToast('error', message);
+            }}
             onNodeFallback={({ count, signature, nodeIds }) => {
               const action = isMobilePortrait
                 ? undefined

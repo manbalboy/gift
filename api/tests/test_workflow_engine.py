@@ -3,7 +3,6 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
-from threading import Lock
 
 from sqlalchemy.exc import OperationalError
 
@@ -139,9 +138,9 @@ def test_engine_uses_edges_for_transition_even_when_sequence_differs():
     assert execution_order.index("code") < execution_order.index("plan")
 
 
-def test_engine_runs_independent_nodes_without_forced_sequential_fallback(monkeypatch):
+def test_engine_rejects_disconnected_graph_with_validation_error():
     payload = {
-        "name": "Independent Nodes",
+        "name": "Disconnected Nodes",
         "description": "",
         "graph": {
             "nodes": [
@@ -152,43 +151,61 @@ def test_engine_runs_independent_nodes_without_forced_sequential_fallback(monkey
             "edges": [{"id": "e1", "source": "idea", "target": "plan"}],
         },
     }
-    workflow = client.post("/api/workflows", json=payload).json()
+    response = client.post("/api/workflows", json=payload)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    if isinstance(detail, str):
+        message = detail
+    else:
+        message = " ".join(str(item.get("msg", item)) for item in detail)
+    lowered = message.lower()
+    assert "exactly one entry node" in lowered or "disconnected node(s)" in lowered
 
-    started: dict[str, float] = {}
-    finished: dict[str, float] = {}
-    lock = Lock()
 
-    class SlowRunner:
-        def run(self, request):
-            with lock:
-                started[request.node_id] = time.time()
-            time.sleep(0.2)
-            with lock:
-                finished[request.node_id] = time.time()
-            return AgentTaskResult(ok=True, log="ok", output={"exit_code": 0})
+def test_engine_pauses_run_when_node_iteration_budget_exceeded(monkeypatch):
+    monkeypatch.setattr(settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(settings, "workflow_node_iteration_budget", 2)
 
-    original_runner = workflow_engine.agent_runner
-    monkeypatch.setattr(workflow_engine, "agent_runner", SlowRunner())
-    try:
-        run = client.post(f"/api/workflows/{workflow['id']}/runs")
-        assert run.status_code == 200
-        run_id = run.json()["id"]
+    payload = {
+        "name": "Loop Budget",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "review", "type": "human_gate", "label": "Review"}],
+            "edges": [],
+        },
+    }
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    assert created.status_code == 200
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
 
-        final = None
-        for _ in range(40):
-            response = client.get(f"/api/runs/{run_id}")
-            assert response.status_code == 200
-            if response.json()["status"] == "done":
-                final = response.json()
-                break
-            time.sleep(0.1)
-    finally:
-        monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
+    headers = {
+        "X-Approver-Token": "secret-approver",
+        "X-Approver-Role": "reviewer",
+        "X-Workspace-Id": "main",
+    }
+
+    final = None
+    for _ in range(60):
+        response = client.get(f"/api/runs/{run_id}")
+        assert response.status_code == 200
+        body = response.json()
+        if body["status"] == "paused":
+            final = body
+            break
+
+        pending = next((node for node in body["node_runs"] if node["status"] == "approval_pending"), None)
+        if pending is not None:
+            cancel = client.post(f"/api/approvals/{pending['id']}/cancel", headers=headers)
+            assert cancel.status_code in {200, 409}
+        time.sleep(0.05)
 
     assert final is not None
-    assert "idea" in started and "docs" in started and "plan" in started
-    assert abs(started["idea"] - started["docs"]) < 0.12
-    assert started["plan"] >= finished["idea"]
+    assert final["status"] == "paused"
+    paused_nodes = [node for node in final["node_runs"] if node["status"] == "paused"]
+    assert paused_nodes
+    assert "iteration budget exceeded" in paused_nodes[0]["log"]
 
 
 def test_engine_retries_failed_node_with_backoff(monkeypatch):

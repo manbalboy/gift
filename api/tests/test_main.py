@@ -121,8 +121,8 @@ def test_docker_ping_negative_cache_fail_fast(monkeypatch, tmp_path):
 
 def test_preview_port_requires_one_time_viewer_token(monkeypatch):
     monkeypatch.setattr(settings, "preview_viewer_issue_secret", "issue-secret")
-    monkeypatch.setattr(settings, "preview_protected_port_start", 7000)
-    monkeypatch.setattr(settings, "preview_protected_port_end", 7099)
+    monkeypatch.setattr(settings, "preview_protected_port_start", 3100)
+    monkeypatch.setattr(settings, "preview_protected_port_end", 3199)
 
     denied = client.post("/api/preview/viewer-token")
     assert denied.status_code == 403
@@ -132,19 +132,32 @@ def test_preview_port_requires_one_time_viewer_token(monkeypatch):
     token = issued.json()["token"]
     assert isinstance(token, str) and token
 
-    missing_token = client.get("/api/workflows", headers={"Host": "localhost:7001"})
+    missing_token = client.get("/api/workflows", headers={"Host": "localhost:3108"})
     assert missing_token.status_code == 403
     assert missing_token.json()["detail"] == "preview viewer token is required"
 
     first = client.get(
         "/api/workflows",
-        headers={"Host": "localhost:7001", "X-Preview-Viewer-Token": token},
+        headers={"Host": "localhost:3108", "X-Preview-Viewer-Token": token},
     )
     assert first.status_code == 200
 
     reused = client.get(
         "/api/workflows",
-        headers={"Host": "localhost:7001", "X-Preview-Viewer-Token": token},
+        headers={"Host": "localhost:3108", "X-Preview-Viewer-Token": token},
     )
     assert reused.status_code == 403
     assert reused.json()["detail"] == "invalid or expired preview viewer token"
+
+
+def test_viewer_token_issue_endpoint_is_exempt_from_viewer_token_check(monkeypatch):
+    monkeypatch.setattr(settings, "preview_viewer_issue_secret", "issue-secret")
+    monkeypatch.setattr(settings, "preview_protected_port_start", 3100)
+    monkeypatch.setattr(settings, "preview_protected_port_end", 3199)
+
+    response = client.post(
+        "/api/preview/viewer-token",
+        headers={"Host": "localhost:3108", "X-Preview-Issue-Secret": "issue-secret"},
+    )
+    assert response.status_code == 200
+    assert response.json().get("token")

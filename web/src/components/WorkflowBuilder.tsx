@@ -51,6 +51,70 @@ function wouldCreateCycle(source: string, target: string, edges: Edge[]): boolea
   return false;
 }
 
+function validateGraphForSave(graph: Workflow['graph']): string | null {
+  if (graph.nodes.length < 1) return '저장 실패: 최소 1개 이상의 노드가 필요합니다.';
+
+  const nodeIds = new Set(graph.nodes.map((node) => node.id));
+  if (nodeIds.size !== graph.nodes.length) return '저장 실패: 중복된 노드 ID가 있습니다.';
+
+  const adjacency = new Map<string, string[]>();
+  const indegree = new Map<string, number>();
+  for (const node of graph.nodes) {
+    adjacency.set(node.id, []);
+    indegree.set(node.id, 0);
+  }
+
+  for (const edge of graph.edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+      return '저장 실패: 엣지는 반드시 기존 노드를 가리켜야 합니다.';
+    }
+    adjacency.get(edge.source)?.push(edge.target);
+    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1);
+  }
+
+  if (graph.nodes.length > 1 && graph.edges.length === 0) {
+    return '저장 실패: 다중 노드 그래프에는 최소 1개의 엣지가 필요합니다.';
+  }
+
+  const entryNodes = [...indegree.entries()].filter(([, degree]) => degree === 0).map(([id]) => id);
+  if (entryNodes.length !== 1) {
+    return '저장 실패: 다중 Entry 또는 단절된 노드가 있습니다. 그래프는 정확히 1개의 Entry 노드여야 합니다.';
+  }
+
+  const indegreeClone = new Map(indegree);
+  const queue = [...entryNodes];
+  let visited = 0;
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+    visited += 1;
+    for (const target of adjacency.get(current) ?? []) {
+      const nextDegree = (indegreeClone.get(target) ?? 0) - 1;
+      indegreeClone.set(target, nextDegree);
+      if (nextDegree === 0) queue.push(target);
+    }
+  }
+  if (visited !== graph.nodes.length) {
+    return '저장 실패: 순환 그래프는 저장할 수 없습니다.';
+  }
+
+  const reachable = new Set<string>();
+  const walk = [entryNodes[0]];
+  while (walk.length > 0) {
+    const current = walk.shift();
+    if (!current || reachable.has(current)) continue;
+    reachable.add(current);
+    for (const target of adjacency.get(current) ?? []) {
+      walk.push(target);
+    }
+  }
+  if (reachable.size !== graph.nodes.length) {
+    return '저장 실패: 단절된 노드가 있습니다. 모든 노드를 Entry 경로에 연결하세요.';
+  }
+
+  return null;
+}
+
 function TaskNode({ data }: NodeProps<{ label: string }>) {
   return (
     <div className="workflow-node">
@@ -109,6 +173,7 @@ export default function WorkflowBuilder({
   onNodeFallback,
   focusNodeRequest,
   onFocusNodeHandled,
+  onClientValidationError,
 }: {
   workflow: Workflow | null;
   onSave: (payload: Omit<Workflow, 'id'>, existingId?: number) => Promise<void>;
@@ -118,6 +183,7 @@ export default function WorkflowBuilder({
   onNodeFallback?: (payload: { count: number; signature: string; nodeIds: string[] }) => void;
   focusNodeRequest?: { nodeId: string; requestId: number } | null;
   onFocusNodeHandled?: () => void;
+  onClientValidationError?: (message: string) => void;
 }) {
   const initial = useMemo(() => {
     if (workflow) return convertToFlow(workflow);
@@ -245,6 +311,13 @@ export default function WorkflowBuilder({
       const command = String(flowNode?.data?.command ?? '').trim();
       return command ? { ...node, command } : node;
     });
+    const validationMessage = validateGraphForSave(payload.graph);
+    if (validationMessage) {
+      setValidationSummary(validationMessage);
+      onClientValidationError?.(validationMessage);
+      return;
+    }
+    setValidationSummary('');
     await onSave(payload, workflow?.id);
   };
 

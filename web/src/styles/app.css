@@ -600,6 +600,12 @@ select {
   border-color: color-mix(in srgb, var(--color-status-waiting) 40%, transparent);
 }
 
+.status-paused,
+.status-waiting {
+  color: var(--color-status-warning);
+  border-color: color-mix(in srgb, var(--color-status-warning) 50%, transparent);
+}
+
 .status-running {
   color: var(--color-status-running);
   border-color: color-mix(in srgb, var(--color-status-running) 40%, transparent);

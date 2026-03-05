@@ -85,6 +85,20 @@ const incompleteWorkflow = {
   },
 } as unknown as Workflow;
 
+const multiEntryWorkflow: Workflow = {
+  id: 12,
+  name: 'Multi Entry Flow',
+  description: '다중 진입점 테스트',
+  graph: {
+    nodes: [
+      { id: 'idea', type: 'task', label: 'Idea' },
+      { id: 'plan', type: 'task', label: 'Plan' },
+      { id: 'docs', type: 'task', label: 'Docs' },
+    ],
+    edges: [{ id: 'e1', source: 'idea', target: 'plan' }],
+  },
+};
+
 describe('WorkflowBuilder', () => {
   test('워크플로우를 렌더링하고 모바일 세로에서는 mini-map을 숨긴다', () => {
     render(<WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} mobileViewOnly />);
@@ -146,6 +160,53 @@ describe('WorkflowBuilder', () => {
     fireEvent.click(screen.getByRole('button', { name: '드라이런' }));
     expect(await screen.findByText('드라이런 실패: 그래프 규칙을 확인해주세요.')).toBeInTheDocument();
     expect(onValidate).toHaveBeenCalledTimes(1);
+  });
+
+  test('저장 시 단절 그래프를 클라이언트에서 차단한다', async () => {
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    const onClientValidationError = jest.fn();
+    render(
+      <WorkflowBuilder
+        workflow={sampleWorkflow}
+        onSave={onSave}
+        mobileViewOnly={false}
+        onClientValidationError={onClientValidationError}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '노드 추가' }));
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onClientValidationError).toHaveBeenCalledWith(
+      '저장 실패: 다중 Entry 또는 단절된 노드가 있습니다. 그래프는 정확히 1개의 Entry 노드여야 합니다.',
+    );
+    expect(
+      await screen.findByText('저장 실패: 다중 Entry 또는 단절된 노드가 있습니다. 그래프는 정확히 1개의 Entry 노드여야 합니다.'),
+    ).toBeInTheDocument();
+  });
+
+  test('저장 시 다중 Entry 그래프를 클라이언트에서 차단한다', async () => {
+    const onSave = jest.fn().mockResolvedValue(undefined);
+    const onClientValidationError = jest.fn();
+    render(
+      <WorkflowBuilder
+        workflow={multiEntryWorkflow}
+        onSave={onSave}
+        mobileViewOnly={false}
+        onClientValidationError={onClientValidationError}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onClientValidationError).toHaveBeenCalledWith(
+      '저장 실패: 다중 Entry 또는 단절된 노드가 있습니다. 그래프는 정확히 1개의 Entry 노드여야 합니다.',
+    );
+    expect(
+      await screen.findByText('저장 실패: 다중 Entry 또는 단절된 노드가 있습니다. 그래프는 정확히 1개의 Entry 노드여야 합니다.'),
+    ).toBeInTheDocument();
   });
 
   test('다중 entry 검증 실패 시 드라이런 실패 메시지를 표시한다', async () => {

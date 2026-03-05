@@ -80,6 +80,7 @@ class WorkflowEngine:
         self._node_workers: dict[int, dict[str, threading.Thread]] = {}
         self._cancel_events: dict[int, threading.Event] = {}
         self._approval_events: dict[int, dict[str, threading.Event]] = {}
+        self._node_iteration_counts: dict[int, dict[str, int]] = {}
 
     def _append_human_gate_status_artifact(
         self,
@@ -216,6 +217,15 @@ class WorkflowEngine:
             self._node_workers.pop(run_id, None)
             self._cancel_events.pop(run_id, None)
             self._approval_events.pop(run_id, None)
+            self._node_iteration_counts.pop(run_id, None)
+
+    def _record_node_iteration(self, run_id: int, node_id: str) -> tuple[int, int]:
+        budget = max(1, int(settings.workflow_node_iteration_budget))
+        with self._engine_guard:
+            run_counts = self._node_iteration_counts.setdefault(run_id, {})
+            next_count = run_counts.get(node_id, 0) + 1
+            run_counts[node_id] = next_count
+        return next_count, budget
 
     def _dispatch_task_node_async(self, run_id: int, node_id: str, node_name: str, command: str | None) -> None:
         def _run_node() -> None:
@@ -299,6 +309,7 @@ class WorkflowEngine:
             tracked_cancels = len(self._cancel_events)
             pending_approval_runs = len(self._approval_events)
             pending_approval_nodes = sum(len(nodes) for nodes in self._approval_events.values())
+            tracked_iteration_runs = len(self._node_iteration_counts)
         return {
             "workers": {"tracked": worker_count, "alive": alive_workers},
             "node_workers": {"tracked": node_worker_count, "alive": node_worker_alive},
@@ -306,6 +317,7 @@ class WorkflowEngine:
                 "cancel_events": tracked_cancels,
                 "approval_runs": pending_approval_runs,
                 "approval_nodes": pending_approval_nodes,
+                "iteration_budgets": tracked_iteration_runs,
             },
         }
 
@@ -323,7 +335,7 @@ class WorkflowEngine:
         }
 
     def _sync_run_status(self, run: WorkflowRun, node_runs: list[NodeRun]) -> str:
-        if run.status in {"done", "failed", "cancelled"}:
+        if run.status in {"done", "failed", "cancelled", "paused"}:
             return run.status
 
         if any(node.status == "failed" for node in node_runs):
@@ -471,7 +483,7 @@ class WorkflowEngine:
                     run = self._load_locked_run(db, run_id)
                     if not run:
                         break
-                    if run.status in {"done", "failed", "cancelled"}:
+                    if run.status in {"done", "failed", "cancelled", "paused"}:
                         db.commit()
                         break
 
@@ -499,13 +511,26 @@ class WorkflowEngine:
                     ]
 
                     if runnable:
+                        paused_by_budget = False
                         queued_human_gate: list[NodeRun] = []
                         queued_tasks: list[NodeRun] = []
                         for candidate in sorted(runnable, key=lambda item: item.sequence):
+                            count, budget = self._record_node_iteration(run.id, candidate.node_id)
+                            if count > budget:
+                                candidate.status = "paused"
+                                previous = (candidate.log or "").strip()
+                                candidate.log = f"[pause] node iteration budget exceeded ({count}>{budget})\n{previous}".strip()
+                                run.status = "paused"
+                                paused_by_budget = True
+                                break
                             if _extract_node_type(graph, candidate.node_id) == "human_gate":
                                 queued_human_gate.append(candidate)
                             else:
                                 queued_tasks.append(candidate)
+
+                        if paused_by_budget:
+                            db.commit()
+                            break
 
                         for gate_node in queued_human_gate:
                             gate_node.status = "approval_pending"
@@ -528,7 +553,7 @@ class WorkflowEngine:
                         db.commit()
                     else:
                         run_status = self._sync_run_status(run, nodes)
-                        if run_status in {"done", "failed", "cancelled"}:
+                        if run_status in {"done", "failed", "cancelled", "paused"}:
                             db.commit()
                             break
                         if any(node.status == "approval_pending" for node in nodes):

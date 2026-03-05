@@ -64,3 +64,78 @@ test('순환 연결 시도를 하면 경고 문구가 표시된다', async ({ pa
   await page.getByRole('button', { name: '순환 연결 테스트' }).click();
   await expect(page.getByText('순환 연결은 허용되지 않습니다. 연결 방향을 확인해주세요.')).toBeVisible();
 });
+
+test('단절된 노드 그래프 드라이런 실패 시 에러 문구를 노출한다', async ({ page }) => {
+  await page.route('**/api/workflows/validate', async (route) => {
+    const request = route.request();
+    const payload = request.postDataJSON() as {
+      nodes?: Array<{ id: string }>;
+      edges?: Array<{ id: string; source: string; target: string }>;
+    };
+    const nodeCount = payload.nodes?.length ?? 0;
+    const edgeCount = payload.edges?.length ?? 0;
+    if (nodeCount > edgeCount + 1) {
+      await route.fulfill({
+        status: 422,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'workflow graph contains disconnected node(s)' }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ valid: true, node_count: nodeCount, edge_count: edgeCount }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '노드 추가' }).click();
+  await page.getByRole('button', { name: '드라이런' }).click();
+  await expect(page.getByText('드라이런 실패: 그래프 규칙을 확인해주세요.')).toBeVisible();
+});
+
+test('다중 Entry 검증 실패 응답 시 에러 문구를 노출한다', async ({ page }) => {
+  await page.route('**/api/workflows/validate', async (route) => {
+    await route.fulfill({
+      status: 422,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: 'workflow graph must include exactly one entry node' }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '드라이런' }).click();
+  await expect(page.getByText('드라이런 실패: 그래프 규칙을 확인해주세요.')).toBeVisible();
+});
+
+test('단절/다중 Entry 그래프는 저장 전에 클라이언트에서 차단되고 에러 UI를 노출한다', async ({ page }) => {
+  let saveCallCount = 0;
+  await page.route('**/api/workflows', async (route) => {
+    const method = route.request().method().toUpperCase();
+    if (method === 'GET') {
+      await route.continue();
+      return;
+    }
+    saveCallCount += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 999,
+        name: 'Blocked Save',
+        description: '',
+        graph: { nodes: [], edges: [] },
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '노드 추가' }).click();
+  await page.getByRole('button', { name: '저장' }).click();
+
+  const message = '저장 실패: 다중 Entry 또는 단절된 노드가 있습니다. 그래프는 정확히 1개의 Entry 노드여야 합니다.';
+  await expect(page.locator('.builder-validation')).toHaveText(message);
+  await expect(page.getByTestId('toast-stack').getByText(message)).toBeVisible();
+  expect(saveCallCount).toBe(0);
+});

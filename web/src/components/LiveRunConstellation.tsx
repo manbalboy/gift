@@ -3,6 +3,7 @@ import type { ConstellationData } from '../types';
 
 const statusColor: Record<string, string> = {
   queued: 'var(--color-status-waiting)',
+  paused: 'var(--color-status-warning)',
   running: 'var(--color-status-running)',
   done: 'var(--color-status-success)',
   failed: 'var(--color-status-failed)',
@@ -99,6 +100,7 @@ export default function LiveRunConstellation({ data }: Props) {
       </svg>
       <div className="constellation-legend mono" aria-label="상태 범례">
         <span>queued ○</span>
+        <span>paused Ⅱ</span>
         <span>running ▶</span>
         <span>done ✓</span>
         <span>failed !</span>

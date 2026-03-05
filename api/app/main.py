@@ -74,6 +74,8 @@ async def enforce_origin_allowlist(request, call_next):
 @app.middleware("http")
 async def enforce_preview_viewer_token(request, call_next):
     host = request.headers.get("host", "")
+    if request.url.path.rstrip("/") == f"{settings.api_prefix}/preview/viewer-token":
+        return await call_next(request)
     if is_preview_protected_host(host):
         token = (
             request.headers.get(PREVIEW_VIEWER_TOKEN_HEADER, "").strip()

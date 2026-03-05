@@ -1,6 +1,7 @@
 const iconMap: Record<string, string> = {
   queued: '○',
   waiting: '○',
+  paused: 'Ⅱ',
   running: '▶',
   done: '✓',
   failed: '!',
