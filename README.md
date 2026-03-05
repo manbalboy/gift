@@ -4,8 +4,10 @@
 
 ### API (FastAPI, 3101)
 ```bash
-PYTHONPATH=api .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 3101
+./scripts/run-api-31xx.sh
 ```
+
+기본값은 `3101`부터 시작하며, 충돌 시 `3100~3199` 범위에서 가용 포트를 자동 탐색하고 재시도합니다.
 
 ### Web (React, 3100)
 ```bash
