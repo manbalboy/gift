@@ -366,6 +366,7 @@ export default function WorkflowBuilder({
   }, [edges, nodes, onValidate]);
 
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
+  const isValidationError = validationSummary.includes('실패');
 
   const onNodeClick: NodeMouseHandler = useCallback((_, node) => {
     setSelectedNodeId(node.id);
@@ -406,7 +407,7 @@ export default function WorkflowBuilder({
         </div>
       </div>
       {validationSummary && (
-        <p className="builder-validation" aria-live="polite">
+        <p className={`builder-validation ${isValidationError ? 'builder-validation-error' : 'builder-validation-success'}`} aria-live="polite">
           {validationSummary}
         </p>
       )}

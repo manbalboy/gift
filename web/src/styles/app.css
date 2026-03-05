@@ -359,7 +359,15 @@ p {
   margin-bottom: var(--space-16);
   font-size: 13px;
   line-height: 20px;
-  color: var(--color-status-running);
+  font-weight: 700;
+}
+
+.builder-validation-success {
+  color: var(--color-status-success);
+}
+
+.builder-validation-error {
+  color: var(--color-status-failed);
 }
 
 .builder-meta {

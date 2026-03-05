@@ -3,11 +3,12 @@ import re
 import subprocess
 import time
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import workflows as workflows_api
+from app.api.dependencies import require_viewer_token
 from app.api.agents import router as agents_router
 from app.api.preview import (
     PREVIEW_VIEWER_TOKEN_HEADER,
@@ -162,9 +163,9 @@ def health():
     }
 
 
-app.include_router(workflows_router, prefix=settings.api_prefix)
-app.include_router(run_router, prefix=settings.api_prefix)
-app.include_router(approval_router, prefix=settings.api_prefix)
-app.include_router(agents_router, prefix=settings.api_prefix)
-app.include_router(webhooks_router, prefix=settings.api_prefix)
-app.include_router(preview_router, prefix=settings.api_prefix)
+app.include_router(workflows_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
+app.include_router(run_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
+app.include_router(approval_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
+app.include_router(agents_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
+app.include_router(webhooks_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
+app.include_router(preview_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])

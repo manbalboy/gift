@@ -500,6 +500,27 @@ class WorkflowEngine:
                         db.commit()
                         break
 
+                    timeout_seconds = max(1.0, float(settings.workflow_node_timeout_seconds))
+                    now = datetime.now(timezone.utc)
+                    timed_out_running_nodes: list[tuple[NodeRun, float]] = []
+                    for candidate in nodes:
+                        if candidate.status != "running":
+                            continue
+                        elapsed = (now - _as_utc(candidate.updated_at)).total_seconds()
+                        if elapsed > timeout_seconds:
+                            timed_out_running_nodes.append((candidate, elapsed))
+
+                    if timed_out_running_nodes:
+                        for candidate, elapsed in timed_out_running_nodes:
+                            candidate.status = "paused"
+                            previous = (candidate.log or "").strip()
+                            candidate.log = (
+                                f"[pause] node timeout exceeded ({elapsed:.2f}s>{timeout_seconds:.2f}s)\n{previous}".strip()
+                            )
+                        run.status = "paused"
+                        db.commit()
+                        break
+
                     predecessors = self._build_predecessors(graph, nodes)
                     node_by_id = {node.node_id: node for node in nodes}
 

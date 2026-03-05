@@ -208,6 +208,51 @@ def test_engine_pauses_run_when_node_iteration_budget_exceeded(monkeypatch):
     assert "iteration budget exceeded" in paused_nodes[0]["log"]
 
 
+def test_engine_pauses_run_when_running_node_timeout_exceeded(monkeypatch):
+    monkeypatch.setattr(settings, "workflow_node_timeout_seconds", 1.0)
+    monkeypatch.setattr(settings, "workflow_worker_poll_interval_seconds", 0.02)
+
+    payload = {
+        "name": "Timeout Flow",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "slow-task", "type": "task", "label": "Slow Task"}],
+            "edges": [],
+        },
+    }
+    workflow = client.post("/api/workflows", json=payload).json()
+
+    class SlowRunner:
+        def run(self, _request):
+            time.sleep(1.2)
+            return AgentTaskResult(ok=True, log="completed", output={"exit_code": 0})
+
+    original_runner = workflow_engine.agent_runner
+    monkeypatch.setattr(workflow_engine, "agent_runner", SlowRunner())
+    try:
+        run = client.post(f"/api/workflows/{workflow['id']}/runs")
+        assert run.status_code == 200
+        run_id = run.json()["id"]
+
+        final = None
+        for _ in range(80):
+            response = client.get(f"/api/runs/{run_id}")
+            assert response.status_code == 200
+            body = response.json()
+            if body["status"] == "paused":
+                final = body
+                break
+            time.sleep(0.05)
+    finally:
+        monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
+
+    assert final is not None
+    assert final["status"] == "paused"
+    paused_nodes = [node for node in final["node_runs"] if node["status"] == "paused"]
+    assert paused_nodes
+    assert "timeout exceeded" in paused_nodes[0]["log"]
+
+
 def test_engine_retries_failed_node_with_backoff(monkeypatch):
     payload = {
         "name": "Retry Flow",

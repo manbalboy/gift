@@ -30,6 +30,7 @@ class Settings:
     docker_image: str = os.getenv("DEVFLOW_DOCKER_IMAGE", "bash:5.2")
     github_webhook_secret: str = os.getenv("DEVFLOW_GITHUB_WEBHOOK_SECRET", "")
     generic_webhook_secret: str = os.getenv("DEVFLOW_GENERIC_WEBHOOK_SECRET", "")
+    viewer_token: str = os.getenv("DEVFLOW_VIEWER_TOKEN", "")
     human_gate_approver_token: str = os.getenv("DEVFLOW_HUMAN_GATE_APPROVER_TOKEN", "")
     human_gate_session_secret: str = os.getenv("DEVFLOW_HUMAN_GATE_SESSION_SECRET", "")
     human_gate_session_ttl_seconds: int = int(os.getenv("DEVFLOW_HUMAN_GATE_SESSION_TTL_SECONDS", "1800"))
@@ -58,6 +59,7 @@ class Settings:
     webhook_trusted_proxy_ips: str = os.getenv("DEVFLOW_WEBHOOK_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
     workflow_node_max_retries: int = int(os.getenv("DEVFLOW_WORKFLOW_NODE_MAX_RETRIES", "3"))
     workflow_node_iteration_budget: int = int(os.getenv("DEVFLOW_WORKFLOW_NODE_ITERATION_BUDGET", "8"))
+    workflow_node_timeout_seconds: float = float(os.getenv("DEVFLOW_WORKFLOW_NODE_TIMEOUT_SECONDS", "1800"))
     workflow_retry_backoff_seconds: float = float(os.getenv("DEVFLOW_WORKFLOW_RETRY_BACKOFF_SECONDS", "0.25"))
     workflow_worker_poll_interval_seconds: float = float(
         os.getenv("DEVFLOW_WORKFLOW_WORKER_POLL_INTERVAL_SECONDS", "0.1")

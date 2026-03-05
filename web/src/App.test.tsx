@@ -487,6 +487,62 @@ describe('App', () => {
     expect(textarea).toHaveValue('선행 검토 의견\n핵심 오류가 재현되어 수정 후 재검토가 필요합니다.');
   });
 
+  test.each([
+    {
+      title: 'Windows 개행이 포함된 본문은 정규화 후 프리셋을 결합한다',
+      initial: '기존 의견\r\n',
+      expected: '기존 의견\n보안/권한 검증 근거가 부족하여 반려합니다.',
+    },
+    {
+      title: '특수문자 본문도 불필요한 공백 없이 프리셋을 결합한다',
+      initial: '재현 로그: [ERR-42] @@',
+      expected: '재현 로그: [ERR-42] @@\n\n보안/권한 검증 근거가 부족하여 반려합니다.',
+    },
+    {
+      title: '이미 같은 프리셋이 있는 경우 중복 추가하지 않는다',
+      initial: '보안/권한 검증 근거가 부족하여 반려합니다.\n',
+      expected: '보안/권한 검증 근거가 부족하여 반려합니다.',
+    },
+  ])('$title', async ({ initial, expected }) => {
+    (api.startRun as jest.Mock).mockResolvedValue({
+      id: 305,
+      workflow_id: 1,
+      status: 'waiting',
+      started_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:05Z',
+      node_runs: [
+        {
+          id: 1,
+          node_id: 'review',
+          node_name: 'Review',
+          status: 'approval_pending',
+          sequence: 0,
+          log: '승인 대기 중',
+          artifact_path: null,
+          updated_at: '2026-03-05T00:00:05Z',
+        },
+      ],
+    });
+    (api.getConstellation as jest.Mock).mockResolvedValue({
+      run_id: 305,
+      status: 'waiting',
+      nodes: [{ id: 'review', label: 'Review', status: 'approval_pending', sequence: 0 }],
+      links: [],
+    });
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Run 시작' }));
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard-reject' }));
+    const textarea = await screen.findByRole('textbox', { name: '반려 사유' });
+    fireEvent.change(textarea, { target: { value: initial } });
+    fireEvent.click(screen.getByRole('button', { name: '프리셋 3' }));
+
+    expect(textarea).toHaveValue(expected);
+  });
+
   test('감사 로그 이력 보기 모달을 열어 Human Gate 이력을 확인한다', async () => {
     (api.startRun as jest.Mock).mockResolvedValue({
       id: 302,

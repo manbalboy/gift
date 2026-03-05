@@ -161,3 +161,22 @@ def test_viewer_token_issue_endpoint_is_exempt_from_viewer_token_check(monkeypat
     )
     assert response.status_code == 200
     assert response.json().get("token")
+
+
+def test_global_viewer_token_blocks_direct_api_access_without_token(monkeypatch):
+    monkeypatch.setattr(settings, "viewer_token", "viewer-secret")
+
+    missing = client.get("/api/workflows")
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "missing viewer token"
+
+    invalid = client.get("/api/workflows", headers={"X-Viewer-Token": "wrong"})
+    assert invalid.status_code == 401
+    assert invalid.json()["detail"] == "invalid viewer token"
+
+
+def test_global_viewer_token_allows_request_with_valid_token(monkeypatch):
+    monkeypatch.setattr(settings, "viewer_token", "viewer-secret")
+
+    response = client.get("/api/workflows", headers={"Authorization": "Bearer viewer-secret"})
+    assert response.status_code == 200
