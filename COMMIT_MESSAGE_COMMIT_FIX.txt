@@ -1,1 +1,1 @@
-SystemAlertWidget에 필터 칩, 자동 스크롤 일시 정지, info 레벨 지원 및 단위 테스트 추가
+SystemAlertWidget XSS 방어 및 가상화 스크롤 개선, 보안 유틸리티와 E2E 테스트 추가

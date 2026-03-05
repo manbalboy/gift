@@ -3,6 +3,7 @@ import type {
   ConstellationData,
   HumanGateAuditDecision,
   HumanGateStaleAlert,
+  LoopEngineStatus,
   SystemAlertPageResponse,
   StatusArtifactAuditListResponse,
   WebhookBlockedEvent,
@@ -15,6 +16,8 @@ import { subscribeSSE } from '../hooks/useSSE';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3101/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
+const WORKFLOW_CONTROL_TOKEN = import.meta.env.VITE_WORKFLOW_CONTROL_TOKEN ?? '';
+const WORKFLOW_CONTROL_ROLE = import.meta.env.VITE_WORKFLOW_CONTROL_ROLE ?? '';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -75,6 +78,17 @@ async function requestHumanGateAction(path: string): Promise<WorkflowRun> {
   }
 }
 
+function workflowControlHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (WORKFLOW_CONTROL_TOKEN.trim()) {
+    headers['X-Workflow-Control-Token'] = WORKFLOW_CONTROL_TOKEN.trim();
+  }
+  if (WORKFLOW_CONTROL_ROLE.trim()) {
+    headers['X-Workflow-Control-Role'] = WORKFLOW_CONTROL_ROLE.trim();
+  }
+  return headers;
+}
+
 export const api = {
   listWorkflows: () => request<Workflow[]>('/workflows'),
   createWorkflow: (payload: Omit<Workflow, 'id'>) =>
@@ -83,15 +97,16 @@ export const api = {
     request<Workflow>(`/workflows/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   validateWorkflowGraph: (graph: Workflow['graph']) =>
     request<WorkflowGraphValidationResult>('/workflows/validate', { method: 'POST', body: JSON.stringify(graph) }),
-  startRun: (workflowId: number) => request<WorkflowRun>(`/workflows/${workflowId}/runs`, { method: 'POST' }),
+  startRun: (workflowId: number) =>
+    request<WorkflowRun>(`/workflows/${workflowId}/runs`, { method: 'POST', headers: workflowControlHeaders() }),
   getRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}`),
   getConstellation: (runId: number) => request<ConstellationData>(`/runs/${runId}/constellation`),
   approveRunNode: (runId: number, nodeId: string) =>
     requestHumanGateAction(`/runs/${runId}/approve?node_id=${encodeURIComponent(nodeId)}`),
   rejectRunNode: (runId: number, nodeId: string) =>
     requestHumanGateAction(`/runs/${runId}/reject?node_id=${encodeURIComponent(nodeId)}`),
-  cancelRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/cancel`, { method: 'POST' }),
-  resumeRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/resume`, { method: 'POST' }),
+  cancelRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/cancel`, { method: 'POST', headers: workflowControlHeaders() }),
+  resumeRun: (runId: number) => request<WorkflowRun>(`/runs/${runId}/resume`, { method: 'POST', headers: workflowControlHeaders() }),
   getArtifactChunk: (runId: number, nodeId: string, offset = 0, limit = 16384) =>
     request<ArtifactChunkResponse>(
       `/runs/${runId}/artifacts/${encodeURIComponent(nodeId)}?offset=${Math.max(0, offset)}&limit=${Math.max(1, limit)}`,
@@ -197,4 +212,8 @@ export const api = {
     return request<SystemAlertPageResponse>(`/logs/system-alerts?${params.toString()}`);
   },
   clearSystemAlerts: () => request<{ cleared_count: number }>('/logs/system-alerts', { method: 'DELETE' }),
+  getLoopEngineStatus: () => request<LoopEngineStatus>('/loop/status'),
+  startLoopEngine: () => request<LoopEngineStatus>('/loop/start', { method: 'POST', headers: workflowControlHeaders() }),
+  pauseLoopEngine: () => request<LoopEngineStatus>('/loop/pause', { method: 'POST', headers: workflowControlHeaders() }),
+  stopLoopEngine: () => request<LoopEngineStatus>('/loop/stop', { method: 'POST', headers: workflowControlHeaders() }),
 };

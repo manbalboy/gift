@@ -121,6 +121,10 @@ jest.mock('./services/api', () => {
       listWebhookBlockedEvents: jest.fn(),
       listSystemAlerts: jest.fn(),
       clearSystemAlerts: jest.fn(),
+      getLoopEngineStatus: jest.fn(),
+      startLoopEngine: jest.fn(),
+      pauseLoopEngine: jest.fn(),
+      stopLoopEngine: jest.fn(),
       getStatusArtifactAudits: jest.fn(),
       scanStaleHumanGateAlerts: jest.fn(),
       cancelApproval: jest.fn(),
@@ -177,6 +181,42 @@ describe('App', () => {
     (api.listWebhookBlockedEvents as jest.Mock).mockResolvedValue([]);
     (api.listSystemAlerts as jest.Mock).mockResolvedValue({ items: [], next_cursor: null });
     (api.clearSystemAlerts as jest.Mock).mockResolvedValue({ cleared_count: 0 });
+    (api.getLoopEngineStatus as jest.Mock).mockResolvedValue({
+      mode: 'idle',
+      current_stage: null,
+      cycle_count: 0,
+      emitted_alert_count: 0,
+      quality_score: null,
+      started_at: null,
+      updated_at: '2026-03-05T00:00:00Z',
+    });
+    (api.startLoopEngine as jest.Mock).mockResolvedValue({
+      mode: 'running',
+      current_stage: 'analyzer',
+      cycle_count: 0,
+      emitted_alert_count: 1,
+      quality_score: 64,
+      started_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:00Z',
+    });
+    (api.pauseLoopEngine as jest.Mock).mockResolvedValue({
+      mode: 'paused',
+      current_stage: 'evaluator',
+      cycle_count: 1,
+      emitted_alert_count: 4,
+      quality_score: 70,
+      started_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:03Z',
+    });
+    (api.stopLoopEngine as jest.Mock).mockResolvedValue({
+      mode: 'idle',
+      current_stage: null,
+      cycle_count: 1,
+      emitted_alert_count: 5,
+      quality_score: 70,
+      started_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:05Z',
+    });
     (api.getStatusArtifactAudits as jest.Mock).mockResolvedValue({
       items: [],
       total_count: 0,

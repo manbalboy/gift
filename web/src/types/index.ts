@@ -144,3 +144,13 @@ export type SystemAlertPageResponse = {
   items: SystemAlertEntry[];
   next_cursor: string | null;
 };
+
+export type LoopEngineStatus = {
+  mode: 'idle' | 'running' | 'paused' | 'stopped';
+  current_stage: string | null;
+  cycle_count: number;
+  emitted_alert_count: number;
+  quality_score: number | null;
+  started_at: string | null;
+  updated_at: string;
+};

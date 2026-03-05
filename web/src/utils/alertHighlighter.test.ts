@@ -17,4 +17,14 @@ describe('parseAlertTextParts', () => {
     const parts = parseAlertTextParts('bad javascript:alert(1)');
     expect(parts).toEqual([{ kind: 'text', value: 'bad javascript:alert(1)' }]);
   });
+
+  test('URL 후행의 다중 구두점과 괄호를 분리해 파싱한다', () => {
+    const parts = parseAlertTextParts('(참고: http://test.com/api?v=1.0.), 다음 단계 확인');
+    expect(parts).toEqual([
+      { kind: 'text', value: '(참고: ' },
+      { kind: 'url', value: 'http://test.com/api?v=1.0', href: 'http://test.com/api?v=1.0' },
+      { kind: 'text', value: '.),' },
+      { kind: 'text', value: ' 다음 단계 확인' },
+    ]);
+  });
 });

@@ -260,6 +260,16 @@ class Settings:
         180,
         "DEVFLOW_PREVIEW_VIEWER_TOKEN_TTL_SECONDS",
     )
+    system_alert_max_items: int = _as_int(
+        os.getenv("DEVFLOW_SYSTEM_ALERT_MAX_ITEMS"),
+        500,
+        "DEVFLOW_SYSTEM_ALERT_MAX_ITEMS",
+    )
+    system_alert_retention_seconds: int = _as_int(
+        os.getenv("DEVFLOW_SYSTEM_ALERT_RETENTION_SECONDS"),
+        172800,
+        "DEVFLOW_SYSTEM_ALERT_RETENTION_SECONDS",
+    )
     preview_protected_port_start: int = _as_int(
         os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_START"),
         3100,

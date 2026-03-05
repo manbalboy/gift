@@ -890,6 +890,51 @@ select {
   font-family: var(--font-mono);
 }
 
+.loop-engine-card {
+  border-color: color-mix(in srgb, var(--color-status-running) 34%, var(--color-border-default));
+}
+
+.loop-engine-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
+.loop-engine-mode {
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  padding: 0 var(--space-8);
+}
+
+.loop-mode-running {
+  color: var(--color-status-success);
+  border-color: color-mix(in srgb, var(--color-status-success) 52%, var(--color-border-default));
+}
+
+.loop-mode-paused {
+  color: var(--color-status-warning);
+  border-color: color-mix(in srgb, var(--color-status-warning) 58%, var(--color-border-default));
+}
+
+.loop-mode-stopped {
+  color: var(--color-status-failed);
+  border-color: color-mix(in srgb, var(--color-status-failed) 58%, var(--color-border-default));
+}
+
+.loop-mode-idle {
+  color: var(--color-text-muted);
+}
+
+.loop-engine-actions {
+  margin-top: var(--space-12);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
 .system-alert-widget {
   border-color: color-mix(in srgb, var(--color-status-warning) 22%, var(--color-border-default));
 }
@@ -985,12 +1030,10 @@ select {
 }
 
 .system-alert-list {
-  display: grid;
-  gap: var(--space-8);
+  position: relative;
   max-height: min(44vh, 320px);
   overflow-y: auto;
   padding-right: var(--space-4);
-  align-content: start;
 }
 
 .system-alert-spacer {

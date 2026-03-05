@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api import workflows as workflows_api
 from app.api.dependencies import require_viewer_token
 from app.api.agents import router as agents_router
+from app.api.loop_engine import router as loop_engine_router
 from app.api.logs import router as logs_router
 from app.api.preview import (
     PREVIEW_VIEWER_TOKEN_HEADER,
@@ -171,3 +172,4 @@ app.include_router(agents_router, prefix=settings.api_prefix, dependencies=[Depe
 app.include_router(webhooks_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
 app.include_router(preview_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
 app.include_router(logs_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
+app.include_router(loop_engine_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])

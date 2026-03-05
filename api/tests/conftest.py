@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from app.api import workflows as workflows_api
 from app.api.webhooks import reset_webhook_limiter_for_tests
 from app.main import app
+from app.services.loop_simulator import reset_loop_simulator_for_tests
 from app.services.system_alerts import reset_system_alerts_for_tests
 
 
@@ -29,3 +30,4 @@ def reset_limiters():
     workflows_api.reconnect_rate_limiter.reset_for_tests()
     reset_webhook_limiter_for_tests()
     reset_system_alerts_for_tests()
+    reset_loop_simulator_for_tests()

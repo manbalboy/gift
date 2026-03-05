@@ -13,6 +13,7 @@ import type {
   ConstellationData,
   HumanGateAuditDecision,
   HumanGateStaleAlert,
+  LoopEngineStatus,
   StatusArtifactAuditEntry,
   SystemAlertEntry,
   WebhookBlockedEvent,
@@ -56,6 +57,8 @@ export default function App() {
   const [systemAlertsLoading, setSystemAlertsLoading] = useState(false);
   const [systemAlertsNextCursor, setSystemAlertsNextCursor] = useState<string | null>(null);
   const [systemAlertsActionLoading, setSystemAlertsActionLoading] = useState(false);
+  const [loopEngineStatus, setLoopEngineStatus] = useState<LoopEngineStatus | null>(null);
+  const [loopEngineActionLoading, setLoopEngineActionLoading] = useState(false);
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectTargetNodeId, setRejectTargetNodeId] = useState<string | null>(null);
@@ -187,6 +190,33 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+
+    const syncLoopStatus = async () => {
+      try {
+        const status = await api.getLoopEngineStatus();
+        if (!cancelled) {
+          setLoopEngineStatus(status);
+        }
+      } catch {
+        if (!cancelled) {
+          setLoopEngineStatus(null);
+        }
+      }
+    };
+
+    void syncLoopStatus();
+    const timer = window.setInterval(() => {
+      void syncLoopStatus();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     const syncSystemAlerts = async () => {
       if (!cancelled) {
         setSystemAlertsLoading(true);
@@ -212,13 +242,13 @@ export default function App() {
     void syncSystemAlerts();
     const timer = window.setInterval(() => {
       void syncSystemAlerts();
-    }, 10_000);
+    }, loopEngineStatus?.mode === 'running' ? 1_500 : 10_000);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [loopEngineStatus?.mode]);
 
   useEffect(() => {
     activeRunRef.current = run;
@@ -368,6 +398,16 @@ export default function App() {
     if (streamState === 'failed') return '연결 실패';
     return '연결 종료';
   }, [streamState]);
+  const loopModeLabel = useMemo(() => {
+    if (loopEngineStatus?.mode === 'running') return '실행 중';
+    if (loopEngineStatus?.mode === 'paused') return '일시정지';
+    if (loopEngineStatus?.mode === 'stopped') return '중지됨';
+    return '대기 중';
+  }, [loopEngineStatus?.mode]);
+  const loopStageLabel = useMemo(() => {
+    if (!loopEngineStatus?.current_stage) return '-';
+    return loopEngineStatus.current_stage.toUpperCase();
+  }, [loopEngineStatus?.current_stage]);
   const nodeStatuses = useMemo(
     () =>
       Object.fromEntries(
@@ -665,6 +705,63 @@ export default function App() {
     enqueueToast('warning', `시스템 알림 ${systemAlerts.length}건을 내보냈습니다.`);
   };
 
+  const syncLoopEngineStatus = async () => {
+    try {
+      const next = await api.getLoopEngineStatus();
+      setLoopEngineStatus(next);
+    } catch {
+      setLoopEngineStatus(null);
+    }
+  };
+
+  const handleStartLoopEngine = async () => {
+    if (loopEngineActionLoading) return;
+    setLoopEngineActionLoading(true);
+    try {
+      const next = await api.startLoopEngine();
+      setLoopEngineStatus(next);
+      enqueueToast('warning', 'Loop Engine을 시작했습니다.');
+    } catch (error) {
+      const message = resolveErrorMessage(error, 'Loop Engine 시작 실패');
+      enqueueToast('error', `Loop Engine 시작 실패 (${message})`);
+    } finally {
+      setLoopEngineActionLoading(false);
+      void syncLoopEngineStatus();
+    }
+  };
+
+  const handlePauseLoopEngine = async () => {
+    if (loopEngineActionLoading) return;
+    setLoopEngineActionLoading(true);
+    try {
+      const next = await api.pauseLoopEngine();
+      setLoopEngineStatus(next);
+      enqueueToast('warning', 'Loop Engine을 일시정지했습니다.');
+    } catch (error) {
+      const message = resolveErrorMessage(error, 'Loop Engine 일시정지 실패');
+      enqueueToast('error', `Loop Engine 일시정지 실패 (${message})`);
+    } finally {
+      setLoopEngineActionLoading(false);
+      void syncLoopEngineStatus();
+    }
+  };
+
+  const handleStopLoopEngine = async () => {
+    if (loopEngineActionLoading) return;
+    setLoopEngineActionLoading(true);
+    try {
+      const next = await api.stopLoopEngine();
+      setLoopEngineStatus(next);
+      enqueueToast('warning', 'Loop Engine을 중지했습니다.');
+    } catch (error) {
+      const message = resolveErrorMessage(error, 'Loop Engine 중지 실패');
+      enqueueToast('error', `Loop Engine 중지 실패 (${message})`);
+    } finally {
+      setLoopEngineActionLoading(false);
+      void syncLoopEngineStatus();
+    }
+  };
+
   return (
     <div className="app-shell">
       <div className="toast-stack" data-testid="toast-stack" style={{ zIndex: LAYER_Z_INDEX.toast }} aria-label="시스템 알림">
@@ -751,6 +848,51 @@ export default function App() {
 
         <main className="main-workspace">
           <LiveRunConstellation data={constellation} />
+          <section className="card loop-engine-card" aria-label="loop-engine-control">
+            <div className="card-header">
+              <h2>Self-Improvement Loop Engine</h2>
+              <p>Analyzer → Evaluator → Planner → Executor 순환 상태를 제어하고 모니터링합니다.</p>
+            </div>
+            <div className="loop-engine-summary mono">
+              <span className={`loop-engine-mode loop-mode-${loopEngineStatus?.mode ?? 'idle'}`}>상태: {loopModeLabel}</span>
+              <span>Stage: {loopStageLabel}</span>
+              <span>Cycle: {loopEngineStatus?.cycle_count ?? 0}</span>
+              <span>Quality: {loopEngineStatus?.quality_score ?? '-'}</span>
+              <span>Events: {loopEngineStatus?.emitted_alert_count ?? 0}</span>
+            </div>
+            <div className="loop-engine-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  void handleStartLoopEngine();
+                }}
+                disabled={loopEngineActionLoading || loopEngineStatus?.mode === 'running'}
+              >
+                시작
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  void handlePauseLoopEngine();
+                }}
+                disabled={loopEngineActionLoading || loopEngineStatus?.mode !== 'running'}
+              >
+                일시정지
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => {
+                  void handleStopLoopEngine();
+                }}
+                disabled={loopEngineActionLoading || !loopEngineStatus || loopEngineStatus.mode === 'idle'}
+              >
+                중지
+              </button>
+            </div>
+          </section>
           <SystemAlertWidget
             alerts={systemAlerts}
             loading={systemAlertsLoading}

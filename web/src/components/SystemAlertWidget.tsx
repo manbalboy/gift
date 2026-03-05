@@ -1,11 +1,14 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import type { SystemAlertEntry } from '../types';
 import { parseAlertTextParts } from '../utils/alertHighlighter';
 import { MASKED_TOKEN, sanitizeAlertPath, sanitizeAlertText } from '../utils/security';
 
 const ESTIMATED_ALERT_ROW_HEIGHT = 116;
-const VIRTUAL_OVERSCAN = 6;
+const MIN_ALERT_ROW_HEIGHT = 56;
+const VIRTUAL_OVERSCAN = 8;
 const SCROLL_SYNC_THROTTLE_MS = 48;
+const MAX_WINDOWED_ALERTS = 1200;
 
 type AlertFilter = 'all' | 'error' | 'warning';
 
@@ -55,10 +58,24 @@ function levelMeta(level: string): { label: string; className: string } {
 
 function resolveBottomThreshold(): number {
   if (typeof window === 'undefined') return 16;
+
   const viewportScale = window.visualViewport?.scale;
-  const zoomScale =
-    typeof viewportScale === 'number' && Number.isFinite(viewportScale) && viewportScale > 1 ? viewportScale : 1;
-  return Math.min(72, Math.max(16, Math.round(16 * zoomScale)));
+  const normalizedViewportScale =
+    typeof viewportScale === 'number' && Number.isFinite(viewportScale) && viewportScale > 0 ? viewportScale : 1;
+
+  const pixelRatio =
+    typeof window.devicePixelRatio === 'number' && Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+      ? window.devicePixelRatio
+      : 1;
+
+  const rootFontSize =
+    typeof document !== 'undefined'
+      ? Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize || '16')
+      : 16;
+  const normalizedTextScale = Number.isFinite(rootFontSize) && rootFontSize > 0 ? rootFontSize / 16 : 1;
+
+  const zoomScale = Math.max(1, normalizedViewportScale, normalizedTextScale, pixelRatio > 1.25 ? pixelRatio : 1);
+  return Math.min(96, Math.max(16, Math.round(16 * zoomScale)));
 }
 
 function renderSanitizedTextWithHighlights(message: string, keyPrefix: string): ReactNode {
@@ -114,6 +131,11 @@ export function filterSystemAlerts(alerts: SystemAlertEntry[], activeFilter: Ale
   return alerts.filter((alert) => alert.level === activeFilter);
 }
 
+function windowSystemAlerts(alerts: SystemAlertEntry[]): SystemAlertEntry[] {
+  if (alerts.length <= MAX_WINDOWED_ALERTS) return alerts;
+  return alerts.slice(alerts.length - MAX_WINDOWED_ALERTS);
+}
+
 export default function SystemAlertWidget({
   alerts,
   loading,
@@ -133,19 +155,22 @@ export default function SystemAlertWidget({
 }) {
   const [activeFilter, setActiveFilter] = useState<AlertFilter>('all');
   const [isAutoScrollPaused, setIsAutoScrollPaused] = useState(false);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const scrollThrottleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollAnimationFrameRef = useRef<number | null>(null);
+  const skipNextAutoScrollRef = useRef(false);
 
   const filteredAlerts = useMemo(() => {
     return filterSystemAlerts(alerts, activeFilter);
   }, [activeFilter, alerts]);
 
+  const windowedAlerts = useMemo(() => {
+    return windowSystemAlerts(filteredAlerts);
+  }, [filteredAlerts]);
+
   const preparedAlerts = useMemo<PreparedAlert[]>(() => {
-    return filteredAlerts.map((alert) => {
+    return windowedAlerts.map((alert) => {
       const riskScore = resolveRiskScore(alert);
       const risk = riskScore === null ? null : riskMeta(riskScore);
       const rawPath = alert.context?.path;
@@ -159,15 +184,16 @@ export default function SystemAlertWidget({
         path: sanitizeAlertPath(rawPath),
       };
     });
-  }, [filteredAlerts]);
+  }, [windowedAlerts]);
 
-  const updateVirtualWindowState = (list: HTMLDivElement) => {
-    const nextTop = Math.max(0, list.scrollTop);
-    const nextViewportHeight = Math.max(1, list.clientHeight || 0);
-
-    setScrollTop((current) => (current === nextTop ? current : nextTop));
-    setViewportHeight((current) => (current === nextViewportHeight ? current : nextViewportHeight));
-  };
+  const virtualizer = useVirtualizer({
+    count: preparedAlerts.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => ESTIMATED_ALERT_ROW_HEIGHT,
+    initialRect: { width: 0, height: ESTIMATED_ALERT_ROW_HEIGHT * 3 },
+    overscan: VIRTUAL_OVERSCAN,
+    measureElement: (element) => Math.max(MIN_ALERT_ROW_HEIGHT, Math.ceil(element.getBoundingClientRect().height)),
+  });
 
   const syncAutoScrollPauseState = (list: HTMLDivElement) => {
     const distance = Math.max(0, Math.ceil(list.scrollHeight - list.clientHeight - list.scrollTop));
@@ -176,8 +202,8 @@ export default function SystemAlertWidget({
   };
 
   const syncScrollState = (list: HTMLDivElement) => {
-    updateVirtualWindowState(list);
     syncAutoScrollPauseState(list);
+    virtualizer.measure();
   };
 
   const scheduleScrollSync = () => {
@@ -208,28 +234,31 @@ export default function SystemAlertWidget({
     scheduleScrollSync();
   };
 
-  const totalAlerts = preparedAlerts.length;
-  const effectiveViewportHeight = viewportHeight > 0 ? viewportHeight : ESTIMATED_ALERT_ROW_HEIGHT * 3;
-  const startIndex = Math.max(0, Math.floor(scrollTop / ESTIMATED_ALERT_ROW_HEIGHT) - VIRTUAL_OVERSCAN);
-  const visibleCount = Math.ceil(effectiveViewportHeight / ESTIMATED_ALERT_ROW_HEIGHT) + VIRTUAL_OVERSCAN * 2;
-  const endIndex = totalAlerts > 0 ? Math.min(totalAlerts - 1, startIndex + visibleCount - 1) : -1;
-  const visibleAlerts = endIndex >= startIndex ? preparedAlerts.slice(startIndex, endIndex + 1) : [];
-  const topSpacerHeight = startIndex * ESTIMATED_ALERT_ROW_HEIGHT;
-  const bottomSpacerHeight = Math.max(0, (totalAlerts - endIndex - 1) * ESTIMATED_ALERT_ROW_HEIGHT);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    skipNextAutoScrollRef.current = true;
+    list.scrollTop = 0;
+    virtualizer.scrollToOffset(0);
+    setIsAutoScrollPaused(true);
+    syncScrollState(list);
+  }, [activeFilter, virtualizer]);
 
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
-    list.scrollTop = 0;
-    syncScrollState(list);
-  }, [activeFilter]);
-
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list || isAutoScrollPaused) return;
+    if (skipNextAutoScrollRef.current) {
+      skipNextAutoScrollRef.current = false;
+      syncScrollState(list);
+      return;
+    }
+    if (isAutoScrollPaused) return;
+    if (preparedAlerts.length > 0) {
+      virtualizer.scrollToIndex(preparedAlerts.length - 1, { align: 'end' });
+    }
     list.scrollTop = list.scrollHeight;
     syncScrollState(list);
-  }, [preparedAlerts, isAutoScrollPaused]);
+  }, [preparedAlerts, isAutoScrollPaused, virtualizer]);
 
   useEffect(
     () => () => {
@@ -260,7 +289,7 @@ export default function SystemAlertWidget({
     return () => {
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [virtualizer]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -268,7 +297,8 @@ export default function SystemAlertWidget({
       window.requestAnimationFrame(() => {
         const list = listRef.current;
         if (!list) return;
-        if (!isAutoScrollPaused) {
+        if (!isAutoScrollPaused && preparedAlerts.length > 0) {
+          virtualizer.scrollToIndex(preparedAlerts.length - 1, { align: 'end' });
           list.scrollTop = list.scrollHeight;
         }
         syncScrollState(list);
@@ -278,7 +308,60 @@ export default function SystemAlertWidget({
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isAutoScrollPaused]);
+  }, [isAutoScrollPaused, preparedAlerts.length, virtualizer]);
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const virtualTotalSize = virtualizer.getTotalSize();
+  const fallbackItems = preparedAlerts.slice(0, Math.min(preparedAlerts.length, 40));
+
+  const renderAlertItem = (
+    item: PreparedAlert,
+    index: number,
+    style?: CSSProperties,
+    measureRef?: (element: HTMLElement | null) => void,
+  ) => {
+    const { alert, level, riskScore, risk, message, source, path } = item;
+    return (
+      <article
+        key={alert.id}
+        className={`system-alert-item system-alert-${alert.level}`}
+        data-testid="system-alert-item"
+        data-window-index={index}
+        data-index={index}
+        data-alert-id={alert.id}
+        ref={measureRef}
+        style={style}
+      >
+        <div className="system-alert-head">
+          <div className="system-alert-head-main">
+            <strong className="mono">{alert.code}</strong>
+            <span className={`system-alert-level mono ${level.className}`}>
+              <span aria-hidden className="system-alert-level-icon">
+                !
+              </span>
+              {level.label}
+            </span>
+            {risk ? (
+              <span className={`system-alert-risk mono ${risk.className}`}>
+                Risk {risk.label} · {riskScore}
+              </span>
+            ) : null}
+          </div>
+          <span className="mono">{formatTime(alert.created_at)}</span>
+        </div>
+        <p className="system-alert-message mono">{renderSanitizedTextWithHighlights(message, `${alert.id}-message`)}</p>
+        <p className="system-alert-meta mono">
+          {renderSanitizedTextWithHighlights(source, `${alert.id}-source`)}
+          {path ? (
+            <>
+              {' · '}
+              {renderSanitizedTextWithHighlights(path, `${alert.id}-path`)}
+            </>
+          ) : null}
+        </p>
+      </article>
+    );
+  };
 
   return (
     <section className="card system-alert-widget" aria-label="system-alert-widget">
@@ -360,48 +443,30 @@ export default function SystemAlertWidget({
         </div>
       ) : (
         <div className="system-alert-list" data-testid="system-alert-list" ref={listRef} onScroll={handleListScroll}>
-          {topSpacerHeight > 0 ? (
-            <div className="system-alert-spacer" style={{ height: `${topSpacerHeight}px` }} aria-hidden="true" />
-          ) : null}
-          {visibleAlerts.map(({ alert, level, riskScore, risk, message, source, path }, idx) => (
-            <article
-              key={alert.id}
-              className={`system-alert-item system-alert-${alert.level}`}
-              data-testid="system-alert-item"
-              data-window-index={startIndex + idx}
-            >
-              <div className="system-alert-head">
-                <div className="system-alert-head-main">
-                  <strong className="mono">{alert.code}</strong>
-                  <span className={`system-alert-level mono ${level.className}`}>
-                    <span aria-hidden className="system-alert-level-icon">
-                      !
-                    </span>
-                    {level.label}
-                  </span>
-                  {risk ? (
-                    <span className={`system-alert-risk mono ${risk.className}`}>
-                      Risk {risk.label} · {riskScore}
-                    </span>
-                  ) : null}
-                </div>
-                <span className="mono">{formatTime(alert.created_at)}</span>
-              </div>
-              <p className="system-alert-message mono">{renderSanitizedTextWithHighlights(message, `${alert.id}-message`)}</p>
-              <p className="system-alert-meta mono">
-                {renderSanitizedTextWithHighlights(source, `${alert.id}-source`)}
-                {path ? (
-                  <>
-                    {' · '}
-                    {renderSanitizedTextWithHighlights(path, `${alert.id}-path`)}
-                  </>
-                ) : null}
-              </p>
-            </article>
-          ))}
-          {bottomSpacerHeight > 0 ? (
-            <div className="system-alert-spacer" style={{ height: `${bottomSpacerHeight}px` }} aria-hidden="true" />
-          ) : null}
+          {virtualItems.length === 0 ? (
+            <div>
+              {fallbackItems.map((item, idx) => renderAlertItem(item, idx))}
+            </div>
+          ) : (
+            <div style={{ height: `${virtualTotalSize}px`, position: 'relative' }}>
+              {virtualItems.map((virtualRow) => {
+                const item = preparedAlerts[virtualRow.index];
+                if (!item) return null;
+                return renderAlertItem(
+                  item,
+                  virtualRow.index,
+                  {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  },
+                  virtualizer.measureElement,
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       {hasMore ? (

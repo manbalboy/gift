@@ -1,6 +1,6 @@
 import re
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from typing import Any
 from uuid import uuid4
@@ -10,7 +10,6 @@ from sqlalchemy import and_, delete, desc, func, or_, select
 from app.db.system_alert_model import SystemAlertLog
 
 
-_MAX_ALERTS = 500
 _MAX_SANITIZE_INPUT_CHARS = 10_000
 _MASKED = "***[MASKED]***"
 _BEARER_TOKEN_PATTERN = re.compile(r"Bearer\s+[A-Za-z0-9\-\._~+/]+=*", flags=re.IGNORECASE)
@@ -72,6 +71,15 @@ def _extract_risk_score(context: dict[str, Any]) -> int | None:
     return max(0, min(100, value))
 
 
+def _retention_cutoff_utc() -> datetime | None:
+    from app.core.config import settings
+
+    retention_seconds = max(0, int(settings.system_alert_retention_seconds))
+    if retention_seconds <= 0:
+        return None
+    return datetime.now(timezone.utc) - timedelta(seconds=retention_seconds)
+
+
 def record_system_alert(
     *,
     level: str,
@@ -110,9 +118,16 @@ def record_system_alert(
         )
         db.flush()
 
+        cutoff = _retention_cutoff_utc()
+        if cutoff is not None:
+            db.execute(delete(SystemAlertLog).where(SystemAlertLog.created_at < cutoff))
+
+        from app.core.config import settings
+
+        max_alerts = max(100, int(settings.system_alert_max_items))
         total = int(db.scalar(select(func.count()).select_from(SystemAlertLog)) or 0)
-        if total > _MAX_ALERTS:
-            excess = total - _MAX_ALERTS
+        if total > max_alerts:
+            excess = total - max_alerts
             stale_ids = db.scalars(
                 select(SystemAlertLog.id)
                 .order_by(SystemAlertLog.created_at.asc(), SystemAlertLog.id.asc())
