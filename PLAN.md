@@ -1,79 +1,59 @@
+```markdown
 # PLAN
 
 ## 1. Task breakdown with priority
+현재 구현된 `Resume` API와 보안 로직(`_enforce_localhost_spoof_guard`)의 안정성을 높이고, 엣지 케이스를 보완하기 위한 고도화 작업을 진행합니다. (REVIEW TODO 반영)
 
-### 우선순위: P0 (보안 및 핵심 기능 결함 수정)
-*   **[백엔드] 인증 미들웨어(Viewer Token) 보안 강화 (Fail-closed 적용)**
-    *   **대상 파일**: `api/app/api/dependencies.py`
-    *   **작업 내용**: `require_viewer_token` 함수에서 환경 변수 `viewer_token` 미설정 시 요청을 통과시키지 않고 즉시 `401 Unauthorized` 또는 `500 Internal Server Error`로 예외를 발생시키도록 수정.
-*   **[백엔드] 내부 망 우회 접근(Localhost 스푸핑) 차단 로직 추가**
-    *   **대상 파일**: `api/app/api/dependencies.py`
-    *   **작업 내용**: 3100번 포트 등 로컬 내부망을 타겟으로 한 Host 헤더 위조 및 IP 스푸핑 공격을 방어하기 위한 필터링 미들웨어 추가.
-*   **[백엔드] 워크플로우 재개(Resume) 엔진 및 API 구현**
-    *   **대상 파일**: `api/app/services/workflow_engine.py`, `api/app/api/workflows.py`
-    *   **작업 내용**:
-        *   엔진 단에 `paused` 상태인 워크플로우 런타임을 다시 활성화하여 남은 노드부터 실행을 이어나가는 핵심 재개 로직 추가.
-        *   클라이언트 호출을 위한 `POST /runs/{run_id}/resume` 엔드포인트 신설.
-*   **[프론트엔드] 워크플로우 일시정지 알림 및 재개(Resume) UI 연동**
-    *   **대상 파일**: `web/src/App.tsx`, `web/src/components/` (필요시 컴포넌트 파일 추가/수정)
-    *   **작업 내용**: 실행 중인 워크플로우가 `paused` 상태일 때 사용자에게 직관적으로 상태를 알리는 UI 컴포넌트 추가 및 `POST /runs/{run_id}/resume` API를 호출하는 재개 버튼 구현.
-
-### 우선순위: P1 (테스트 커버리지 확보 및 안정성)
-*   **[테스트] 백엔드 보안 및 기능 단위 테스트 추가**
-    *   **대상 파일**: `api/tests/test_workspace_security.py` (또는 기존 테스트 파일), `api/tests/test_workflow_engine.py`, `api/tests/test_workflow_api.py`
-    *   **작업 내용**: 뷰어 토큰 설정 누락 시 접근 거부 검증 테스트, Localhost 우회 스푸핑 차단 테스트, Resume API 기능 정상 작동 여부 검증 단위 테스트 작성.
-*   **[테스트] 프론트엔드 E2E 및 UI 테스트 보강**
-    *   **대상 파일**: `web/tests/e2e/WorkflowBuilder.spec.ts` (또는 관련 E2E 파일)
-    *   **작업 내용**: Pause 상태 진입 후 UI 상태 변화 및 Resume 버튼 클릭 시 워크플로우 정상 재개 흐름 E2E 시나리오 작성.
-
-### 우선순위: P2 (고도화 및 추가 개선)
-*   **[백엔드] 장기 실행 노드 맞춤형 타임아웃 예외 처리 (신규 고도화)**
-    *   **이유**: 복잡한 빌드나 E2E 테스트 노드 등 정상적으로 오래 걸리는 작업이 엔진의 전역 타임아웃 설정에 의해 예기치 않게 강제 Pause되는 엣지 케이스를 방지하기 위함. 현재 구현과 자연스럽게 이어지는 실행 제어 안정화 기능.
-    *   **작업 내용**: 노드 정의 스키마에 특정 타임아웃 임계치(`timeout_override`) 속성을 추가하고, `workflow_engine.py`에서 이를 참조하여 타임아웃 차단 로직을 유연하게 적용.
+- **[P0] 이중화된 Resume API 호출 방어 (동시성 처리)**
+  - 대상 파일: `api/app/services/workflow_engine.py`, `api/app/api/workflows.py`
+  - 내용: 다수의 사용자가 동시에 동일한 워크플로우를 재개(Resume)하려 할 때, 엔진 내부에서 동일 노드가 중복 스케줄링되지 않도록 락(Lock) 체계 재검토 및 멱등성 보장 로직 추가.
+- **[P0] 스푸핑 방어 포트 대역 환경변수화 (보안 확장성 보완)**
+  - 대상 파일: `api/app/core/config.py`, `api/app/api/dependencies.py`
+  - 내용: 하드코딩된 `3100 <= port <= 3199` 방어 대역을 `settings.spoof_guard_ports` 환경변수(List 형태)로 분리하여 유연성 확보.
+- **[P1] 장기 방치 런타임 재개 시 우아한 실패(Graceful Failure) 처리**
+  - 대상 파일: `api/app/services/workflow_engine.py`
+  - 내용: 수일간 `paused` 상태로 방치되어 임시 저장소 아티팩트가 만료되었을 경우, 워크플로우 재개 시 크래시(Crash)를 방지하고 상태를 `failed`로 안전하게 전이하며 에러 메시지를 기록.
+- **[P1] `timeout_override` 단위 테스트 보강**
+  - 대상 파일: `api/tests/test_workflow_engine.py`
+  - 내용: 노드 단위의 타임아웃 오버라이드 적용 유무에 따른 엔진의 스케줄링 변화와 동작 차이를 명확하게 검증하는 명시적인 엣지 케이스 테스트 보강.
 
 ## 2. MVP scope / out-of-scope
 
-**MVP Scope (포함 범위):**
-*   Viewer Token 검증 미들웨어의 Fail-closed 정책 강제 적용.
-*   Host 헤더 조작 및 IP 스푸핑을 통한 내부망 우회(포트 3100 등) 접근 차단 방어선 구축.
-*   `paused` 상태의 워크플로우를 이어할 수 있는 백엔드 엔진 상태 전이 로직 및 Resume API.
-*   프론트엔드 대시보드 내 워크플로우 상태 표시 및 재개 제어 버튼 UI 컴포넌트.
-*   위 기능들에 대한 백엔드 단위/통합 테스트 및 프론트엔드 E2E 테스트 커버리지.
-*   장기 실행 노드를 위한 타임아웃 오버라이드 옵션 지원 (엣지 케이스 보완).
-
-**Out-of-scope (제외 범위):**
-*   다중 사용자 및 그룹 기반 권한 관리(RBAC) 시스템 도입 (단일 뷰어 토큰 기반 인증 유지).
-*   Visual Workflow Builder 캔버스 상에서의 복잡한 편집 및 실시간 동기화 스냅샷 복원 기능 (현재는 단순 실행 상태 재개에 집중).
-*   이벤트 재개 시 슬랙, 이메일 등의 서드파티 통합 알림 시스템 연동.
+- **MVP Scope:**
+  - `resume_run` 호출 시 락킹과 트랜잭션을 통한 중복 실행 원천 차단.
+  - `_enforce_localhost_spoof_guard`의 검증 대역을 설정(Config)에서 주입받도록 리팩토링.
+  - `paused` 노드 재개 시 필요 데이터/아티팩트 유효성 사전 검사 및 안전한 예외 핸들링.
+  - `timeout_override` 적용 전후를 비교하는 백엔 단위 테스트(Unit Test) 작성.
+  
+- **Out-of-scope:**
+  - 시각적 워크플로우 빌더(Visual Workflow Builder) UI 구현 등 거시적 신규 기능.
+  - 전체 워크플로우 엔진의 분산 큐(Redis 등) 전면 전환 (현재 구조 유지 후 점진 도입).
+  - Agent Marketplace 확장 등 코어 안정화와 무관한 추가 기능 개발.
 
 ## 3. Completion criteria
-
-*   **보안 기준**: `viewer_token` 환경 변수가 누락된 상태에서 시스템에 접근할 경우 `401 Unauthorized` (또는 설정 오류에 따른 `500`) 응답이 반환되며, 조작된 헤더를 통한 내부 우회 시도가 즉각 차단되어야 한다.
-*   **기능 기준**: 대시보드 UI를 통해 `paused` 상태인 특정 런타임에 대해 '재개(Resume)'를 요청하면 워크플로우가 중단 지점부터 정상적으로 후속 노드를 스케줄링하여 최종 상태(완료/실패)로 도달해야 한다.
-*   **테스트 기준**: Resume 흐름, 보안 토큰 실패, 우회 스푸핑 방어 시나리오에 대한 백엔드/프론트엔드 테스트 코드가 모두 구현되어 CI 환경에서 성공(Pass)해야 한다.
+- 동일한 `run_id`에 대해 거의 동시에 여러 번의 `resume` API 요청이 인입되어도 노드 실행 스레드가 1개만 생성됨을 테스트(또는 로그)로 증명.
+- 환경변수에 정의된 포트 범위에 따라 `_enforce_localhost_spoof_guard`가 유연하게 403 차단을 수행함.
+- `paused` 런타임에서 필수 아티팩트가 만료되거나 유실되었을 때, 엔진 셧다운 없이 해당 노드가 `failed`로 처리되고 클라이언트에 에러가 전파됨.
+- `pytest`를 통해 `timeout_override`가 적용된 신규 엣지 케이스 단위 테스트가 `PASS` 상태를 반환함.
 
 ## 4. Risks and test strategy
-
-*   **위험 요소 (Risks):**
-    *   **스트림 연결 해제 및 동기화**: 워크플로우 상태가 `paused`에서 `running`으로 급전환될 때 클라이언트의 SSE(Server-Sent Events) 스트림이 업데이트 이벤트를 놓쳐 UI가 갱신되지 않는 네트워크 엣지 케이스.
-    *   **기존 실행 컨텍스트 무결성**: Resume 동작 시 이전 노드들이 생성한 아티팩트 참조값이나 상태 데이터가 엔진 메모리 혹은 DB에서 유실될 경우 연쇄 실패 유발.
-*   **테스트 전략 (Test Strategy):**
-    *   **보안 통합 테스트**: 환경변수 주입을 강제로 누락시킨 컨텍스트에서 HTTP 요청을 발생시켜 Fail-closed 동작을 단언(Assert)하고, 고의로 조작된 Host 헤더 요청을 필터링하는지 엄격히 검증.
-    *   **엔진 상태 전이 모의 테스트**: Workflow Engine 라이프사이클을 Mocking하여 `running` -> `paused` -> `resume` 단계의 컨텍스트 보존과 상태 데이터 정합성을 추적.
-    *   **E2E 상호작용 및 스트림 테스트**: Playwright를 이용해 프론트엔드 UI를 조작한 후, SSE 채널을 통해 상태 변경 알림이 정상적으로 브로드캐스팅되고 화면에 실시간 렌더링되는지 확인.
+- **Risks:** 
+  - 동시성 제어(`resume_run` Lock) 로직 수정 시, 자칫 데드락(Deadlock)에 빠지거나 정상적인 단일 재개 요청도 블로킹되는 부작용 발생 가능성.
+  - 아티팩트 유효성 검사 로직이 무거워질 경우 재개 지연시간(Latency) 증가.
+- **Test Strategy:**
+  - **단위 테스트(Unit Test):** `timeout_override` 및 `_enforce_localhost_spoof_guard` 환경변수 처리 로직 검증.
+  - **통합 테스트(Integration Test):** 파이썬 `concurrent.futures` 등을 활용해 `POST /runs/{run_id}/resume` 엔드포인트에 동시 다발적 요청을 생성, 중복 스케줄링이 일어나지 않음을 검증.
+  - **안전성 테스트:** 고의로 임시 데이터를 만료(삭제)시킨 뒤 Resume을 실행하여 Graceful Failure 처리가 동작하는지 관측.
 
 ## 5. Design intent and style direction
-
-*   **기획 의도**: 개발자 플랫폼으로서 운영자가 예기치 않게 멈춘 워크플로우를 언제든지 안전하게 복구할 수 있다는 강력한 통제권과 확신을 주며, 동시에 외부의 비정상적 접근을 완벽히 차단하는 견고함을 시각적으로 전달.
-*   **디자인 풍**: 군더더기 없는 "모던 대시보드형(Modern Dashboard)". 정보의 밀도와 가독성을 우선시하며 제어 버튼은 명확한 행동 유도를 제공.
-*   **시각 원칙**:
-    *   **컬러**: 차분한 무채색 계열을 베이스로 하되, 상태 인지에 필수적인 컬러(Paused: 경고성 Yellow/Amber, Running: Blue, Success: Green, Error: Red)를 제한적이고 명확하게 사용.
-    *   **패딩/마진**: 데이터 테이블과 상태 컨트롤 패널 간 넉넉한 여백(8px 배수 시스템)을 확보하여 오클릭 방지 및 피로감 최소화.
-    *   **타이포그래피**: 고정폭(Monospace) 폰트와 산세리프(Sans-serif)를 결합하여 개발자 친화적인 로그 가독성과 시스템 텍스트의 세련됨을 동시에 충족.
-*   **반응형 원칙**: 모바일 우선(Mobile-first) 접근. 작은 화면에서도 상태 카드와 재개/중지 액션 버튼이 터치하기 쉬운 단일 컬럼 형태를 유지하고, 데스크탑 환경에서는 다중 패널 형태로 확장.
+- **기획 의도:** 관리자가 예기치 않은 시스템 에러나 외부 요인(장기 방치, 중복 클릭) 앞에서도 시스템 붕괴 없이 워크플로우를 제어할 수 있는 "신뢰성 높은 자동화 관제 경험" 제공.
+- **디자인 풍:** 에러나 예외 상황에서도 명확하고 절제된 피드백을 주는 미니멀한 대시보드형 스타일 유지.
+- **시각 원칙:** 실패나 경고 상태를 직관적으로 인지할 수 있도록 명확한 컬러 시스템(Red/Yellow)을 활용하고, 정보의 가독성을 높이는 넉넉한 여백(Padding/Margin) 및 모던한 타이포그래피 규칙 준수.
+- **반응형 원칙:** 모바일 기기에서의 외부 관제를 고려한 모바일 우선(Mobile-first) 레이아웃 적용 및 유연한 화면 대응.
 
 ## 6. Technology ruleset
-
-*   **플랫폼 분류**: web / api
-*   **web**: React 및 Vite 기반. 상태 관리와 UI 렌더링에 집중하며, Resume 버튼 및 상태 배지 등 신규 제어 컴포넌트를 설계. 프론트엔드 프리뷰 및 로컬 개발용 포트는 `3000`을 사용.
-*   **api**: FastAPI 기반. 비동기 엔진(GraphRunner)에 Resume 로직을 통합하고, Dependency Injection을 활용한 견고한 보안 미들웨어를 구성. 백엔드 프리뷰 및 로컬 개발용 포트는 `3001`을 사용.
+- **플랫폼 분류:** web / api
+- **web:** React 기반 프레임워크 (TypeScript, Vite 환경)로 계획.
+- **api:** FastAPI (Python) 기반으로 계획.
+- **실행 가이드:** 컴포넌트 구동 및 로컬 테스트 진행 시 3000번대 포트(예: Web 3000, API 3100)를 활용.
+```
