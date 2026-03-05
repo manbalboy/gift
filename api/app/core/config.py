@@ -68,6 +68,11 @@ class Settings:
         os.getenv("DEVFLOW_WORKFLOW_CANCEL_JOIN_TIMEOUT_SECONDS", "2")
     )
     workflow_human_gate_stale_hours: int = int(os.getenv("DEVFLOW_WORKFLOW_HUMAN_GATE_STALE_HOURS", "24"))
+    preview_viewer_token_secret: str = os.getenv("DEVFLOW_PREVIEW_VIEWER_TOKEN_SECRET", "")
+    preview_viewer_issue_secret: str = os.getenv("DEVFLOW_PREVIEW_VIEWER_ISSUE_SECRET", "")
+    preview_viewer_token_ttl_seconds: int = int(os.getenv("DEVFLOW_PREVIEW_VIEWER_TOKEN_TTL_SECONDS", "180"))
+    preview_protected_port_start: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_START", "7000"))
+    preview_protected_port_end: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_END", "7099"))
 
     @property
     def database_url(self) -> str:

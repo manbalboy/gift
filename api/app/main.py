@@ -9,6 +9,12 @@ from fastapi.responses import JSONResponse
 
 from app.api import workflows as workflows_api
 from app.api.agents import router as agents_router
+from app.api.preview import (
+    PREVIEW_VIEWER_TOKEN_HEADER,
+    consume_preview_viewer_token,
+    is_preview_protected_host,
+    router as preview_router,
+)
 from app.api.webhooks import router as webhooks_router
 from app.api.workflows import router as workflows_router
 from app.api.workflows import approval_router, run_router, engine as workflow_engine
@@ -62,6 +68,21 @@ async def enforce_origin_allowlist(request, call_next):
     origin = request.headers.get("origin", "").strip()
     if origin and not _is_allowed_origin(origin):
         return JSONResponse(status_code=403, content={"detail": "origin is not allowed"})
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def enforce_preview_viewer_token(request, call_next):
+    host = request.headers.get("host", "")
+    if is_preview_protected_host(host):
+        token = (
+            request.headers.get(PREVIEW_VIEWER_TOKEN_HEADER, "").strip()
+            or request.query_params.get("viewer_token", "").strip()
+        )
+        if not token:
+            return JSONResponse(status_code=403, content={"detail": "preview viewer token is required"})
+        if not consume_preview_viewer_token(token):
+            return JSONResponse(status_code=403, content={"detail": "invalid or expired preview viewer token"})
     return await call_next(request)
 
 app.add_middleware(
@@ -144,3 +165,4 @@ app.include_router(run_router, prefix=settings.api_prefix)
 app.include_router(approval_router, prefix=settings.api_prefix)
 app.include_router(agents_router, prefix=settings.api_prefix)
 app.include_router(webhooks_router, prefix=settings.api_prefix)
+app.include_router(preview_router, prefix=settings.api_prefix)

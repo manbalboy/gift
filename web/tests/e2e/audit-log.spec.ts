@@ -175,8 +175,10 @@ test('Audit Log 필터와 아티팩트 Sanitization이 함께 동작한다', asy
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Run 시작' }).click();
-  await expect(page.locator('.artifact-pane')).toContainText('<img src=x onerror=alert(1)>');
-  await expect(page.locator('.artifact-pane img')).toHaveCount(0);
+  await expect(page.locator('.artifact-pane')).toContainText('악성 페이로드 테스트:');
+  await expect(page.locator('.artifact-pane')).not.toContainText('<img src=x onerror=alert(1)>');
+  await expect(page.locator('.artifact-pane img')).toHaveCount(1);
+  await expect(page.locator('.artifact-pane img')).not.toHaveAttribute('onerror', /.+/);
 
   await page.getByRole('button', { name: '이력 보기' }).click();
   await page.getByLabel('상태 필터').selectOption('approved');

@@ -337,6 +337,8 @@ test('Human Gate 반려 시 run이 failed로 전이된다', async ({ page }) => 
   await page.getByRole('button', { name: 'Run 시작' }).click();
   await expect(page.getByRole('button', { name: 'Human Gate 반려' })).toBeEnabled();
   await page.getByRole('button', { name: 'Human Gate 반려' }).click();
+  await expect(page.getByRole('dialog', { name: 'Human Gate 반려 사유' })).toBeVisible();
+  await page.getByRole('button', { name: '반려 실행' }).click();
   await expect(page.locator('.status-failed').first()).toBeVisible();
 });
 

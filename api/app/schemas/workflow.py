@@ -41,7 +41,11 @@ class WorkflowGraph(BaseModel):
         if len(self.nodes) > 1 and len(self.edges) == 0:
             raise ValueError("workflow graph with multiple nodes requires at least one edge")
 
-        queue = [node_id for node_id, degree in indegree.items() if degree == 0]
+        entry_nodes = [node_id for node_id, degree in indegree.items() if degree == 0]
+        if len(entry_nodes) != 1:
+            raise ValueError("workflow graph must include exactly one entry node")
+
+        queue = list(entry_nodes)
         visited = 0
         while queue:
             node_id = queue.pop(0)
@@ -53,6 +57,20 @@ class WorkflowGraph(BaseModel):
 
         if visited != len(node_ids):
             raise ValueError("workflow graph cannot include cycles")
+
+        # Enforce single connected DAG from one entry so disconnected subgraphs are rejected.
+        reachable = set()
+        walk_queue = [entry_nodes[0]]
+        while walk_queue:
+            current = walk_queue.pop(0)
+            if current in reachable:
+                continue
+            reachable.add(current)
+            for target in adjacency[current]:
+                walk_queue.append(target)
+
+        if len(reachable) != len(node_ids):
+            raise ValueError("workflow graph cannot include disconnected nodes")
 
         return self
 

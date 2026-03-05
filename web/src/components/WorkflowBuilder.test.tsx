@@ -137,6 +137,28 @@ describe('WorkflowBuilder', () => {
     expect(onValidate).toHaveBeenCalledTimes(1);
   });
 
+  test('단절 그래프 검증 실패 시 드라이런 실패 메시지를 표시한다', async () => {
+    const onValidate = jest.fn().mockRejectedValue(new Error('workflow graph cannot include disconnected nodes'));
+    render(
+      <WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} onValidate={onValidate} mobileViewOnly={false} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '드라이런' }));
+    expect(await screen.findByText('드라이런 실패: 그래프 규칙을 확인해주세요.')).toBeInTheDocument();
+    expect(onValidate).toHaveBeenCalledTimes(1);
+  });
+
+  test('다중 entry 검증 실패 시 드라이런 실패 메시지를 표시한다', async () => {
+    const onValidate = jest.fn().mockRejectedValue(new Error('workflow graph must include exactly one entry node'));
+    render(
+      <WorkflowBuilder workflow={sampleWorkflow} onSave={jest.fn()} onValidate={onValidate} mobileViewOnly={false} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '드라이런' }));
+    expect(await screen.findByText('드라이런 실패: 그래프 규칙을 확인해주세요.')).toBeInTheDocument();
+    expect(onValidate).toHaveBeenCalledTimes(1);
+  });
+
   test('노드 상태가 status badge로 매핑되어 렌더링된다', () => {
     render(
       <WorkflowBuilder

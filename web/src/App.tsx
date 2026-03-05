@@ -19,8 +19,14 @@ import type {
 } from './types';
 import { createToastId } from './utils/toastId';
 
+const HUMAN_GATE_REJECT_PRESETS = [
+  '요구사항 대비 테스트 커버리지가 부족합니다.',
+  '핵심 오류가 재현되어 수정 후 재검토가 필요합니다.',
+  '보안/권한 검증 근거가 부족하여 반려합니다.',
+];
+
 export default function App() {
-  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'reconnecting' | 'closed'>('closed');
+  const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'reconnecting' | 'closed' | 'failed'>('closed');
   const [reconnectMeta, setReconnectMeta] = useState<{ attempt: number; delayMs: number } | null>(null);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [activeWorkflow, setActiveWorkflow] = useState<Workflow | null>(null);
@@ -45,6 +51,10 @@ export default function App() {
   const [humanGateAuditsLoading, setHumanGateAuditsLoading] = useState(false);
   const [staleHumanGateAlerts, setStaleHumanGateAlerts] = useState<HumanGateStaleAlert[]>([]);
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectTargetNodeId, setRejectTargetNodeId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMessage, setAuthModalMessage] = useState('reviewer/admin 권한 또는 workspace 접근 권한이 필요합니다.');
   const [apiDegradedMessage, setApiDegradedMessage] = useState<string | null>(null);
@@ -289,6 +299,13 @@ export default function App() {
       },
       onStateChange: (state) => {
         setStreamState(state);
+        if (state === 'connected') {
+          clearApiDegraded();
+          return;
+        }
+        if (state === 'failed') {
+          setApiDegradedMessage('실시간 스트림 재연결 한도를 초과했습니다. 네트워크 또는 API 서버(3108) 상태를 확인하세요.');
+        }
       },
       onReconnectSchedule: (payload) => {
         setReconnectMeta(payload.attempt > 0 ? payload : null);
@@ -307,6 +324,7 @@ export default function App() {
     if (streamState === 'connected') return '연결됨';
     if (streamState === 'connecting') return '연결 중';
     if (streamState === 'reconnecting') return '재연결 중';
+    if (streamState === 'failed') return '연결 실패';
     return '연결 종료';
   }, [streamState]);
   const nodeStatuses = useMemo(
@@ -382,11 +400,36 @@ export default function App() {
 
   const handleRejectHumanGate = async (nodeId: string) => {
     if (!run) return;
+    setRejectTargetNodeId(nodeId);
+    setRejectReason('');
+    setRejectModalOpen(true);
+  };
+
+  const handleRejectReasonPreset = (preset: string) => {
+    setRejectReason((current) => {
+      const normalizedPreset = preset.trim();
+      if (!normalizedPreset) return current;
+      const body = current.trimEnd();
+      if (!body) return normalizedPreset;
+      const lines = body.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (lines.includes(normalizedPreset)) return body;
+      const separator = /\n$/.test(body) ? '\n' : '\n\n';
+      return `${body}${separator}${normalizedPreset}`;
+    });
+  };
+
+  const handleSubmitRejectHumanGate = async () => {
+    if (!run || !rejectTargetNodeId) return;
+    setRejectSubmitting(true);
     try {
-      const rejected = await api.rejectRunNode(run.id, nodeId);
+      const rejected = await api.rejectRunNode(run.id, rejectTargetNodeId);
       setRun(rejected);
       await refreshRunAndConstellation(rejected.id);
-      enqueueToast('warning', `Human Gate(${nodeId}) 반려가 반영되었습니다.`);
+      const reasonSuffix = rejectReason.trim() ? ` 사유: ${rejectReason.trim()}` : '';
+      enqueueToast('warning', `Human Gate(${rejectTargetNodeId}) 반려가 반영되었습니다.${reasonSuffix}`);
+      setRejectModalOpen(false);
+      setRejectTargetNodeId(null);
+      setRejectReason('');
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) {
         setAuthModalMessage('반려 권한이 없습니다. reviewer/admin 역할과 올바른 workspace 접근 권한을 확인하세요.');
@@ -394,6 +437,8 @@ export default function App() {
       }
       const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : 'Human Gate 반려 실패';
       enqueueToast('error', `Human Gate 반려 실패 (${message})`);
+    } finally {
+      setRejectSubmitting(false);
     }
   };
 
@@ -526,6 +571,21 @@ export default function App() {
         <section className="network-banner" role="status" aria-live="polite">
           <strong>네트워크 복구 중</strong>
           <span className="mono">{`${(reconnectMeta.delayMs / 1000).toFixed(2)}s 후 ${reconnectMeta.attempt}회차 재연결 시도`}</span>
+        </section>
+      )}
+      {streamState === 'failed' && (
+        <section className="network-banner network-banner-danger" role="alert" aria-live="assertive">
+          <strong>서버 통신 실패</strong>
+          <span className="mono">SSE 재연결 5회 초과로 자동 재시도를 중단했습니다. 네트워크 또는 API 서버(3108)를 확인하세요.</span>
+          <button
+            type="button"
+            className="btn btn-danger"
+            onClick={() => {
+              void loadWorkflows();
+            }}
+          >
+            수동 재시도
+          </button>
         </section>
       )}
 
@@ -704,6 +764,56 @@ export default function App() {
           </section>
         </aside>
       </div>
+      {rejectModalOpen && (
+        <div className="auth-modal-backdrop" role="presentation" onClick={() => setRejectModalOpen(false)}>
+          <div
+            className={`auth-modal card ${isMobilePortrait ? 'sheet-modal' : ''}`}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Human Gate 반려 사유"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Human Gate 반려 사유</h2>
+            <p className="mono">대상 노드: {rejectTargetNodeId ?? '-'}</p>
+            <div className="webhook-actions-row reject-preset-row">
+              {HUMAN_GATE_REJECT_PRESETS.map((preset, idx) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => handleRejectReasonPreset(preset)}
+                >
+                  프리셋 {idx + 1}
+                </button>
+              ))}
+            </div>
+            <label className="reject-reason-field">
+              반려 사유
+              <textarea
+                value={rejectReason}
+                onChange={(event) => setRejectReason(event.target.value)}
+                placeholder="반려 사유를 작성하세요. 프리셋 클릭 시 기존 텍스트 뒤에 추가됩니다."
+                rows={5}
+              />
+            </label>
+            <div className="builder-actions">
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={rejectSubmitting}
+                onClick={() => {
+                  void handleSubmitRejectHumanGate();
+                }}
+              >
+                {rejectSubmitting ? '반려 처리 중...' : '반려 실행'}
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setRejectModalOpen(false)}>
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {authModalOpen && (
         <div className="auth-modal-backdrop" role="presentation" onClick={() => setAuthModalOpen(false)}>
           <div

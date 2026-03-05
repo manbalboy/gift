@@ -9,8 +9,10 @@ jest.mock('./components/Dashboard', () => ({
   __esModule: true,
   default: ({
     onApproveHumanGate,
+    onRejectHumanGate,
   }: {
     onApproveHumanGate?: (nodeId: string) => Promise<void>;
+    onRejectHumanGate?: (nodeId: string) => Promise<void>;
   }) => (
     <section data-testid="dashboard">
       <button
@@ -20,6 +22,14 @@ jest.mock('./components/Dashboard', () => ({
         }}
       >
         dashboard-approve
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void onRejectHumanGate?.('review');
+        }}
+      >
+        dashboard-reject
       </button>
     </section>
   ),
@@ -394,6 +404,49 @@ describe('App', () => {
     });
   });
 
+  test('Human Gate 반려 사유 프리셋을 연속 클릭해도 줄바꿈 포맷이 유지된다', async () => {
+    (api.startRun as jest.Mock).mockResolvedValue({
+      id: 303,
+      workflow_id: 1,
+      status: 'waiting',
+      started_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:05Z',
+      node_runs: [
+        {
+          id: 1,
+          node_id: 'review',
+          node_name: 'Review',
+          status: 'approval_pending',
+          sequence: 0,
+          log: '승인 대기 중',
+          artifact_path: null,
+          updated_at: '2026-03-05T00:00:05Z',
+        },
+      ],
+    });
+    (api.getConstellation as jest.Mock).mockResolvedValue({
+      run_id: 303,
+      status: 'waiting',
+      nodes: [{ id: 'review', label: 'Review', status: 'approval_pending', sequence: 0 }],
+      links: [],
+    });
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Run 시작' }));
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'dashboard-reject' }));
+    const textarea = await screen.findByRole('textbox', { name: '반려 사유' });
+    fireEvent.click(screen.getByRole('button', { name: '프리셋 1' }));
+    fireEvent.click(screen.getByRole('button', { name: '프리셋 2' }));
+    fireEvent.click(screen.getByRole('button', { name: '프리셋 1' }));
+
+    expect(textarea).toHaveValue(
+      '요구사항 대비 테스트 커버리지가 부족합니다.\n\n핵심 오류가 재현되어 수정 후 재검토가 필요합니다.',
+    );
+  });
+
   test('감사 로그 이력 보기 모달을 열어 Human Gate 이력을 확인한다', async () => {
     (api.startRun as jest.Mock).mockResolvedValue({
       id: 302,
@@ -459,7 +512,7 @@ describe('App', () => {
     let capturedHandlers:
       | {
           onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void;
-          onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
+          onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'failed') => void;
           onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
         }
       | undefined;
@@ -469,7 +522,7 @@ describe('App', () => {
         _workflowId: number,
         handlers: {
           onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void;
-          onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
+          onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'failed') => void;
           onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
         },
       ) => {
@@ -500,5 +553,40 @@ describe('App', () => {
       expect(screen.getAllByText('서버 상태가 불안정합니다').length).toBeGreaterThan(0);
     });
     expect(screen.getByRole('button', { name: '다시 시도' })).toBeInTheDocument();
+  });
+
+  test('SSE 재시도 한도 초과 시 서버 통신 실패 배너를 노출한다', async () => {
+    let capturedHandlers:
+      | {
+          onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void;
+          onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'failed') => void;
+          onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
+        }
+      | undefined;
+
+    (api.subscribeWorkflowRuns as jest.Mock).mockImplementation(
+      (
+        _workflowId: number,
+        handlers: {
+          onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void;
+          onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'failed') => void;
+          onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
+        },
+      ) => {
+        capturedHandlers = handlers;
+        return () => undefined;
+      },
+    );
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(capturedHandlers).toBeDefined());
+
+    act(() => {
+      capturedHandlers?.onStateChange?.('failed');
+    });
+
+    expect(screen.getByText('서버 통신 실패')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '수동 재시도' })).toBeInTheDocument();
   });
 });

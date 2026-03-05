@@ -117,3 +117,34 @@ def test_docker_ping_negative_cache_fail_fast(monkeypatch, tmp_path):
     assert calls["count"] == 1
     assert first_elapsed >= 0.05
     assert second_elapsed < 0.02
+
+
+def test_preview_port_requires_one_time_viewer_token(monkeypatch):
+    monkeypatch.setattr(settings, "preview_viewer_issue_secret", "issue-secret")
+    monkeypatch.setattr(settings, "preview_protected_port_start", 7000)
+    monkeypatch.setattr(settings, "preview_protected_port_end", 7099)
+
+    denied = client.post("/api/preview/viewer-token")
+    assert denied.status_code == 403
+
+    issued = client.post("/api/preview/viewer-token", headers={"X-Preview-Issue-Secret": "issue-secret"})
+    assert issued.status_code == 200
+    token = issued.json()["token"]
+    assert isinstance(token, str) and token
+
+    missing_token = client.get("/api/workflows", headers={"Host": "localhost:7001"})
+    assert missing_token.status_code == 403
+    assert missing_token.json()["detail"] == "preview viewer token is required"
+
+    first = client.get(
+        "/api/workflows",
+        headers={"Host": "localhost:7001", "X-Preview-Viewer-Token": token},
+    )
+    assert first.status_code == 200
+
+    reused = client.get(
+        "/api/workflows",
+        headers={"Host": "localhost:7001", "X-Preview-Viewer-Token": token},
+    )
+    assert reused.status_code == 403
+    assert reused.json()["detail"] == "invalid or expired preview viewer token"

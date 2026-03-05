@@ -186,6 +186,40 @@ def test_workflow_create_rejects_multiple_nodes_without_edge():
     assert response.status_code == 422
 
 
+def test_workflow_create_rejects_disconnected_graph():
+    payload = {
+        "name": "Disconnected",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "plan", "type": "task", "label": "Plan"},
+                {"id": "orphan", "type": "task", "label": "Orphan"},
+            ],
+            "edges": [{"id": "e1", "source": "idea", "target": "plan"}],
+        },
+    }
+    response = client.post("/api/workflows", json=payload)
+    assert response.status_code == 422
+
+
+def test_workflow_create_rejects_multiple_entry_nodes():
+    payload = {
+        "name": "Multi Entry",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "plan", "type": "task", "label": "Plan"},
+                {"id": "test", "type": "task", "label": "Test"},
+            ],
+            "edges": [{"id": "e1", "source": "plan", "target": "test"}],
+        },
+    }
+    response = client.post("/api/workflows", json=payload)
+    assert response.status_code == 422
+
+
 def test_workflow_run_rejects_unsafe_node_id_with_400():
     payload = {
         "name": "Unsafe Node",
@@ -356,6 +390,30 @@ def test_validate_workflow_graph_endpoint():
     assert body["valid"] is True
     assert body["node_count"] == len(PAYLOAD["graph"]["nodes"])
     assert body["edge_count"] == len(PAYLOAD["graph"]["edges"])
+
+
+def test_validate_workflow_graph_rejects_disconnected_and_multi_entry():
+    disconnected = {
+        "nodes": [
+            {"id": "idea", "type": "task", "label": "Idea"},
+            {"id": "plan", "type": "task", "label": "Plan"},
+            {"id": "orphan", "type": "task", "label": "Orphan"},
+        ],
+        "edges": [{"id": "e1", "source": "idea", "target": "plan"}],
+    }
+    disconnected_response = client.post("/api/workflows/validate", json=disconnected)
+    assert disconnected_response.status_code == 422
+
+    multi_entry = {
+        "nodes": [
+            {"id": "idea", "type": "task", "label": "Idea"},
+            {"id": "plan", "type": "task", "label": "Plan"},
+            {"id": "test", "type": "task", "label": "Test"},
+        ],
+        "edges": [{"id": "e1", "source": "plan", "target": "test"}],
+    }
+    multi_entry_response = client.post("/api/workflows/validate", json=multi_entry)
+    assert multi_entry_response.status_code == 422
 
 
 def test_human_gate_approve_requires_token(monkeypatch):

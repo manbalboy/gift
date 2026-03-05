@@ -1,6 +1,7 @@
 import { calculateReconnectDelayMs } from '../services/reconnect';
 
 export type SSEConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'closed';
+type SSEResolvedState = SSEConnectionState | 'failed';
 
 export function subscribeSSE<TPayload>({
   buildUrl,
@@ -11,6 +12,8 @@ export function subscribeSSE<TPayload>({
   onError,
   onStateChange,
   onReconnectSchedule,
+  maxReconnectAttempts = 5,
+  onReconnectExhausted,
 }: {
   buildUrl: (lastEventId: string | null) => string;
   eventName: string;
@@ -18,8 +21,10 @@ export function subscribeSSE<TPayload>({
   parse: (raw: string) => TPayload;
   onEvent: (payload: TPayload) => void;
   onError?: (event: Event) => void;
-  onStateChange?: (state: SSEConnectionState) => void;
+  onStateChange?: (state: SSEResolvedState) => void;
   onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
+  maxReconnectAttempts?: number;
+  onReconnectExhausted?: (attempt: number) => void;
 }) {
   let closedByClient = false;
   let stream: EventSource | null = null;
@@ -43,6 +48,11 @@ export function subscribeSSE<TPayload>({
 
   const scheduleReconnect = () => {
     if (closedByClient || reconnectTimer !== null) return;
+    if (reconnectAttempt >= Math.max(1, maxReconnectAttempts)) {
+      onStateChange?.('failed');
+      onReconnectExhausted?.(reconnectAttempt);
+      return;
+    }
     onStateChange?.('reconnecting');
     reconnectAttempt += 1;
     const delayMs = calculateReconnectDelayMs(reconnectAttempt);

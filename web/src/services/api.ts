@@ -128,7 +128,7 @@ export const api = {
     handlers: {
       onRunStatus: (payload: WorkflowRunsStreamEvent) => void;
       onError?: (event: Event) => void;
-      onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
+      onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed' | 'failed') => void;
       onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
     },
   ) => {

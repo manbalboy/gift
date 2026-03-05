@@ -17,6 +17,20 @@ describe('SafeArtifactViewer', () => {
     expect(scroller).toBeTruthy();
     fireEvent.scroll(scroller, { target: { scrollTop: 1200 } });
     expect(screen.getByText(/line-/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '다음 결과' })).toBeInTheDocument();
+  });
+
+  test('대용량 검색 결과 이동 시 활성 하이라이트를 유지하고 스크롤 좌표를 갱신한다', () => {
+    const content = Array.from({ length: 20000 }, (_, idx) => (idx % 600 === 0 ? `match-here-${idx}` : `line-${idx}`)).join('\n');
+    render(<SafeArtifactViewer content={content} fallback="fallback" className="safe-artifact-viewer" />);
+
+    fireEvent.change(screen.getByRole('textbox', { name: '뷰어 내 검색' }), { target: { value: 'match' } });
+    const scroller = document.querySelector('.artifact-virtualized-scroll') as HTMLElement;
+    expect(scroller).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '다음 결과' }));
+
+    expect(document.querySelectorAll('mark.artifact-highlight-active').length).toBeGreaterThan(0);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
   });
 
   test('뷰어 내 검색 입력 시 하이라이트와 매치 개수를 표시한다', () => {
