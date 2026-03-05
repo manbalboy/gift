@@ -10,7 +10,7 @@ import type {
   WorkflowRun,
   WorkflowRunsStreamEvent,
 } from '../types';
-import { calculateReconnectDelayMs } from './reconnect';
+import { subscribeSSE } from '../hooks/useSSE';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3101/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
@@ -132,73 +132,22 @@ export const api = {
       onReconnectSchedule?: (payload: { attempt: number; delayMs: number }) => void;
     },
   ) => {
-    let closedByClient = false;
-    let stream: EventSource | null = null;
-    let reconnectTimer: number | null = null;
-    let reconnectAttempt = 0;
-    let isConnecting = false;
-
-    const closeStream = (target?: EventSource) => {
-      if (!stream) return;
-      if (target && stream !== target) return;
-      stream.close();
-      stream = null;
-    };
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimer === null) return;
-      window.clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    };
-
-    const scheduleReconnect = () => {
-      if (closedByClient || reconnectTimer !== null) return;
-      handlers.onStateChange?.('reconnecting');
-      reconnectAttempt += 1;
-      const delayMs = calculateReconnectDelayMs(reconnectAttempt);
-      handlers.onReconnectSchedule?.({ attempt: reconnectAttempt, delayMs });
-      reconnectTimer = window.setTimeout(() => {
-        reconnectTimer = null;
-        connect();
-      }, delayMs);
-    };
-
-    const connect = () => {
-      if (closedByClient || isConnecting || stream) return;
-      isConnecting = true;
-      clearReconnectTimer();
-      handlers.onStateChange?.(reconnectAttempt > 0 ? 'reconnecting' : 'connecting');
-      const nextStream = new EventSource(`${API_ORIGIN}/api/workflows/${workflowId}/runs/stream?max_ticks=600`, {
-        withCredentials: true,
-      });
-      stream = nextStream;
-      isConnecting = false;
-      nextStream.addEventListener('open', () => {
-        if (stream !== nextStream) return;
-        reconnectAttempt = 0;
-        handlers.onStateChange?.('connected');
-        handlers.onReconnectSchedule?.({ attempt: 0, delayMs: 0 });
-      });
-      nextStream.addEventListener('run_status', (event) => {
-        if (stream !== nextStream) return;
-        const message = event as MessageEvent<string>;
-        handlers.onRunStatus(JSON.parse(message.data) as WorkflowRunsStreamEvent);
-      });
-      nextStream.onerror = (event) => {
-        if (stream !== nextStream) return;
-        handlers.onError?.(event);
-        closeStream(nextStream);
-        scheduleReconnect();
-      };
-    };
-
-    connect();
-    return () => {
-      closedByClient = true;
-      clearReconnectTimer();
-      closeStream();
-      handlers.onStateChange?.('closed');
-    };
+    return subscribeSSE<WorkflowRunsStreamEvent>({
+      buildUrl: (lastEventId) => {
+        const params = new URLSearchParams();
+        params.set('max_ticks', '600');
+        if (lastEventId) {
+          params.set('last_event_id', lastEventId);
+        }
+        return `${API_ORIGIN}/api/workflows/${workflowId}/runs/stream?${params.toString()}`;
+      },
+      eventName: 'run_status',
+      parse: (raw) => JSON.parse(raw) as WorkflowRunsStreamEvent,
+      onEvent: handlers.onRunStatus,
+      onError: handlers.onError,
+      onStateChange: handlers.onStateChange,
+      onReconnectSchedule: handlers.onReconnectSchedule,
+    });
   },
   listWebhookBlockedEvents: (limit = 20) =>
     request<WebhookBlockedEvent[]>(`/webhooks/blocked-events?limit=${Math.max(1, Math.min(limit, 50))}`),

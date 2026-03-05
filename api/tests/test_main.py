@@ -14,10 +14,10 @@ from .conftest import client
         "http://localhost:3109",
         "http://127.0.0.1",
         "https://127.0.0.1:3101",
-        "https://127.0.0.1:7099",
+        "https://127.0.0.1:3199",
         "https://manbalboy.com",
         "http://manbalboy.com:3102",
-        "http://ssh.manbalboy.com:7005",
+        "http://ssh.manbalboy.com:3105",
     ],
 )
 def test_cors_allows_expected_origins(origin: str):
@@ -37,7 +37,7 @@ def test_cors_allows_expected_origins(origin: str):
         "http://amanbalboy.com:3101",
         "http://localhost:2999",
         "http://127.0.0.1:7100",
-        "http://ssh.manbalboy.com:7200",
+        "http://ssh.manbalboy.com:3200",
     ],
 )
 def test_cors_blocks_untrusted_origins(origin: str):
@@ -46,6 +46,14 @@ def test_cors_blocks_untrusted_origins(origin: str):
         headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
     )
     assert response.status_code == 400
+
+
+def test_cors_blocks_untrusted_origin_on_non_preflight_request():
+    response = client.get(
+        "/api/workflows",
+        headers={"Origin": "http://evil-example.com:3100"},
+    )
+    assert response.status_code == 403
 
 
 def test_webhook_rejects_payload_larger_than_5mb(monkeypatch):

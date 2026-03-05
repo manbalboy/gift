@@ -29,7 +29,7 @@ from app.schemas.workflow import (
     WorkflowUpdate,
 )
 from app.services.rate_limiter import create_sse_reconnect_limiter
-from app.services.human_gate_audit import parse_status_artifact_entries
+from app.services.human_gate_audit import as_utc, parse_status_artifact_entries, scan_stale_human_gate_nodes
 from app.services.workflow_engine import WorkflowEngine
 from app.services.workspace import InvalidNodeIdError
 
@@ -41,9 +41,12 @@ engine = WorkflowEngine()
 active_stream_connections = 0
 active_stream_connections_lock = Lock()
 workflow_stream_generation: dict[int, int] = {}
+workflow_stream_event_sequence: dict[int, int] = {}
+workflow_stream_event_buffer: dict[int, list[tuple[int, str]]] = {}
 reconnect_rate_limiter = create_sse_reconnect_limiter()
 logger = logging.getLogger(__name__)
 HUMAN_GATE_SESSION_COOKIE = "devflow_human_gate_session"
+MAX_STREAM_EVENT_BUFFER_SIZE = 256
 
 
 def _get_stream_generation(workflow_id: int) -> int:
@@ -56,6 +59,27 @@ def _bump_stream_generation(workflow_id: int) -> int:
         next_generation = workflow_stream_generation.get(workflow_id, 0) + 1
         workflow_stream_generation[workflow_id] = next_generation
         return next_generation
+
+
+def _next_stream_event_id(workflow_id: int) -> int:
+    with active_stream_connections_lock:
+        next_value = workflow_stream_event_sequence.get(workflow_id, 0) + 1
+        workflow_stream_event_sequence[workflow_id] = next_value
+        return next_value
+
+
+def _append_stream_event(workflow_id: int, event_id: int, payload: str) -> None:
+    with active_stream_connections_lock:
+        buffered = workflow_stream_event_buffer.setdefault(workflow_id, [])
+        buffered.append((event_id, payload))
+        if len(buffered) > MAX_STREAM_EVENT_BUFFER_SIZE:
+            workflow_stream_event_buffer[workflow_id] = buffered[-MAX_STREAM_EVENT_BUFFER_SIZE:]
+
+
+def _stream_events_after(workflow_id: int, last_event_id: int) -> list[tuple[int, str]]:
+    with active_stream_connections_lock:
+        buffered = workflow_stream_event_buffer.get(workflow_id, [])
+        return [item for item in buffered if item[0] > last_event_id]
 
 
 def _extract_client_key(request: Request) -> str:
@@ -105,7 +129,12 @@ def _is_reconnect_rate_limited(client_key: str) -> bool:
     )
 
 
-async def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks: int) -> AsyncIterator[str]:
+async def _stream_workflow_runs_events(
+    db: Session,
+    workflow_id: int,
+    max_ticks: int,
+    last_event_id: int | None = None,
+) -> AsyncIterator[str]:
     global active_stream_connections
     generation_on_start = _get_stream_generation(workflow_id)
     heartbeat_interval = max(1, int(settings.sse_heartbeat_interval_seconds))
@@ -113,6 +142,13 @@ async def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks:
         active_stream_connections += 1
     try:
         last_data = ""
+        safe_last_event_id = -1 if last_event_id is None else max(-1, int(last_event_id))
+        if safe_last_event_id >= 0:
+            replay_items = _stream_events_after(workflow_id, safe_last_event_id)
+            for replay_event_id, replay_payload in replay_items:
+                yield f"id: {replay_event_id}\nevent: run_status\ndata: {replay_payload}\n\n"
+            if replay_items:
+                last_data = replay_items[-1][1]
         tick_limit = max(1, min(max_ticks, 600))
         for tick in range(tick_limit):
             db.expire_all()
@@ -140,7 +176,9 @@ async def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks:
             encoded = json.dumps(payload, ensure_ascii=False)
             if encoded != last_data:
                 last_data = encoded
-                yield f"event: run_status\ndata: {encoded}\n\n"
+                event_id = _next_stream_event_id(workflow_id)
+                _append_stream_event(workflow_id, event_id, encoded)
+                yield f"id: {event_id}\nevent: run_status\ndata: {encoded}\n\n"
             elif tick % heartbeat_interval == 0:
                 yield f": keepalive {datetime.now(timezone.utc).isoformat()}\n\n"
             await asyncio.sleep(1.0)
@@ -263,6 +301,7 @@ def stream_workflow_runs(
     workflow_id: int,
     request: Request,
     max_ticks: int = 180,
+    last_event_id: int | None = None,
     db: Session = Depends(get_db),
 ):
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
@@ -271,9 +310,21 @@ def stream_workflow_runs(
     client_key = _extract_client_key(request)
     if _is_reconnect_rate_limited(client_key):
         raise HTTPException(status_code=429, detail="too many reconnect attempts")
+    header_last_event_id = request.headers.get("last-event-id", "").strip()
+    if header_last_event_id and not last_event_id:
+        try:
+            parsed = int(header_last_event_id)
+        except ValueError:
+            parsed = 0
+        last_event_id = parsed if parsed >= 0 else None
 
     return StreamingResponse(
-        _stream_workflow_runs_events(db=db, workflow_id=workflow_id, max_ticks=max_ticks),
+        _stream_workflow_runs_events(
+            db=db,
+            workflow_id=workflow_id,
+            max_ticks=max_ticks,
+            last_event_id=last_event_id,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -438,8 +489,11 @@ def _build_decider_identity(role: str, workspace: str) -> str:
     return f"{safe_role}@{safe_workspace}"
 
 
-def _load_run_or_404(db: Session, run_id: int) -> WorkflowRun:
-    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+def _load_run_or_404(db: Session, run_id: int, *, for_update: bool = False) -> WorkflowRun:
+    query = db.query(WorkflowRun).filter(WorkflowRun.id == run_id)
+    if for_update:
+        query = query.with_for_update()
+    run = query.first()
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
     return run
@@ -493,22 +547,21 @@ def _parse_audit_date_range_or_400(date_range: str | None, tz_offset_minutes: in
     raise HTTPException(status_code=400, detail="invalid date_range")
 
 
-def _as_utc(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
 @run_router.post("/{run_id}/approve", response_model=WorkflowRunOut)
 def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
     approver_role, approver_workspace = _authorize_human_gate_request(request)
     decided_by = _build_decider_identity(approver_role, approver_workspace)
-    run = _load_run_or_404(db, run_id)
+    run = _load_run_or_404(db, run_id, for_update=True)
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
     workflow_workspace = _resolve_workflow_workspace_id(workflow)
     if workflow_workspace != approver_workspace:
         raise HTTPException(status_code=403, detail="workspace does not match workflow")
-    node = db.query(NodeRun).filter(NodeRun.run_id == run_id, NodeRun.node_id == node_id).first()
+    node = (
+        db.query(NodeRun)
+        .filter(NodeRun.run_id == run_id, NodeRun.node_id == node_id)
+        .with_for_update()
+        .first()
+    )
     if not node:
         raise HTTPException(status_code=404, detail="node not found in run")
     if node.status != "approval_pending":
@@ -564,12 +617,17 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
 def reject_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
     approver_role, approver_workspace = _authorize_human_gate_request(request)
     decided_by = _build_decider_identity(approver_role, approver_workspace)
-    run = _load_run_or_404(db, run_id)
+    run = _load_run_or_404(db, run_id, for_update=True)
     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
     workflow_workspace = _resolve_workflow_workspace_id(workflow)
     if workflow_workspace != approver_workspace:
         raise HTTPException(status_code=403, detail="workspace does not match workflow")
-    node = db.query(NodeRun).filter(NodeRun.run_id == run_id, NodeRun.node_id == node_id).first()
+    node = (
+        db.query(NodeRun)
+        .filter(NodeRun.run_id == run_id, NodeRun.node_id == node_id)
+        .with_for_update()
+        .first()
+    )
     if not node:
         raise HTTPException(status_code=404, detail="node not found in run")
     if node.status != "approval_pending":
@@ -679,7 +737,7 @@ def list_status_artifact_human_gate_audits(
     if status:
         entries = [entry for entry in entries if entry["decision"] == status]
     if since:
-        entries = [entry for entry in entries if _as_utc(entry["decided_at"]) >= since]
+        entries = [entry for entry in entries if as_utc(entry["decided_at"]) >= since]
 
     ordered_entries = sorted(entries, key=lambda item: item["decided_at"], reverse=True)
     total_count = len(ordered_entries)
@@ -693,39 +751,13 @@ def scan_stale_human_gate_alerts(
     limit: int = 50,
     db: Session = Depends(get_db),
 ):
-    safe_limit = max(1, min(limit, 200))
     configured_hours = max(1, int(settings.workflow_human_gate_stale_hours))
-    safe_stale_hours = max(1, min(int(stale_hours or configured_hours), 24 * 14))
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=safe_stale_hours)
-
-    pending_nodes = (
-        db.query(NodeRun, WorkflowRun)
-        .join(WorkflowRun, WorkflowRun.id == NodeRun.run_id)
-        .filter(NodeRun.status == "approval_pending")
-        .filter(WorkflowRun.status.in_(("waiting", "running")))
-        .filter(NodeRun.updated_at <= cutoff)
-        .order_by(NodeRun.updated_at.asc(), NodeRun.id.asc())
-        .limit(safe_limit)
-        .all()
+    safe_stale_hours = max(1, int(stale_hours or configured_hours))
+    return scan_stale_human_gate_nodes(
+        db,
+        stale_hours=safe_stale_hours,
+        limit=limit,
     )
-
-    now = datetime.now(timezone.utc)
-    alerts: list[dict] = []
-    for node, run in pending_nodes:
-        pending_since = _as_utc(node.updated_at)
-        alerts.append(
-            {
-                "run_id": run.id,
-                "workflow_id": run.workflow_id,
-                "node_id": node.node_id,
-                "node_name": node.node_name,
-                "run_status": run.status,
-                "node_status": node.status,
-                "pending_since": pending_since,
-                "overdue_seconds": max(0, int((now - pending_since).total_seconds())),
-            }
-        )
-    return alerts
 
 
 @approval_router.post("/{approval_id}/cancel", response_model=WorkflowRunOut)

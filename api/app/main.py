@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
+import re
 import subprocess
 import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api import workflows as workflows_api
 from app.api.agents import router as agents_router
@@ -47,8 +49,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
-_CORS_PORT_PATTERN = r"(?::(?:31\d{2}|70\d{2}))?"
 _CORS_ALLOWED_HOST_PATTERN = r"(?:(?:localhost|127\.0\.0\.1)|(?:[A-Za-z0-9-]+\.)*manbalboy\.com)"
+_CORS_ORIGIN_PATTERN = re.compile(rf"^https?://{_CORS_ALLOWED_HOST_PATTERN}(?::31\d{{2}})?$")
+
+
+def _is_allowed_origin(origin: str) -> bool:
+    return bool(_CORS_ORIGIN_PATTERN.fullmatch(origin.strip()))
+
+
+@app.middleware("http")
+async def enforce_origin_allowlist(request, call_next):
+    origin = request.headers.get("origin", "").strip()
+    if origin and not _is_allowed_origin(origin):
+        return JSONResponse(status_code=403, content={"detail": "origin is not allowed"})
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,7 +72,7 @@ app.add_middleware(
         "https://manbalboy.com",
         "http://manbalboy.com",
     ],
-    allow_origin_regex=rf"^https?://{_CORS_ALLOWED_HOST_PATTERN}{_CORS_PORT_PATTERN}$",
+    allow_origin_regex=rf"^https?://{_CORS_ALLOWED_HOST_PATTERN}(?::31\d{{2}})?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

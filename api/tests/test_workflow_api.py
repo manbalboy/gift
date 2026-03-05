@@ -1,6 +1,9 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import itertools
+from pathlib import Path
+import re
 import time
 import pytest
 
@@ -65,16 +68,16 @@ def test_cors_allows_manbalboy_subdomain_with_31xx_port():
     assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:3106"
 
 
-def test_cors_allows_manbalboy_preview_70xx_port():
+def test_cors_allows_manbalboy_subdomain_with_31xx_alt_port():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://ssh.manbalboy.com:7008",
+            "Origin": "http://ssh.manbalboy.com:3198",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert response.status_code == 200
-    assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:7008"
+    assert response.headers.get("access-control-allow-origin") == "http://ssh.manbalboy.com:3198"
 
 
 def test_cors_blocks_non_manbalboy_domain():
@@ -127,11 +130,19 @@ def test_cors_blocks_manbalboy_unsupported_port():
     response = client.options(
         "/api/workflows",
         headers={
-            "Origin": "http://ssh.manbalboy.com:7200",
+            "Origin": "http://ssh.manbalboy.com:3200",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert response.status_code == 400
+
+
+def test_cors_blocks_untrusted_origin_on_get_request():
+    response = client.get(
+        "/api/workflows",
+        headers={"Origin": "http://evil-example.com:3100"},
+    )
+    assert response.status_code == 403
 
 
 def test_workflow_create_rejects_empty_graph():
@@ -206,6 +217,33 @@ def test_workflow_runs_stream_endpoint_returns_sse(monkeypatch):
     assert "keepalive" in response.text
 
 
+def test_workflow_runs_stream_replays_events_from_last_event_id(monkeypatch):
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
+    monkeypatch.setattr(workflows_api.settings, "sse_reconnect_limit_per_second", 100)
+    workflows_api.workflow_stream_event_sequence.clear()
+    workflows_api.workflow_stream_event_buffer.clear()
+    workflows_api.reconnect_rate_limiter.reset_for_tests()
+
+    created = client.post("/api/workflows", json=PAYLOAD)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    first = client.get(f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1")
+    assert first.status_code == 200
+    match = re.search(r"id:\s*(\d+)", first.text)
+    assert match is not None
+    first_event_id = int(match.group(1))
+    assert first_event_id >= 1
+
+    replay = client.get(
+        f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1",
+        headers={"Last-Event-ID": str(first_event_id - 1)},
+    )
+    assert replay.status_code == 200
+    assert f"id: {first_event_id}" in replay.text
+    assert "event: run_status" in replay.text
+
+
 def test_workflow_runs_stream_disconnect_releases_connection(monkeypatch):
     monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
     workflows_api.active_stream_connections = 0
@@ -217,10 +255,13 @@ def test_workflow_runs_stream_disconnect_releases_connection(monkeypatch):
     with client.stream("GET", f"/api/workflows/{workflow_id}/runs/stream?max_ticks=5") as response:
         assert response.status_code == 200
         iterator = response.iter_lines()
-        first_line = next(itertools.islice(iterator, 1))
-        if isinstance(first_line, bytes):
-            first_line = first_line.decode("utf-8")
-        assert "event: run_status" in first_line
+        stream_lines: list[str] = []
+        for _ in range(4):
+            line = next(itertools.islice(iterator, 1))
+            if isinstance(line, bytes):
+                line = line.decode("utf-8")
+            stream_lines.append(line)
+        assert any("event: run_status" in line for line in stream_lines)
 
     assert workflows_api.active_stream_connections == 0
 
@@ -704,6 +745,83 @@ def test_human_gate_approve_is_idempotent_for_same_decider(monkeypatch):
     assert second.status_code == 200
 
 
+def test_human_gate_approve_concurrency_creates_single_audit(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_workspaces", "main")
+    payload = {
+        "name": "Human Gate Concurrency",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "review", "type": "human_gate", "label": "Review"},
+            ],
+            "edges": [{"id": "e1", "source": "idea", "target": "review"}],
+        },
+    }
+
+    headers = {
+        "X-Approver-Token": "secret-approver",
+        "X-Approver-Role": "reviewer",
+        "X-Workspace-Id": "main",
+    }
+
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    assert created.status_code == 200
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    for _ in range(30):
+        current = client.get(f"/api/runs/{run_id}")
+        assert current.status_code == 200
+        if any(node["status"] == "approval_pending" for node in current.json()["node_runs"]):
+            break
+        time.sleep(0.05)
+
+    def _approve_once() -> int:
+        response = client.post(f"/api/runs/{run_id}/approve?node_id=review", headers=headers)
+        return response.status_code
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        status_codes = list(executor.map(lambda _: _approve_once(), range(10)))
+
+    assert any(code == 200 for code in status_codes)
+    assert all(code in {200, 409} for code in status_codes)
+
+    db = SessionLocal()
+    try:
+        decision_count = (
+            db.query(HumanGateDecisionAudit)
+            .filter(
+                HumanGateDecisionAudit.run_id == run_id,
+                HumanGateDecisionAudit.node_id == "review",
+                HumanGateDecisionAudit.decision == "approved",
+                HumanGateDecisionAudit.decided_by == "reviewer@main",
+            )
+            .count()
+        )
+    finally:
+        db.close()
+    assert decision_count == 1
+
+
+def test_nginx_sse_timeout_is_longer_than_backend_heartbeat():
+    api_root = Path(__file__).resolve().parents[1]
+    conf = (api_root / "scripts" / "nginx" / "default.conf").resolve()
+    if not conf.exists():
+        conf = (api_root / "scripts" / "nginx" / "sse_proxy.conf").resolve()
+    assert conf.exists()
+
+    content = conf.read_text(encoding="utf-8")
+    match = re.search(r"proxy_read_timeout\s+(\d+)s\s*;", content)
+    assert match is not None
+    proxy_read_timeout_seconds = int(match.group(1))
+    heartbeat = max(1, int(workflows_api.settings.sse_heartbeat_interval_seconds))
+    assert proxy_read_timeout_seconds >= heartbeat * 6
+
+
 def test_human_gate_audit_supports_pagination_and_filters():
     created = client.post("/api/workflows", json=PAYLOAD)
     workflow_id = created.json()["id"]
@@ -962,10 +1080,13 @@ def test_cancel_run_closes_active_workflow_stream(monkeypatch):
     with client.stream("GET", f"/api/workflows/{workflow_id}/runs/stream?max_ticks=600") as response:
         assert response.status_code == 200
         iterator = response.iter_lines()
-        first = next(itertools.islice(iterator, 1))
-        if isinstance(first, bytes):
-            first = first.decode("utf-8")
-        assert "event: run_status" in first
+        first_lines: list[str] = []
+        for _ in range(4):
+            line = next(itertools.islice(iterator, 1))
+            if isinstance(line, bytes):
+                line = line.decode("utf-8")
+            first_lines.append(line)
+        assert any("event: run_status" in line for line in first_lines)
 
         cancelled = client.post(f"/api/runs/{run_id}/cancel")
         assert cancelled.status_code == 200

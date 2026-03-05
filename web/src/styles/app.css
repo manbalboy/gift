@@ -721,8 +721,31 @@ select {
 }
 
 .safe-artifact-viewer {
+  white-space: normal;
+  line-height: 22px;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.safe-artifact-viewer :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--space-8) 0 var(--space-4);
+  line-height: 1.4;
+}
+
+.safe-artifact-viewer p {
+  margin: var(--space-4) 0;
+}
+
+.safe-artifact-viewer :is(code, pre, kbd, samp) {
+  font-family: var(--font-mono);
+}
+
+.safe-artifact-viewer pre {
+  padding: var(--space-8);
+  border-radius: 8px;
+  background: #0b1020;
+  border: 1px solid var(--color-border-default);
+  overflow: auto;
 }
 
 .audit-summary {

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
 from threading import Lock
+from sqlalchemy.orm import Session
+
+from app.models.workflow import NodeRun, WorkflowRun
 
 
 _ENTRY_HEADER_PATTERN = re.compile(r"^##\s+(?P<timestamp>[^·]+?)\s+·\s+(?P<decision>[a-z_]+)\s*$")
@@ -97,3 +100,50 @@ def parse_status_artifact_entries(run_id: int, artifact_path: Path) -> list[dict
     with _STATUS_ARTIFACT_CACHE_LOCK:
         _STATUS_ARTIFACT_CACHE[cache_key] = (stat.st_mtime, [dict(item) for item in entries])
     return entries
+
+
+def as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def scan_stale_human_gate_nodes(
+    db: Session,
+    *,
+    stale_hours: int,
+    limit: int,
+    now: datetime | None = None,
+) -> list[dict]:
+    safe_limit = max(1, min(limit, 200))
+    safe_stale_hours = max(1, min(stale_hours, 24 * 14))
+    current = as_utc(now or datetime.now(timezone.utc))
+    cutoff = current - timedelta(hours=safe_stale_hours)
+
+    pending_nodes = (
+        db.query(NodeRun, WorkflowRun)
+        .join(WorkflowRun, WorkflowRun.id == NodeRun.run_id)
+        .filter(NodeRun.status == "approval_pending")
+        .filter(WorkflowRun.status.in_(("waiting", "running")))
+        .filter(NodeRun.updated_at <= cutoff)
+        .order_by(NodeRun.updated_at.asc(), NodeRun.id.asc())
+        .limit(safe_limit)
+        .all()
+    )
+
+    alerts: list[dict] = []
+    for node, run in pending_nodes:
+        pending_since = as_utc(node.updated_at)
+        alerts.append(
+            {
+                "run_id": run.id,
+                "workflow_id": run.workflow_id,
+                "node_id": node.node_id,
+                "node_name": node.node_name,
+                "run_status": run.status,
+                "node_status": node.status,
+                "pending_since": pending_since,
+                "overdue_seconds": max(0, int((current - pending_since).total_seconds())),
+            }
+        )
+    return alerts
