@@ -1,38 +1,27 @@
-> [!IMPORTANT]
-> 우선순위: `ex-code` 내부 코드를 분석해 현재 프로젝트에 모든 기능을 구현한다.
-
 # REVIEW
 
-이 문서는 `SPEC.md`와 `PLAN.md`를 바탕으로 프로젝트의 현재 상태를 점검한 리뷰 결과입니다. 주요 검토 항목별 문제점 및 개선 방향을 제시합니다.
-
 ## Functional bugs
-- **SSE 재연결 실패 및 상태 누락**: Nginx와 같은 프록시 환경에서 장기간 연결이 유지될 때 타임아웃으로 인한 SSE 스트림 단절 현상이 발생할 수 있으며, 이 경우 클라이언트가 누락된 이벤트를 복구하거나 동기화하지 못하는 버그가 예상됩니다. (재현: 포트 `3100`에서 로컬 서버 실행 후 강제 네트워크 단절 후 재연결 확인)
-- **장기 대기 워크플로우 추적 불가**: 휴먼 게이트(승인/수정/거절) 대기 상태가 24시간 이상 지속될 경우, 상태 변경 이벤트를 감지하거나 사용자에게 알림을 발생시키는 백엔드 스케줄러 로직이 정상 작동하지 않는 상태입니다.
-- **날짜 필터링 타임존 불일치**: Audit Log 뷰어에서 날짜 범위(`date_range`) 필터링 시 클라이언트의 타임존 오프셋이 백엔드 API로 전달되지 않아, 엣지 케이스에서 검색 결과 누락이 발생할 수 있습니다.
+- **Race Condition in Human Gate (Idempotency)**: `api/app/api/workflows.py`의 `approve_human_gate`, `reject_human_gate` 라우트에서 중복/동시 요청을 방지하기 위한 멱등성 검사 로직(`_is_idempotent_human_gate_decision`)이 존재하나, 다중 API 워커 환경에서 완벽한 동시성 제어(Lock)가 결여되어 있습니다. 두 요청이 정확히 동시에 도달할 경우, 둘 다 `node.status == "approval_pending"` 상태를 읽어 락 충돌이나 중복 처리(Race Condition)가 발생할 위험이 있습니다. `engine` 내부나 DB 레벨에서 `SELECT ... FOR UPDATE` 또는 Redis 분산 락 적용이 필요합니다.
+- **Artifact Viewer HTML Escaping**: `web/src/utils/sanitize.ts`에서 단순히 HTML 엔티티를 이스케이프(`<`, `>`, `&` 등)하고 개행 문자를 `<br />`로 변환하고 있습니다. XSS 방어 측면에서는 동작하지만, 아티팩트가 마크다운(Markdown)이나 리치 텍스트 포맷일 경우 포맷팅이 깨지는 기능적 한계(단순 텍스트로만 렌더링)가 존재합니다.
 
 ## Security concerns
-- **XSS(Cross-Site Scripting) 취약점**: 프론트엔드 대시보드에서 `status.md` 및 각종 텍스트/HTML 아티팩트를 렌더링할 때, 유해한 스크립트를 필터링하는 DOM 살균(Sanitization) 파이프라인이 누락되어 있습니다.
-- **CORS 설정 미흡**: 백엔드 API에서 인가된 도메인(`manbalboy.com`, `localhost`, `127.0.0.1`) 외의 Origin에서의 접근을 엄격하게 차단하고 있는지 검증이 필요합니다.
-- **멱등성(Idempotency) 결여**: 휴먼 게이트 승인/수정/거절 API에서 짧은 시간에 동일한 요청이 여러 번 발생(동시성 충돌)할 경우를 대비한 중복 요청 방지 로직이 없어, 데이터 무결성이 손상될 위험이 있습니다.
+- **CORS 설정 제한**: `api/app/main.py`에 구현된 CORS 미들웨어와 Allow-origin 정규식은 `manbalboy.com` 및 로컬 환경(`127.0.0.1`, `localhost`)의 `3100-3199` 포트를 정확하게 허용하고 있어 보안 정책을 충족합니다.
+- **XSS 살균(Sanitization)**: `SafeArtifactViewer`는 잠재적인 `<script>` 태그 실행을 효과적으로 막습니다. 제어 문자(Control characters) 제거 역치 정상적으로 구현되어 있어, 대시보드의 DOM 오염 가능성은 낮습니다. 
+- **Session/Token 검증**: 휴먼 게이트의 세션 쿠키 검증 및 시그니처(`hmac`) 확인이 안전하게 구성되어 인가되지 않은 접근을 차단합니다.
 
 ## Missing tests / weak test coverage
-- **프론트엔드 UI/E2E 테스트 부족**: Playwright를 이용한 대시보드의 Audit Log 검색, 필터링 기능 검증이 누락되어 있습니다. 또한 새로 추가된 `<SafeArtifactViewer />` 등 핵심 렌더링 컴포넌트에 대한 단위 테스트 케이스 추가가 필요합니다.
-- **백엔드 스케줄러 검증 누락**: 장기 대기 워크플로우를 감지하는 백엔드 스케줄러 로직에 대한 Time Mocking(시간 모킹) 단위 테스트가 마련되어 있지 않습니다.
-- **Nginx 기반 환경 테스트 부재**: 로컬 Nginx 환경에서의 SSE 부하 및 복원력 시뮬레이션 테스트 시나리오가 없습니다.
+- **스케줄러 Mocking 테스트 세분화**: `api/tests/test_human_gate.py` 내에 기본 동작 테스트는 포함되어 통과하였으나, 스케줄러(`scan_stale_human_gate_nodes`)가 24시간 경계를 정확히 식별하는지 엣지 케이스 단위 테스트 커버리지가 다소 모호합니다.
+- **동시성(Race Condition) 시뮬레이션 테스트**: 다중 호출 시나리오에서 락(Lock) 충돌 및 데이터 정합성을 검증하는 인위적인 동시성 단위 테스트(Concurrency test)가 누락되어 있습니다.
 
 ## Edge cases
-- 사용자가 여러 탭(포트 `3100`을 통해 접근)을 띄워 놓고 동일한 워크플로우(휴먼 게이트)에 대해 승인과 거절을 거의 동시에 누를 경우 상태 충돌.
-- 이벤트가 발생하지 않는 심야 시간대 등에 SSE Keep-Alive Ping이 멈추거나 지연되어 리버스 프록시에 의해 강제 세션이 종료되는 현상.
-- 클라이언트가 타임존이 다른 국가로 이동한 상태에서 Audit Log의 시작/종료일을 설정할 때 하루의 경계 기준이 어긋나 이벤트를 조회하지 못하는 현상.
+- **SSE Nginx 타임아웃 경계**: `settings.sse_heartbeat_interval_seconds`가 기본 15초로 설정되어 Keep-Alive 핑을 보냅니다. 배포 환경 리버스 프록시의 타임아웃 설정과 충돌하거나 네트워크 지터가 발생할 때 일시적인 스트림 단절이 일어날 엣지 케이스가 존재합니다. 클라이언트 재연결 및 `last-event-id` 기반 복구가 이를 방어하는 핵심입니다.
+- **타임존 자정(Midnight) 경계 오류**: `_parse_audit_date_range_or_400`에서 클라이언트 타임존 오프셋을 반영하여 `today`를 계산할 때, 기준 엣지가 걸쳐 있는 특정 시간대 변경 구간(DST 등)에서는 일부 이벤트 검색이 누락될 가능성이 존재합니다.
 
 ---
 
-# TODO
-
-- [x] 백엔드 API 서버에 엄격한 CORS 정책(`manbalboy.com`, `localhost`, `127.0.0.1`)을 적용하고 테스트 검증하기.
-- [x] 프론트엔드 내 아티팩트 렌더링을 위한 `<SafeArtifactViewer />` 컴포넌트 모듈화 및 DOM 살균 로직(Sanitization) 적용하기.
-- [x] `<SafeArtifactViewer />` 및 신규 UI 기능에 대한 프론트엔드 단위 및 Playwright E2E 테스트 코드 작성하기.
-- [x] 휴먼 게이트(승인/거절) API 동작 시 동시 요청 처리를 위한 중복 방지 및 멱등성 보장 로직 추가하기.
-- [x] 서버 백엔드에 SSE Keep-Alive Ping 전송 주기 추가 및 클라이언트(포트 `3100`) 측 SSE 자동 재연결 및 이벤트 복구 로직 구현하기.
-- [x] 프론트엔드 Audit Log 날짜 필터링 시 클라이언트 타임존 오프셋을 파라미터나 헤더로 전달하도록 수정하기.
-- [x] 24시간 이상 대기 중인 워크플로우를 탐지하는 백엔드 스케줄러 구현 및 Time Mocking 기법을 활용한 단위 테스트 작성하기.
+## TODO checklist
+- [ ] `api/app/api/workflows.py` 및 `engine` 로직 내 휴먼 게이트 승인/거절 시 DB 레벨 트랜잭션 락(`with_for_update()`) 또는 분산 락 추가 구현 (Race Condition 방지)
+- [ ] `web/src/utils/sanitize.ts`의 단순 텍스트 이스케이프 방식을 보완하여, 안전하면서도 시각적인 마크다운/HTML 렌더링이 가능한 로직(`DOMPurify` 등 도입) 연동 검토
+- [ ] `api/tests/test_human_gate.py`에 `freezegun`을 활용한 24시간 초과 식별 Mocking 테스트 보강
+- [ ] 백엔드 동시성(Concurrency) 호출 단위 시뮬레이션 테스트 작성
+- [ ] Nginx SSE 타임아웃(`proxy_read_timeout`) 및 백엔드 Heartbeat 인터벌 간의 호환성 점검
