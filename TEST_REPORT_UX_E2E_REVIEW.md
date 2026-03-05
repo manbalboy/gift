@@ -4,7 +4,7 @@
 - Tester: `gemini`
 - Status: `PASS`
 - Exit code: `0`
-- Duration: `52.21s`
+- Duration: `49.67s`
 - Command: `/home/docker/agentHub/workspaces/main/scripts/run_agenthub_tests.sh e2e`
 
 ## 통과한 항목
@@ -26,7 +26,7 @@
 ........................................................................ [ 37%]
 ........................................................................ [ 75%]
 ................................................                         [100%]
-192 passed in 49.52s
+192 passed in 47.16s
 ```
 
 ## stderr (tail)
