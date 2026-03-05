@@ -1,24 +1,19 @@
 # CODE CHANGE SUMMARY
 
-- Job: `560acb0b-8d2f-44d6-98d9-75b329f24dfb`
-- Issue: `#67`
+- Job: `fcf3231c-99dd-4033-85f7-19cdb448617b`
+- Issue: `#69`
 - Stage: `summarize_code_changes`
-- Generated at: `2026-03-05T03:01:43.557439+00:00`
+- Generated at: `2026-03-05T03:35:00.665626+00:00`
 
 ## Changed Files
 | Status | Path | Added | Deleted |
 |---|---|---:|---:|
+| `M` | `COMMIT_MESSAGE_COMMIT_FIX.txt` | `1` | `1` |
+| `M` | `api/tests/test_workflow_engine.py` | `11` | `40` |
 | `M` | `ex-code/main` | `0` | `0` |
-| `M` | `web/src/App.test.tsx` | `37` | `2` |
-| `M` | `web/src/App.tsx` | `109` | `3` |
-| `M` | `web/src/components/SafeArtifactViewer.test.tsx` | `14` | `0` |
-| `M` | `web/src/components/SafeArtifactViewer.tsx` | `111` | `16` |
-| `M` | `web/src/hooks/useSSE.ts` | `11` | `1` |
-| `M` | `web/src/services/api.ts` | `1` | `1` |
-| `M` | `web/src/styles/app.css` | `34` | `0` |
-| `M` | `web/tests/e2e/human-gate.spec.ts` | `2` | `0` |
-| `??` | `web/tests/e2e/artifact-memory.spec.ts` | `-` | `-` |
-| `??` | `web/tests/e2e/network-failure.spec.ts` | `-` | `-` |
+| `M` | `web/src/App.test.tsx` | `40` | `0` |
+| `M` | `web/src/App.tsx` | `2` | `1` |
+| `M` | `web/tests/e2e/workflow-builder.spec.ts` | `44` | `0` |
 
 ## Notes
 - 본 문서는 구현 직후 변경 파일을 빠르게 검토하기 위한 자동 요약입니다.
