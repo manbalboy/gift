@@ -1,5 +1,5 @@
 # Artifact
 
-- run_id: 3
-- node: TEST
+- run_id: 2
+- node: Slow Task
 - result: success

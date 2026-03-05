@@ -1,5 +1,5 @@
 # Artifact
 
-- run_id: 3
-- node: CODE
+- run_id: 2
+- node: Idea
 - result: success
