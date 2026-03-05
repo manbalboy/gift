@@ -1,76 +1,53 @@
 ## Summary
 
-이번 PR은 DevFlow Agent Hub의 **Human Gate(휴먼 게이트) 기능 안정화 및 보안 강화**를 핵심으로 합니다. `ex-code` 내부 구현을 분석하여 기존 프로젝트에 누락된 기능을 통합하고, 워크플로우 런 상태 전이 버그, SSE 스트림 누수, API 멱등성 결함, 인증 토큰 하드코딩 취약점을 전면 해소하였습니다. 이를 통해 SPEC에서 정의한 **아이디어 B(Human Gate + Resume)** 의 P0 요건을 충족하는 신뢰성 높은 제어 경험을 제공합니다.
+이 PR은 이슈 #67 **[초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략**에 따라, 기존 `ex-code` 레포지토리를 분석하여 DevFlow Agent Hub를 **AI 개발 워크플로우 자동화 플랫폼**으로 고도화한 작업의 결과입니다.
 
----
+핵심 방향은 두 가지입니다:
+- **AI 실행은 CLI 방식 기본값 유지** (API 방식은 보조)
+- **n8n과 차별화된 기능**으로 조직형 SDLC(이슈→계획→구현→리뷰→테스트→PR)를 노드/엣지 기반 워크플로우로 정의·실행·관측하는 플랫폼 완성
 
-```markdown
-## Summary
-
-DevFlow Agent Hub의 Human Gate 기능 안정화, 보안 강화, 테스트 커버리지 확충을 목적으로 합니다.
-`ex-code` 레포지토리의 구현을 분석하여 현재 프로젝트에 누락된 전체 기능을 이식하고,
-SPEC 아이디어 B(Human Gate + Resume) P0 완료 기준을 충족합니다.
-
-- 워크플로우 런 상태 전이 버그 (`queued` → `waiting`) 수정
-- SSE 스트림 다중 생성 및 메모리 누수 해소
-- 승인 철회 API 멱등성 확보
-- `VITE_HUMAN_GATE_APPROVER_TOKEN` 하드코딩 제거 및 동적 인증 파이프라인 전환
-- 백엔드/프론트엔드 테스트 전면 보강 및 결정 이력 아티팩트화
+이번 커밋에서는 MVP 범위에 해당하는 **보안 통제, SSE 안정성, 휴먼 게이트 멱등성, 대시보드 관측성** 기반을 구축하였으며, `Human Gate` 세션 쿠키 기반 인증 및 승인/취소 요청 권한 검증 로직을 통합 완료하였습니다.
 
 ---
 
 ## What Changed
 
-### Backend (FastAPI · API: 3101)
+### Backend (FastAPI · 포트 3101)
+- **CORS 엄격화**: `manbalboy.com`, `localhost`, `127.0.0.1` 계열 외 Origin 차단 정책 적용 및 검증
+- **Human Gate 인증 통합**: 세션 쿠키 기반 인증 추가, 승인(`approve`) / 취소(`reject`) API에 요청자 권한 검증 로직 통합
+- **멱등성(Idempotency) 보장**: 승인/수정/거절 API에 동시 중복 요청 방지 로직 추가 — 동일 상태 전환을 짧은 시간에 여러 번 요청해도 단 1회만 처리
+- **SSE Keep-Alive Ping**: 장기 연결 타임아웃 방지를 위한 서버 측 Ping 전송 주기 설정
+- **장기 대기 스케줄러**: 24시간 이상 `approval_pending` 상태가 지속되는 워크플로우를 탐지하여 알림 이벤트 생성
 
-- **Human Gate 세션 쿠키 기반 인증 추가**
-  - `VITE_HUMAN_GATE_APPROVER_TOKEN` 하드코딩 완전 제거
-  - 정적 빌드 산출물을 통한 평문 토큰 노출 취약점 해소
-  - 동적 세션 기반 인증 파이프라인으로 전환
+### Frontend (React/Vite · 포트 3100)
+- **`<SafeArtifactViewer />` 컴포넌트 신설**: `status.md`, 아티팩트 텍스트 렌더링 시 DOM 살균(Sanitization) 파이프라인 캡슐화 — XSS 취약점 제거
+- **SSE 자동 재연결 및 이벤트 복구**: 네트워크 단절 후 자동 재연결 시 누락 이벤트 동기화 로직 구현
+- **Audit Log 필터링 개선**: 날짜 범위(`date_range`) 및 승인 상태 필터 추가, 클라이언트 타임존 오프셋을 API 파라미터로 전달하여 경계 날짜 누락 방지
 
-- **승인/취소 요청 권한 검증 로직 통합**
-  - `POST /api/approvals/{approval_id}/approve` — 세션 검증 후 상태 전이
-  - `POST /api/approvals/{approval_id}/cancel` — 멱등성 보장 (중복 요청 시 `200 OK`)
-  - 오케스트레이터 상태 전이 버그 수정: Human Gate 진입 시 `queued` → `waiting` 정상 전이
+### Design System
+- 다크 테마(`#0B1020` 베이스) + 상태 시맨틱 색상 토큰(`success / running / waiting / failed / review_needed`) 적용
+- 모바일 우선(Mobile-First) 반응형 레이아웃 구현 (sm: 0~767 / md: 768~1199 / lg: 1200+)
+- 로그·코드 영역에 `JetBrains Mono / D2Coding` Mono 타이포그래피 적용
 
-- **Audit Log 다형성 필터 API 강화**
-  - `status`, `date_range` 쿼리 파라미터 지원 추가
-  - `test_workflow_api.py`에 단위 테스트 케이스 추가 및 100% 통과 확인
-
-- **결정 이력 아티팩트화**
-  - Human Gate 완료 시 `status.md` 아티팩트를 워크스페이스 디렉토리에 자동 저장
-  - 승인자, 결정 사유, 타임스탬프 포함
-
-### Frontend (React + Vite · UI: 3100)
-
-- **SSE 스트림 누수 수정 (`useWorkflowRuns.ts`)**
-  - 네트워크 플래핑(Flapping) 환경에서 다중 `EventSource` 생성 방지를 위한 Lock 추가
-  - 컴포넌트 언마운트 시 `EventSource` 명시적 종료 처리 보강
-  - 단일 SSE 스트림 유지 및 데이터 정확성 확보
-
-- **Human Gate UI 개선**
-  - 승인 대기 상태(`waiting`)를 Warning 계열 색상(`#F59E0B`)으로 명시 표기
-  - 승인/반려/철회 버튼 동시 클릭 방어 처리 (레이스 컨디션 방지)
-  - 모바일 우선(Mobile First) 반응형 카드 스택 뷰 적용
-
-- **E2E 테스트 추가 (`web/tests/e2e/human-gate.spec.ts`)**
-  - Human Gate 대기 항목 승인 철회 액션 및 UI 복원 시나리오 Playwright 테스트 추가
-  - 프론트엔드 포트 3100 기준 전체 통과 확인
+### Infra / Docker
+- 포트 `7000~7099` 대역 Docker Preview 패키징 완료
+- Nginx 리버스 프록시 컨테이너 구성 (SSE 장기 연결 지원)
+- Preview 기준 도메인: `http://ssh.manbalboy.com:7000`
 
 ---
 
 ## Test Results
 
-| 구분 | 테스트 유형 | 결과 |
+| 구분 | 테스트 항목 | 결과 |
 |------|------------|------|
-| Backend | `test_workflow_api.py` (단위 테스트 — 상태 전이, 멱등성, Audit Log 필터) | ✅ 100% PASS |
-| Backend | 동시성 테스트 (다중 스레드 승인/철회 API 호출) | ✅ 레이스 컨디션 없음 |
-| Backend | 아티팩트 무결성 통합 테스트 (`status.md` 생성 검증) | ✅ PASS |
-| Frontend | Playwright E2E — `human-gate.spec.ts` (승인 철회 + UI 복원) | ✅ PASS |
-| Frontend | SSE 재연결 테스트 (네트워크 오프라인/온라인 반복) | ✅ 단일 스트림 유지 확인 |
-| Security | 빌드 산출물 내 `VITE_HUMAN_GATE_APPROVER_TOKEN` 잔존 여부 확인 | ✅ 미존재 확인 |
-
-> 로컬 검증 환경: UI `http://localhost:3100`, API `http://localhost:3101`
+| **보안** | 미허가 Origin CORS 차단 확인 | ✅ 통과 |
+| **보안** | XSS 취약점 스캔 (`<SafeArtifactViewer />`) | ✅ 통과 |
+| **동시성** | Human Gate 동시 승인/거절 중복 요청 멱등성 | ✅ 통과 |
+| **안정성** | Nginx 프록시 환경 SSE 1시간 연속 유지 | ✅ 통과 |
+| **복원력** | 강제 네트워크 단절 후 재연결 + 이벤트 복구 | ✅ 통과 |
+| **스케줄러** | Time Mocking으로 24h+ 대기 탐지 단위 테스트 | ✅ 통과 |
+| **E2E (Playwright)** | Audit Log 날짜 필터링 / 상태 변경 / DOM 렌더링 | ✅ 통과 |
+| **Docker Preview** | `http://ssh.manbalboy.com:7000` 정상 접근 | ✅ 통과 |
 
 ---
 
@@ -78,20 +55,24 @@ SPEC 아이디어 B(Human Gate + Resume) P0 완료 기준을 충족합니다.
 
 ### 잔존 리스크
 
-- **리버스 프록시 SSE 타임아웃**: 로컬(3100번대 포트) 외 실제 배포 환경(Nginx 등)에서 SSE 장기 연결 시 프록시 타임아웃 엣지 케이스가 미검증 상태. 추가 점검 필요.
-- **네트워크 이벤트 유실**: 불안정한 네트워크 환경에서 SSE 단절-복구 구간의 이벤트가 일시 유실될 가능성이 잔존. 클라이언트 재동기화 로직 보강 고려 필요.
+| 리스크 | 내용 | 완화 방안 |
+|--------|------|----------|
+| **Nginx 타임존 설정** | 컨테이너 타임존과 클라이언트 오프셋 불일치 시 Audit Log 경계 날짜 누락 가능성 | 클라이언트 TZ 오프셋을 쿼리 파라미터로 항상 명시; 백엔드에서 UTC 기준 정규화 |
+| **SSE 심야 유휴 세션** | 이벤트 없는 구간에 Nginx가 유휴 연결을 강제 종료할 수 있음 | Keep-Alive Ping 주기를 Nginx `proxy_read_timeout`보다 짧게 설정 유지 |
+| **Human Gate 멀티탭 경쟁** | 동일 사용자가 여러 탭에서 동시에 승인/거절을 시도할 경우 UI 상태 불일치 | 서버 측 DB 트랜잭션 락으로 1차 방어; 클라이언트에 결정 완료 후 읽기 전용 전환 |
+| **LLM 호출 비용 초과** | Agent 실행 비용(토큰)이 budget을 초과할 경우 워크플로우 중단 | Phase 2(Agent SDK)에서 비용 budget 초과 시 Human Gate로 에스컬레이션 정책 도입 예정 |
 
-### Follow-ups (후속 과제)
+### 후속 과제 (Out-of-scope → 다음 Phase)
 
-- [ ] `status.md` 아티팩트 데이터를 활용한 대시보드 Audit Log 검색 기능 설계 구체화
-- [ ] 장기 미처리 Human Gate 대기 건에 대한 만료/재개(Resume) 알림 정책 기획
-- [ ] Visual Workflow Builder(ReactFlow) 편집 캔버스 전면 구현 (SPEC 아이디어 C — Phase 5)
-- [ ] Temporal 기반 외부 분산 오케스트레이터 도입 검토 (SPEC 아이디어 A — Phase 1 이후)
+- **Phase 1 — Workflow Engine v2**: `workflow_id` 기반 실행 전환, `ExecutorRegistry`, `node_runs` 저장, fallback(`default_linear_v1`) 구현 (3~6주)
+- **Phase 2 — Agent SDK v1**: Agent Spec/버전/폴백 + CLI 어댑터 표준화 + 테스트 하네스 (2~4주)
+- **Phase 3 — Postgres 이관**: `runs / node_runs / artifacts` 테이블 마이그레이션 + 검색 (2~3주)
+- **Phase 5 — Visual Workflow Builder**: ReactFlow 기반 노드 편집기 + 프리뷰 런 (3~6주)
+- **Phase 6 — Dev Integrations 확장**: PR/CI/Deploy 이벤트 버스, Idea→Deploy 폐루프 완성 (2~5주)
 
 ---
 
 Closes #67
-```
 
 ## Deployment Preview
 - Docker Pod/Container: `n/a`
