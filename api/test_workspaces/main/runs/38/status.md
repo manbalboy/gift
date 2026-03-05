@@ -1,46 +1,11 @@
 # Human Gate Status Log
 
-## 2026-03-05T01:18:04.826308+00:00 · cancelled
+## 2026-03-05T11:30:00+00:00 · approved
 - node_id: review
 - decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+- payload: {"workspace_id": "main", "tag": "inside"}
 
-## 2026-03-05T01:18:28.671596+00:00 · cancelled
+## 2026-03-04T22:30:00+00:00 · approved
 - node_id: review
 - decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:18:28.744248+00:00 · cancelled
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:18:51.787444+00:00 · cancelled
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:18:51.818656+00:00 · cancelled
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:21:20.100146+00:00 · cancelled
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:21:20.190397+00:00 · cancelled
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:28:22.563318+00:00 · cancelled
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:28:22.617837+00:00 · cancelled
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"approval_id": 71, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+- payload: {"workspace_id": "main", "tag": "outside"}
