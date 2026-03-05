@@ -52,7 +52,9 @@ export default function LoopMonitorWidget({
         </article>
         <article className="loop-monitor-panel">
           <span className="loop-monitor-label">Remaining Loops</span>
-          <strong className={`loop-monitor-value mono ${isOverrun ? 'loop-monitor-value-overrun' : ''}`}>{remainingLoopCount}</strong>
+          <strong className={`loop-monitor-value mono ${isOverrun ? 'loop-monitor-value-overrun' : ''}`}>
+            {isOverrun ? `+${loopOverrunCount}` : remainingLoopCount}
+          </strong>
           <p className={`loop-monitor-meta mono ${isOverrun ? 'loop-monitor-meta-overrun' : ''}`}>
             max_loop_count={maxLoopCount} · cycle={cycleCount}
             {isOverrun ? ` · overrun=+${loopOverrunCount}` : ''}

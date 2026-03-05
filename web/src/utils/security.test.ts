@@ -34,13 +34,36 @@ describe('security utils', () => {
     expect(result).not.toContain('hello.world+123');
   });
 
-  test('제네릭 표기(<T>)는 보존하면서 악성 태그는 제거한다', () => {
-    const payload = 'result=<T> payload=<User> <script>alert(1)</script>';
+  test('제네릭 표기(<T>, <any>)는 보존하면서 악성 태그는 제거한다', () => {
+    const payload = 'result=<T> payload=<User> fallback=<any> <script>alert(1)</script>';
     const result = sanitizeAlertText(payload);
 
     expect(result).toContain('<T>');
     expect(result).toContain('<User>');
+    expect(result).toContain('<any>');
     expect(result).not.toContain('<script>');
     expect(result).not.toContain('alert(1)');
+  });
+
+  test('비정형 중첩 스크립트 페이로드(<scr<script>ipt>)를 무해화한다', () => {
+    const payload = 'before <scr<script>ipt>alert(1)</scr<script>ipt> after';
+    const result = sanitizeAlertText(payload);
+
+    expect(result).toContain('before');
+    expect(result).toContain('after');
+    expect(result.toLowerCase()).not.toContain('<script>');
+    expect(result.toLowerCase()).not.toContain('</script>');
+    expect(result).toContain('alert(1)');
+  });
+
+  test('다중 인코딩 형태의 svg/script 페이로드를 문자열 수준으로 정리한다', () => {
+    const payload = '&lt;svg&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;/svg&gt; token=abc123';
+    const result = sanitizeAlertText(payload);
+
+    expect(result).not.toContain('<svg>');
+    expect(result).not.toContain('<script>');
+    expect(result).toContain('&lt;svg&gt;');
+    expect(result).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(result).toContain(`token=${MASKED_TOKEN}`);
   });
 });

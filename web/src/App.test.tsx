@@ -485,7 +485,7 @@ describe('App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '상세 보기' }));
     expect(screen.getByRole('dialog', { name: '큐 오버플로우 상세' })).toBeInTheDocument();
-    expect(screen.getByText('instruction_id: instr-001')).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes('instruction_id: instr-001'))).toBeInTheDocument();
 
     jest.useRealTimers();
   });

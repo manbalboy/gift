@@ -7,7 +7,7 @@ const CONTROL_CHAR_PATTERN = /[^\P{C}\n\r\t]/gu;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi;
 const SENSITIVE_PAIR_PATTERN =
   /\b([A-Za-z0-9._-]*?(?:token|secret|password|api[_-]?key)[A-Za-z0-9._-]*)\b\s*[:=]\s*([^\s,;]+)/gi;
-const SAFE_GENERIC_PATTERN = /<([A-Z][A-Za-z0-9_,.[\]\s|&?:-]{0,80})>/g;
+const SAFE_GENERIC_PATTERN = /<([A-Za-z][A-Za-z0-9_,.[\]\s|&?:-]{0,80})>/g;
 const UNSAFE_GENERIC_KEYWORDS = new Set([
   'SCRIPT',
   'STYLE',

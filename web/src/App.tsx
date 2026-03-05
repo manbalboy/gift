@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Dashboard from './components/Dashboard';
+import ErrorLogModal from './components/ErrorLogModal';
 import LiveRunConstellation from './components/LiveRunConstellation';
 import LoopMonitorWidget from './components/LoopMonitorWidget';
 import SafeArtifactViewer from './components/SafeArtifactViewer';
@@ -1030,6 +1031,7 @@ export default function App() {
                 }}
                 disabled={loopEngineActionLoading || loopEngineStatus?.mode === 'running'}
               >
+                {loopPendingAction === 'start' && loopEngineActionLoading && <span className="loop-engine-spinner loop-engine-spinner-inline" aria-hidden />}
                 시작
               </button>
               <button
@@ -1040,6 +1042,7 @@ export default function App() {
                 }}
                 disabled={loopEngineActionLoading || loopEngineStatus?.mode !== 'running'}
               >
+                {loopPendingAction === 'pause' && loopEngineActionLoading && <span className="loop-engine-spinner loop-engine-spinner-inline" aria-hidden />}
                 일시정지
               </button>
               <button
@@ -1050,6 +1053,7 @@ export default function App() {
                 }}
                 disabled={loopEngineActionLoading || loopEngineStatus?.mode !== 'paused'}
               >
+                {loopPendingAction === 'resume' && loopEngineActionLoading && <span className="loop-engine-spinner loop-engine-spinner-inline" aria-hidden />}
                 재개
               </button>
               <button
@@ -1060,6 +1064,7 @@ export default function App() {
                 }}
                 disabled={loopEngineActionLoading || !loopEngineStatus || loopEngineStatus.mode === 'idle'}
               >
+                {loopPendingAction === 'stop' && loopEngineActionLoading && <span className="loop-engine-spinner loop-engine-spinner-inline" aria-hidden />}
                 중지
               </button>
             </div>
@@ -1275,26 +1280,23 @@ export default function App() {
         </aside>
       </div>
       {queueOverflowDetail && (
-        <div className="auth-modal-backdrop" role="presentation" onClick={() => setQueueOverflowDetail(null)}>
-          <div
-            className={`auth-modal card ${isMobilePortrait ? 'sheet-modal' : ''}`}
-            role="dialog"
-            aria-modal="true"
-            aria-label="큐 오버플로우 상세"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2>큐 오버플로우 상세</h2>
-            <p>루프 지시사항 큐가 포화되어 일부 항목이 drop 처리되었습니다.</p>
-            <p className="mono">instruction_id: {queueOverflowDetail.instructionId}</p>
-            <p className="mono">reason: {queueOverflowDetail.droppedReason}</p>
-            <p className="mono">updated_at: {queueOverflowDetail.updatedAt}</p>
-            <div className="builder-actions">
-              <button type="button" className="btn btn-primary" onClick={() => setQueueOverflowDetail(null)}>
-                확인
-              </button>
-            </div>
-          </div>
-        </div>
+        <ErrorLogModal
+          title="큐 오버플로우 상세"
+          summary="루프 지시사항 큐가 포화되어 일부 항목이 drop 처리되었습니다."
+          detailLines={[
+            `instruction_id: ${queueOverflowDetail.instructionId}`,
+            `reason: ${queueOverflowDetail.droppedReason}`,
+            `updated_at: ${queueOverflowDetail.updatedAt}`,
+          ]}
+          isMobileSheet={isMobilePortrait}
+          onCopyResult={(status) =>
+            enqueueToast(
+              status === 'done' ? 'warning' : 'error',
+              status === 'done' ? '에러 로그를 클립보드에 복사했습니다.' : '에러 로그 복사에 실패했습니다.',
+            )
+          }
+          onClose={() => setQueueOverflowDetail(null)}
+        />
       )}
       {rejectModalOpen && (
         <div className="auth-modal-backdrop" role="presentation" onClick={() => setRejectModalOpen(false)}>

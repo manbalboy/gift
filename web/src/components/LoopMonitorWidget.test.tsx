@@ -65,7 +65,7 @@ describe('LoopMonitorWidget', () => {
 
   test('루프 제한을 초과하면 overrun 값을 경고 색상으로 노출한다', () => {
     render(<LoopMonitorWidget status={makeStatus({ cycle_count: 130, quality_score: 45 })} run={makeRun()} maxLoopCount={120} />);
-    expect(screen.getByText('0')).toHaveClass('loop-monitor-value-overrun');
+    expect(screen.getByText('+10')).toHaveClass('loop-monitor-value-overrun');
     expect(screen.getByText('max_loop_count=120 · cycle=130 · overrun=+10')).toHaveClass('loop-monitor-meta-overrun');
   });
 });
