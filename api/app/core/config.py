@@ -49,6 +49,7 @@ class Settings:
     sse_reconnect_limit_per_second: int = int(os.getenv("DEVFLOW_SSE_RECONNECT_LIMIT_PER_SECOND", "2"))
     sse_rate_limit_backend: str = os.getenv("DEVFLOW_SSE_RATE_LIMIT_BACKEND", "redis")
     sse_rate_limit_window_seconds: int = int(os.getenv("DEVFLOW_SSE_RATE_LIMIT_WINDOW_SECONDS", "1"))
+    sse_heartbeat_interval_seconds: float = float(os.getenv("DEVFLOW_SSE_HEARTBEAT_INTERVAL_SECONDS", "15"))
     sse_local_fallback_limit_ratio: float = float(os.getenv("DEVFLOW_SSE_LOCAL_FALLBACK_LIMIT_RATIO", "0.5"))
     sse_redis_fallback_ttl_seconds: float = float(os.getenv("DEVFLOW_SSE_REDIS_FALLBACK_TTL_SECONDS", "4"))
     sse_trusted_proxy_ips: str = os.getenv("DEVFLOW_SSE_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
@@ -66,6 +67,7 @@ class Settings:
     workflow_cancel_join_timeout_seconds: float = float(
         os.getenv("DEVFLOW_WORKFLOW_CANCEL_JOIN_TIMEOUT_SECONDS", "2")
     )
+    workflow_human_gate_stale_hours: int = int(os.getenv("DEVFLOW_WORKFLOW_HUMAN_GATE_STALE_HOURS", "24"))
 
     @property
     def database_url(self) -> str:

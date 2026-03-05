@@ -97,3 +97,30 @@ export type HumanGateAuditListResponse = {
   limit: number;
   offset: number;
 };
+
+export type StatusArtifactAuditEntry = {
+  run_id: number;
+  node_id: string;
+  decision: string;
+  decided_by: string;
+  decided_at: string;
+  payload: Record<string, unknown>;
+};
+
+export type StatusArtifactAuditListResponse = {
+  items: StatusArtifactAuditEntry[];
+  total_count: number;
+  limit: number;
+  offset: number;
+};
+
+export type HumanGateStaleAlert = {
+  run_id: number;
+  workflow_id: number;
+  node_id: string;
+  node_name: string;
+  run_status: string;
+  node_status: string;
+  pending_since: string;
+  overdue_seconds: number;
+};

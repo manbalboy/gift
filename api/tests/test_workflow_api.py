@@ -6,7 +6,7 @@ import pytest
 
 from app.api import workflows as workflows_api
 from app.db.session import SessionLocal
-from app.models.workflow import HumanGateDecisionAudit
+from app.models.workflow import HumanGateDecisionAudit, NodeRun, WorkflowRun
 
 from .conftest import client
 
@@ -194,14 +194,16 @@ def test_workflow_run_rejects_unsafe_node_id_with_400():
 
 def test_workflow_runs_stream_endpoint_returns_sse(monkeypatch):
     monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
+    monkeypatch.setattr(workflows_api.settings, "sse_heartbeat_interval_seconds", 1)
     created = client.post("/api/workflows", json=PAYLOAD)
     assert created.status_code == 200
     workflow_id = created.json()["id"]
 
-    response = client.get(f"/api/workflows/{workflow_id}/runs/stream?max_ticks=1")
+    response = client.get(f"/api/workflows/{workflow_id}/runs/stream?max_ticks=2")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert f'"workflow_id": {workflow_id}' in response.text
+    assert "keepalive" in response.text
 
 
 def test_workflow_runs_stream_disconnect_releases_connection(monkeypatch):
@@ -557,6 +559,113 @@ def test_human_gate_decision_creates_audit_log_and_can_be_listed(monkeypatch):
     assert latest["decision"] == "approved"
     assert latest["decided_by"] == "reviewer@main"
     assert latest["payload"]["workspace_id"] == "main"
+
+
+def test_status_artifact_audits_can_be_listed_from_status_md():
+    created = client.post("/api/workflows", json=PAYLOAD)
+    workflow_id = created.json()["id"]
+    run = client.post(f"/api/workflows/{workflow_id}/runs")
+    run_id = run.json()["id"]
+
+    artifact = (
+        "# Human Gate Status Log\n\n"
+        "## 2026-03-01T10:20:30+00:00 · approved\n"
+        "- node_id: review\n"
+        "- decided_by: reviewer@main\n"
+        "- payload: {\"workspace_id\": \"main\", \"memo\": \"ok\"}\n\n"
+        "## 2026-03-05T12:00:00+00:00 · rejected\n"
+        "- node_id: review\n"
+        "- decided_by: admin@main\n"
+        "- payload: {\"workspace_id\": \"main\", \"memo\": \"retry\"}\n"
+    )
+    status_path = workflows_api.engine.workspace.root / "main" / "runs" / str(run_id) / "status.md"
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(artifact, encoding="utf-8")
+
+    all_items = client.get(f"/api/runs/{run_id}/status-audits?limit=10")
+    assert all_items.status_code == 200
+    body = all_items.json()
+    assert body["total_count"] == 2
+    assert body["items"][0]["decision"] == "rejected"
+    assert body["items"][1]["decision"] == "approved"
+
+    filtered = client.get(f"/api/runs/{run_id}/status-audits?status=approved&date_range=30d")
+    assert filtered.status_code == 200
+    filtered_body = filtered.json()
+    assert filtered_body["total_count"] == 1
+    assert filtered_body["items"][0]["decision"] == "approved"
+
+
+def test_status_artifact_audits_today_respects_timezone_offset(monkeypatch):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            current = cls(2026, 3, 5, 12, 0, 0, tzinfo=timezone.utc)
+            return current if tz is not None else current.replace(tzinfo=None)
+
+    monkeypatch.setattr(workflows_api, "datetime", FrozenDateTime)
+    created = client.post("/api/workflows", json=PAYLOAD)
+    workflow_id = created.json()["id"]
+    run = client.post(f"/api/workflows/{workflow_id}/runs")
+    run_id = run.json()["id"]
+
+    artifact = (
+        "# Human Gate Status Log\n\n"
+        "## 2026-03-05T11:30:00+00:00 · approved\n"
+        "- node_id: review\n"
+        "- decided_by: reviewer@main\n"
+        "- payload: {\"workspace_id\": \"main\", \"tag\": \"inside\"}\n\n"
+        "## 2026-03-04T22:30:00+00:00 · approved\n"
+        "- node_id: review\n"
+        "- decided_by: reviewer@main\n"
+        "- payload: {\"workspace_id\": \"main\", \"tag\": \"outside\"}\n"
+    )
+    status_path = workflows_api.engine.workspace.root / "main" / "runs" / str(run_id) / "status.md"
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(artifact, encoding="utf-8")
+
+    response = client.get(f"/api/runs/{run_id}/status-audits?status=approved&date_range=today&tz_offset_minutes=540")
+    assert response.status_code == 200
+    body = response.json()
+    target_items = [item for item in body["items"] if item["payload"].get("tag") in {"inside", "outside"}]
+    assert len(target_items) == 1
+    assert target_items[0]["payload"]["tag"] == "inside"
+
+
+def test_scan_stale_human_gate_alerts_returns_overdue_pending_nodes():
+    payload = {
+        "name": "Stale Human Gate",
+        "description": "",
+        "graph": {"nodes": [{"id": "review", "type": "human_gate", "label": "Review"}], "edges": []},
+    }
+    created = client.post("/api/workflows", json=payload)
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    run_id = run.json()["id"]
+
+    for _ in range(20):
+        current = client.get(f"/api/runs/{run_id}")
+        node = current.json()["node_runs"][0]
+        if node["status"] == "approval_pending":
+            break
+        time.sleep(0.1)
+
+    db = SessionLocal()
+    try:
+        stale_point = datetime.now(timezone.utc) - timedelta(hours=30)
+        node = db.query(NodeRun).filter(NodeRun.run_id == run_id, NodeRun.node_id == "review").first()
+        workflow_run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+        assert node is not None
+        assert workflow_run is not None
+        node.updated_at = stale_point
+        workflow_run.status = "waiting"
+        db.commit()
+    finally:
+        db.close()
+
+    scanned = client.post("/api/runs/human-gate-alerts/scan?stale_hours=24&limit=10")
+    assert scanned.status_code == 200
+    items = scanned.json()
+    assert any(item["run_id"] == run_id and item["node_id"] == "review" for item in items)
 
 
 def test_human_gate_approve_is_idempotent_for_same_decider(monkeypatch):

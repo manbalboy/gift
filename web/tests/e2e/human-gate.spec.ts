@@ -458,6 +458,31 @@ test('Human Gate 승인 대기 철회 시 노드가 queued로 복구된다', asy
       ),
     });
   });
+  await page.route('**/api/runs/404/status-audits**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        cancelled
+          ? {
+              items: [
+                {
+                  run_id: 404,
+                  node_id: 'review',
+                  decision: 'cancelled',
+                  decided_by: 'reviewer@main',
+                  decided_at: '2026-03-05T00:00:09Z',
+                  payload: { workspace_id: 'main' },
+                },
+              ],
+              total_count: 1,
+              limit: 10,
+              offset: 0,
+            }
+          : { items: [], total_count: 0, limit: 10, offset: 0 },
+      ),
+    });
+  });
   await page.route('**/api/webhooks/blocked-events**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });

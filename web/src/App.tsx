@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Dashboard from './components/Dashboard';
 import LiveRunConstellation from './components/LiveRunConstellation';
+import SafeArtifactViewer from './components/SafeArtifactViewer';
 import StatusBadge from './components/StatusBadge';
 import Toast, { type ToastItem } from './components/Toast';
 import WorkflowBuilder from './components/WorkflowBuilder';
@@ -10,7 +11,8 @@ import { ApiError, api } from './services/api';
 import type {
   ConstellationData,
   HumanGateAuditDecision,
-  HumanGateAuditEntry,
+  HumanGateStaleAlert,
+  StatusArtifactAuditEntry,
   WebhookBlockedEvent,
   Workflow,
   WorkflowRun,
@@ -34,13 +36,14 @@ export default function App() {
   const [artifactHasMore, setArtifactHasMore] = useState(false);
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [blockedWebhookEvents, setBlockedWebhookEvents] = useState<WebhookBlockedEvent[]>([]);
-  const [humanGateAudits, setHumanGateAudits] = useState<HumanGateAuditEntry[]>([]);
+  const [humanGateAudits, setHumanGateAudits] = useState<StatusArtifactAuditEntry[]>([]);
   const [humanGateAuditTotalCount, setHumanGateAuditTotalCount] = useState(0);
   const [humanGateAuditLimit] = useState(10);
   const [humanGateAuditOffset, setHumanGateAuditOffset] = useState(0);
   const [humanGateAuditStatusFilter, setHumanGateAuditStatusFilter] = useState<HumanGateAuditDecision | 'all'>('all');
-  const [humanGateAuditDateRange, setHumanGateAuditDateRange] = useState<'all' | '24h' | '7d' | '30d'>('all');
+  const [humanGateAuditDateRange, setHumanGateAuditDateRange] = useState<'all' | '24h' | '7d' | '30d' | 'today'>('all');
   const [humanGateAuditsLoading, setHumanGateAuditsLoading] = useState(false);
+  const [staleHumanGateAlerts, setStaleHumanGateAlerts] = useState<HumanGateStaleAlert[]>([]);
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMessage, setAuthModalMessage] = useState('reviewer/admin 권한 또는 workspace 접근 권한이 필요합니다.');
@@ -50,6 +53,7 @@ export default function App() {
   const toastsRef = useRef<ToastItem[]>([]);
   const toastQueueRef = useRef<ToastItem[]>([]);
   const dedupedToastKeysRef = useRef<Set<string>>(new Set());
+  const timezoneOffsetMinutes = useMemo(() => new Date().getTimezoneOffset(), []);
 
   const commitVisibleToasts = (next: ToastItem[]) => {
     toastsRef.current = next;
@@ -171,11 +175,12 @@ export default function App() {
     const syncAudits = async () => {
       setHumanGateAuditsLoading(true);
       try {
-        const response = await api.getHumanGateAudits(run.id, {
+        const response = await api.getStatusArtifactAudits(run.id, {
           limit: humanGateAuditLimit,
           offset: humanGateAuditOffset,
           status: humanGateAuditStatusFilter,
           dateRange: humanGateAuditDateRange,
+          timezoneOffsetMinutes,
         });
         if (!cancelled) {
           setHumanGateAudits(response.items);
@@ -197,7 +202,41 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [run?.id, run?.updated_at, humanGateAuditLimit, humanGateAuditOffset, humanGateAuditStatusFilter, humanGateAuditDateRange]);
+  }, [
+    run?.id,
+    run?.updated_at,
+    humanGateAuditLimit,
+    humanGateAuditOffset,
+    humanGateAuditStatusFilter,
+    humanGateAuditDateRange,
+    timezoneOffsetMinutes,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const syncStaleAlerts = async () => {
+      try {
+        const alerts = await api.scanStaleHumanGateAlerts({ staleHours: 24, limit: 20 });
+        if (!cancelled) {
+          setStaleHumanGateAlerts(alerts);
+        }
+      } catch {
+        if (!cancelled) {
+          setStaleHumanGateAlerts([]);
+        }
+      }
+    };
+
+    void syncStaleAlerts();
+    const timer = window.setInterval(() => {
+      void syncStaleAlerts();
+    }, 30_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [run?.id, run?.updated_at]);
 
   useEffect(() => {
     setHumanGateAuditOffset(0);
@@ -548,9 +587,11 @@ export default function App() {
                   <span className="mono">node: {selectedArtifactNodeId}</span>
                 )}
               </div>
-              <pre className="log-pane mono artifact-pane">
-                {artifactContent || '아티팩트를 선택하면 일부 구간부터 순차 로딩합니다.'}
-              </pre>
+              <SafeArtifactViewer
+                className="log-pane mono artifact-pane safe-artifact-viewer"
+                content={artifactContent}
+                fallback="아티팩트를 선택하면 일부 구간부터 순차 로딩합니다."
+              />
               <div className="webhook-actions-row">
                 <button
                   type="button"
@@ -578,7 +619,7 @@ export default function App() {
             </div>
             <div className="audit-summary">
               <div className="artifact-viewer-header">
-                <strong>Human Gate 감사 로그</strong>
+                <strong>Human Gate 감사 로그 (`status.md`)</strong>
                 <span className="mono">총 {humanGateAuditTotalCount}건</span>
               </div>
               <div className="webhook-actions-row">
@@ -596,8 +637,34 @@ export default function App() {
                   ? '감사 로그를 불러오는 중입니다.'
                   : humanGateAudits[0]
                     ? `${humanGateAudits[0].decision} · ${humanGateAudits[0].decided_by}`
-                    : '조회 조건에 맞는 Human Gate 결정 이력이 없습니다.'}
+                    : 'status.md 기준 조회 조건에 맞는 Human Gate 결정 이력이 없습니다.'}
               </p>
+            </div>
+            <div className="audit-summary">
+              <div className="artifact-viewer-header">
+                <strong>장기 미처리 Human Gate 알림</strong>
+                <span className="mono">24h+ {staleHumanGateAlerts.length}건</span>
+              </div>
+              {staleHumanGateAlerts.length === 0 ? (
+                <p className="mono audit-summary-line">현재 24시간 이상 대기 중인 승인 건이 없습니다.</p>
+              ) : (
+                <div className="audit-log-list">
+                  {staleHumanGateAlerts.slice(0, 4).map((alert) => (
+                    <article key={`${alert.run_id}:${alert.node_id}:${alert.pending_since}`} className="blocked-event-item">
+                      <div className="blocked-event-head">
+                        <strong className="mono">
+                          run #{alert.run_id} · {alert.node_id}
+                        </strong>
+                        <span className="mono">{Math.floor(alert.overdue_seconds / 3600)}h 경과</span>
+                      </div>
+                      <p className="mono">
+                        status: {alert.run_status}/{alert.node_status}
+                      </p>
+                      <p className="mono">{new Date(alert.pending_since).toLocaleString('ko-KR', { hour12: false })}</p>
+                    </article>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
         </aside>
@@ -632,7 +699,7 @@ export default function App() {
             onClick={(event) => event.stopPropagation()}
           >
             <h2>Human Gate 감사 로그</h2>
-            <p>승인/반려 이력을 읽기 전용으로 제공합니다.</p>
+            <p>`status.md` 아티팩트에서 파싱한 승인/반려 이력을 읽기 전용으로 제공합니다.</p>
             <div className="audit-controls">
               <label>
                 상태 필터
@@ -650,9 +717,10 @@ export default function App() {
                 기간 필터
                 <select
                   value={humanGateAuditDateRange}
-                  onChange={(event) => setHumanGateAuditDateRange(event.target.value as 'all' | '24h' | '7d' | '30d')}
+                  onChange={(event) => setHumanGateAuditDateRange(event.target.value as 'all' | '24h' | '7d' | '30d' | 'today')}
                 >
                   <option value="all">전체 기간</option>
+                  <option value="today">오늘</option>
                   <option value="24h">최근 24시간</option>
                   <option value="7d">최근 7일</option>
                   <option value="30d">최근 30일</option>
@@ -666,7 +734,7 @@ export default function App() {
             ) : (
               <div className="audit-log-list">
                 {humanGateAudits.map((audit) => (
-                  <article key={audit.id} className="blocked-event-item">
+                  <article key={`${audit.run_id}:${audit.node_id}:${audit.decided_at}:${audit.decision}`} className="blocked-event-item">
                     <div className="blocked-event-head">
                       <strong className="mono">{audit.decision}</strong>
                       <span className="mono">{new Date(audit.decided_at).toLocaleString('ko-KR', { hour12: false })}</span>

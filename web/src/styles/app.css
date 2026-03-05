@@ -720,6 +720,11 @@ select {
   overflow: auto;
 }
 
+.safe-artifact-viewer {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .audit-summary {
   margin-top: var(--space-16);
   border: 1px solid var(--color-border-default);

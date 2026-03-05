@@ -19,6 +19,8 @@ from app.models.workflow import HumanGateDecisionAudit, NodeRun, WorkflowDefinit
 from app.schemas.workflow import (
     HumanGateAuditListOut,
     HumanGateDecisionStatus,
+    HumanGateStaleAlertOut,
+    HumanGateStatusArtifactAuditListOut,
     RunEventOut,
     WorkflowCreate,
     WorkflowGraph,
@@ -27,6 +29,7 @@ from app.schemas.workflow import (
     WorkflowUpdate,
 )
 from app.services.rate_limiter import create_sse_reconnect_limiter
+from app.services.human_gate_audit import parse_status_artifact_entries
 from app.services.workflow_engine import WorkflowEngine
 from app.services.workspace import InvalidNodeIdError
 
@@ -105,12 +108,13 @@ def _is_reconnect_rate_limited(client_key: str) -> bool:
 async def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks: int) -> AsyncIterator[str]:
     global active_stream_connections
     generation_on_start = _get_stream_generation(workflow_id)
+    heartbeat_interval = max(1, int(settings.sse_heartbeat_interval_seconds))
     with active_stream_connections_lock:
         active_stream_connections += 1
     try:
         last_data = ""
         tick_limit = max(1, min(max_ticks, 600))
-        for _ in range(tick_limit):
+        for tick in range(tick_limit):
             db.expire_all()
             if _get_stream_generation(workflow_id) != generation_on_start:
                 yield "event: end\ndata: stream closed by workflow cancellation\n\n"
@@ -137,6 +141,8 @@ async def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks:
             if encoded != last_data:
                 last_data = encoded
                 yield f"event: run_status\ndata: {encoded}\n\n"
+            elif tick % heartbeat_interval == 0:
+                yield f": keepalive {datetime.now(timezone.utc).isoformat()}\n\n"
             await asyncio.sleep(1.0)
         yield "event: end\ndata: stream closed\n\n"
     except asyncio.CancelledError:
@@ -269,7 +275,11 @@ def stream_workflow_runs(
     return StreamingResponse(
         _stream_workflow_runs_events(db=db, workflow_id=workflow_id, max_ticks=max_ticks),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -457,7 +467,15 @@ def _is_idempotent_human_gate_decision(
     return latest is not None
 
 
-def _parse_audit_date_range_or_400(date_range: str | None) -> datetime | None:
+def _parse_timezone_offset_or_400(tz_offset_minutes: int | None) -> int:
+    if tz_offset_minutes is None:
+        return 0
+    if tz_offset_minutes < -14 * 60 or tz_offset_minutes > 14 * 60:
+        raise HTTPException(status_code=400, detail="invalid tz_offset_minutes")
+    return tz_offset_minutes
+
+
+def _parse_audit_date_range_or_400(date_range: str | None, tz_offset_minutes: int = 0) -> datetime | None:
     if not date_range:
         return None
     value = date_range.strip().lower()
@@ -469,8 +487,16 @@ def _parse_audit_date_range_or_400(date_range: str | None) -> datetime | None:
     if value == "30d":
         return now - timedelta(days=30)
     if value == "today":
-        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+        local_now = now - timedelta(minutes=tz_offset_minutes)
+        local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return local_midnight + timedelta(minutes=tz_offset_minutes)
     raise HTTPException(status_code=400, detail="invalid date_range")
+
+
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 @run_router.post("/{run_id}/approve", response_model=WorkflowRunOut)
@@ -602,12 +628,14 @@ def list_human_gate_audits(
     offset: int = 0,
     status: HumanGateDecisionStatus | None = None,
     date_range: str | None = None,
+    tz_offset_minutes: int | None = None,
     db: Session = Depends(get_db),
 ):
     _load_run_or_404(db, run_id)
     safe_limit = max(1, min(limit, 100))
     safe_offset = max(0, offset)
-    since = _parse_audit_date_range_or_400(date_range)
+    safe_tz_offset_minutes = _parse_timezone_offset_or_400(tz_offset_minutes)
+    since = _parse_audit_date_range_or_400(date_range, safe_tz_offset_minutes)
 
     query = db.query(HumanGateDecisionAudit).filter(HumanGateDecisionAudit.run_id == run_id)
     if status:
@@ -628,6 +656,76 @@ def list_human_gate_audits(
         "limit": safe_limit,
         "offset": safe_offset,
     }
+
+
+@run_router.get("/{run_id}/status-audits", response_model=HumanGateStatusArtifactAuditListOut)
+def list_status_artifact_human_gate_audits(
+    run_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    status: HumanGateDecisionStatus | None = None,
+    date_range: str | None = None,
+    tz_offset_minutes: int | None = None,
+    db: Session = Depends(get_db),
+):
+    _load_run_or_404(db, run_id)
+    safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+    safe_tz_offset_minutes = _parse_timezone_offset_or_400(tz_offset_minutes)
+    since = _parse_audit_date_range_or_400(date_range, safe_tz_offset_minutes)
+
+    artifact_path = engine.workspace.root / "main" / "runs" / str(run_id) / "status.md"
+    entries = parse_status_artifact_entries(run_id=run_id, artifact_path=artifact_path)
+    if status:
+        entries = [entry for entry in entries if entry["decision"] == status]
+    if since:
+        entries = [entry for entry in entries if _as_utc(entry["decided_at"]) >= since]
+
+    ordered_entries = sorted(entries, key=lambda item: item["decided_at"], reverse=True)
+    total_count = len(ordered_entries)
+    items = ordered_entries[safe_offset : safe_offset + safe_limit]
+    return {"items": items, "total_count": total_count, "limit": safe_limit, "offset": safe_offset}
+
+
+@run_router.post("/human-gate-alerts/scan", response_model=list[HumanGateStaleAlertOut])
+def scan_stale_human_gate_alerts(
+    stale_hours: int | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    safe_limit = max(1, min(limit, 200))
+    configured_hours = max(1, int(settings.workflow_human_gate_stale_hours))
+    safe_stale_hours = max(1, min(int(stale_hours or configured_hours), 24 * 14))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=safe_stale_hours)
+
+    pending_nodes = (
+        db.query(NodeRun, WorkflowRun)
+        .join(WorkflowRun, WorkflowRun.id == NodeRun.run_id)
+        .filter(NodeRun.status == "approval_pending")
+        .filter(WorkflowRun.status.in_(("waiting", "running")))
+        .filter(NodeRun.updated_at <= cutoff)
+        .order_by(NodeRun.updated_at.asc(), NodeRun.id.asc())
+        .limit(safe_limit)
+        .all()
+    )
+
+    now = datetime.now(timezone.utc)
+    alerts: list[dict] = []
+    for node, run in pending_nodes:
+        pending_since = _as_utc(node.updated_at)
+        alerts.append(
+            {
+                "run_id": run.id,
+                "workflow_id": run.workflow_id,
+                "node_id": node.node_id,
+                "node_name": node.node_name,
+                "run_status": run.status,
+                "node_status": node.status,
+                "pending_since": pending_since,
+                "overdue_seconds": max(0, int((now - pending_since).total_seconds())),
+            }
+        )
+    return alerts
 
 
 @approval_router.post("/{approval_id}/cancel", response_model=WorkflowRunOut)

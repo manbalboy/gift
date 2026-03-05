@@ -1,0 +1,10 @@
+services:
+  sse-proxy:
+    image: nginx:1.27-alpine
+    container_name: devflow-sse-proxy
+    ports:
+      - "${PROXY_PORT:-3108}:3108"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./default.conf:/etc/nginx/conf.d/default.conf:ro

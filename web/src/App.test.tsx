@@ -108,7 +108,8 @@ jest.mock('./services/api', () => {
       sendMalformedDevIntegrationWebhook: jest.fn(),
       subscribeWorkflowRuns: jest.fn(),
       listWebhookBlockedEvents: jest.fn(),
-      getHumanGateAudits: jest.fn(),
+      getStatusArtifactAudits: jest.fn(),
+      scanStaleHumanGateAlerts: jest.fn(),
       cancelApproval: jest.fn(),
     },
   };
@@ -161,12 +162,13 @@ describe('App', () => {
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
     (api.subscribeWorkflowRuns as jest.Mock).mockReturnValue(() => undefined);
     (api.listWebhookBlockedEvents as jest.Mock).mockResolvedValue([]);
-    (api.getHumanGateAudits as jest.Mock).mockResolvedValue({
+    (api.getStatusArtifactAudits as jest.Mock).mockResolvedValue({
       items: [],
       total_count: 0,
       limit: 10,
       offset: 0,
     });
+    (api.scanStaleHumanGateAlerts as jest.Mock).mockResolvedValue([]);
   });
 
   test('동일 fallback 시그니처 알림은 한 번만 노출된다', async () => {
@@ -418,10 +420,9 @@ describe('App', () => {
       nodes: [{ id: 'review', label: 'Review', status: 'done', sequence: 0 }],
       links: [],
     });
-    (api.getHumanGateAudits as jest.Mock).mockResolvedValue({
+    (api.getStatusArtifactAudits as jest.Mock).mockResolvedValue({
       items: [
         {
-          id: 1,
           run_id: 302,
           node_id: 'review',
           decision: 'approved',
@@ -440,7 +441,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run 시작' }));
     await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
     await waitFor(() =>
-      expect(api.getHumanGateAudits).toHaveBeenCalledWith(
+      expect(api.getStatusArtifactAudits).toHaveBeenCalledWith(
         302,
         expect.objectContaining({ limit: 10, offset: 0, status: 'all', dateRange: 'all' }),
       ),

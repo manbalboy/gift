@@ -1,8 +1,9 @@
 import type {
   ArtifactChunkResponse,
   ConstellationData,
-  HumanGateAuditListResponse,
   HumanGateAuditDecision,
+  HumanGateStaleAlert,
+  StatusArtifactAuditListResponse,
   WebhookBlockedEvent,
   Workflow,
   WorkflowGraphValidationResult,
@@ -201,13 +202,14 @@ export const api = {
   },
   listWebhookBlockedEvents: (limit = 20) =>
     request<WebhookBlockedEvent[]>(`/webhooks/blocked-events?limit=${Math.max(1, Math.min(limit, 50))}`),
-  getHumanGateAudits: (
+  getStatusArtifactAudits: (
     runId: number,
     options?: {
       limit?: number;
       offset?: number;
       status?: HumanGateAuditDecision | 'all';
-      dateRange?: 'all' | '24h' | '7d' | '30d';
+      dateRange?: 'all' | '24h' | '7d' | '30d' | 'today';
+      timezoneOffsetMinutes?: number;
     },
   ) => {
     const limit = Math.max(1, Math.min(options?.limit ?? 10, 100));
@@ -220,8 +222,19 @@ export const api = {
     }
     if (options?.dateRange && options.dateRange !== 'all') {
       params.set('date_range', options.dateRange);
+      if (Number.isFinite(options?.timezoneOffsetMinutes)) {
+        params.set('tz_offset_minutes', String(Math.trunc(options?.timezoneOffsetMinutes ?? 0)));
+      }
     }
-    return request<HumanGateAuditListResponse>(`/runs/${runId}/human-gate-audits?${params.toString()}`);
+    return request<StatusArtifactAuditListResponse>(`/runs/${runId}/status-audits?${params.toString()}`);
+  },
+  scanStaleHumanGateAlerts: (options?: { staleHours?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(Math.max(1, Math.min(options?.limit ?? 10, 200))));
+    if (options?.staleHours && options.staleHours > 0) {
+      params.set('stale_hours', String(Math.floor(options.staleHours)));
+    }
+    return request<HumanGateStaleAlert[]>(`/runs/human-gate-alerts/scan?${params.toString()}`, { method: 'POST' });
   },
   cancelApproval: (approvalId: number) => requestHumanGateAction(`/approvals/${approvalId}/cancel`),
 };

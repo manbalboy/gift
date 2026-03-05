@@ -126,6 +126,33 @@ class HumanGateAuditListOut(BaseModel):
 HumanGateDecisionStatus = Literal["approved", "rejected", "cancelled"]
 
 
+class HumanGateStatusArtifactAuditOut(BaseModel):
+    run_id: int
+    node_id: str
+    decision: str
+    decided_by: str
+    decided_at: datetime
+    payload: dict
+
+
+class HumanGateStatusArtifactAuditListOut(BaseModel):
+    items: list[HumanGateStatusArtifactAuditOut]
+    total_count: int
+    limit: int
+    offset: int
+
+
+class HumanGateStaleAlertOut(BaseModel):
+    run_id: int
+    workflow_id: int
+    node_id: str
+    node_name: str
+    run_status: str
+    node_status: str
+    pending_since: datetime
+    overdue_seconds: int
+
+
 class RunEventOut(BaseModel):
     run_id: int
     status: str
