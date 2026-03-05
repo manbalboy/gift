@@ -1,72 +1,76 @@
 # PLAN
 
 ## 1. Task breakdown with priority
-
-### Priority 1: Critical Core & Stability (REVIEW 반영)
-- **API (FastAPI)**: `api/app/main.py` 내 CORS 정책을 `manbalboy.com` 및 `localhost` 파생 도메인으로 엄격히 제한.
-- **API (FastAPI)**: `api/app/api/loop_engine.py`에 루프 제어 API(Start, Pause, Resume, Stop) 및 상태 조회 API(`GET /api/loop/status`) 구현.
-- **API (FastAPI)**: 비동기 작업 및 상태 전이 중 발생하는 동시성 문제를 방지하기 위해 락(Lock)을 활용한 방어 코드 추가.
-- **Infra/API**: `scripts/run-api-31xx.sh` 및 백엔드에 3100번 포트 충돌 상황 감지 시 Graceful Shutdown 및 자동 재시도를 처리하는 로직 추가.
-
-### Priority 2: UI/UX & Reliability (REVIEW 반영)
-- **Web (React)**: `web/src/components/ErrorLogModal.tsx`에 10만 자 이상 렌더링에 대비한 가상화(Virtualization) 로직 적용.
-- **Web (React)**: 구형 브라우저 렌더링 방어를 위해 `Intl.Segmenter` API 미지원 환경용 정규식 Fallback 추가.
-
-### Priority 3: Testing & Validation (REVIEW 반영)
-- **Test (API)**: `api/tests/test_loop_simulator.py`에 `max_loop_count`, `budget_limit` 경계값(음수 등) 검증 및 Race Condition 상황 모사 단위 테스트 추가.
-- **Test (Web)**: `ErrorLogModal.test.tsx` 내에 대량 로그 및 ZWJ 이모지 주입 시 1초 내 렌더링 완료를 검증하는 벤치마크 테스트 작성.
-- **Test (Infra)**: 3100번 포트 강제 점유(`nc -l 3100`) 후 구동 스크립트 실행 시 정상 에러 처리 및 종료 여부를 확인하는 인프라 통합 테스트 스크립트 구현.
-
-### Priority 4: Deployment & 고도화 (REVIEW 반영 및 추가)
-- **Infra**: Docker Preview 환경 구동 시 컨테이너 포트가 7000~7099 범위 내에서 매핑되고 정상 통신 가능한지 검증.
-- **추가 기능 1 (Web)**: 클라이언트 API 폴링 최적화(Debouncing/Throttling) 구현
-  - **근거(Why)**: 리뷰에서 지적된 대시보드의 상태 조회 API 빈번한 호출(Polling)로 인한 서버 락(Lock) 경합 병목을 방지하기 위해, 웹 클라이언트 단에서 요청 주기를 최적화하는 훅(`useLoopStatus` 등) 고도화가 필수적입니다.
+- **[P0] API 폴링 자원 최적화 (REVIEW TODO 반영)**
+  - 대상 파일: `web/src/hooks/useLoopStatus.ts`
+  - 영향 범위: 브라우저 클라이언트-API 간 실시간 상태 동기화 및 네트워크 요청 주기.
+  - 내용: Page Visibility API 연동을 통해 브라우저 탭이 백그라운드 상태일 때 불필요한 API 폴링을 중단 및 완화.
+- **[P0] 포트 충돌 방지 로직 안정화 (고도화 플랜)**
+  - 대상 파일: `scripts/run-api-31xx.sh`
+  - 영향 범위: API 서버 부트스트랩, 로컬 및 도커 컨테이너 실행 환경.
+  - 내용: 포트 3100번대 점유 확인 시 `ss`, `lsof` 명령어 부재를 대비한 파이썬 소켓(socket) 기반 Fallback 추가 및 셸 인젝션 방어 로직 검증.
+- **[P1] 루프 엔진 메모리 상태 보존 (고도화 플랜)**
+  - 대상 파일: `api/app/services/loop_simulator.py`
+  - 영향 범위: 루프 엔진의 상태 전이(Lifecycle) 및 Memory 관리 아키텍처.
+  - 내용: 루프 엔진이 `budget_limit`나 `max_loop_count`에 도달해 강제 정지(Stopped)된 후 재시작(Start)할 때 기존 실행 컨텍스트(Memory State)를 유지하는 정책 확립 및 코드 적용.
+- **[P1] 정규식 보안 취약점(ReDoS) 렌더링 방어 (REVIEW TODO 반영)**
+  - 대상 파일: `web/src/components/ErrorLogModal.tsx`
+  - 영향 범위: 프론트엔드 에러 로그 모달 렌더링 스레드.
+  - 내용: Grapheme Split 로직에 악의적인 ZWJ 반복 페이로드가 유입될 경우를 대비한 문자열 최대 길이 제한 및 사전 정제(Sanitization) 적용.
+- **[P2] 테스트 성능 및 커버리지 개선 (REVIEW TODO 반영)**
+  - 대상 파일: `web/src/components/ErrorLogModal.test.tsx`, `api/tests/test_loop_simulator.py` 등
+  - 영향 범위: 프론트엔드/백엔드 CI 파이프라인 속도 및 무결성.
+  - 내용: 무거운 DOM 연산 모킹을 통한 타임아웃 벤치마크 단축, 포트 고갈 최악의 상황 및 엔진 크래시 후 안전 정지(stopped) 복구에 대한 엣지 케이스 단위 테스트 보강.
 
 ## 2. MVP scope / out-of-scope
-
-**MVP Scope**
-- 사람이 개입하지 않아도 지속 작동하는 루프 엔진의 핵심 상태 제어(Start, Pause, Resume, Stop) API 완성.
-- 3100번 포트를 점유하는 로컬/서버 실행 환경에서 포트 충돌을 안전하게 방어하는 스크립트 및 런타임 종료 로직 구현.
-- 브라우저 멈춤 없이 10만 자 이상의 로그 텍스트를 안정적으로 보여줄 수 있는 가상화 적용 대시보드 컴포넌트(React) 구축.
-- 허용된 Origin(`manbalboy.com` 및 `localhost` 대역) 기반의 강력한 CORS 보안 구축.
-- 7000~7099 대역의 외부 노출 포트를 가지는 Docker 기반 단일 런타임 Preview 구동 템플릿 제공.
-
-**Out-of-scope**
-- 코드를 직접 스캔하고 LLM을 호출하여 품질 점수(Quality Score)를 매기는 Analyzer/Evaluator의 상세 추론 비즈니스 로직(기반 뼈대와 제어 흐름만 완성).
-- 다중 사용자 워크스페이스 격리 및 권한(Role) 관리.
-- 장기 메모리(Memory) 시스템을 위한 외부 Vector DB 연동(로컬 파일 기반 또는 In-memory 객체 상태로 대체).
+- **MVP scope:**
+  - AI가 아이디어를 바탕으로 개발, 테스트, 평가, 개선을 반복하는 Self-Improvement Loop 엔진의 핵심 제어 기능(Start, Pause, Resume, Stop).
+  - 로컬 환경 실행 시 3100번대 가용 포트 탐색을 통한 충돌 방지 및 안전한 API 런타임 제공.
+  - 프론트엔드를 통한 실시간 엔진 상태 동기화 및 직관적인 터미널 뷰어 형태의 로그 모니터링 환경 지원.
+  - 1회 실행 사이클 결과물이 Docker 컨테이너(외부 노출 기준 7000~7099 포트)로 배포 및 접속 가능 상태 달성.
+- **Out-of-scope:**
+  - 코드 평가(Evaluator) 및 개선 계획(Planner) 등 실제 LLM 추론 로직의 내부 파이프라인 튜닝 (기본적인 상태 제어 루프 시스템 구축에만 집중).
+  - 여러 사용자의 다중 프로젝트를 동시 병렬 처리하는 대규모 분산 아키텍처 지원.
 
 ## 3. Completion criteria
-
-- `scripts/run-api-31xx.sh`를 실행할 때, 이미 3100번 포트가 사용 중이면 서버가 예외를 잡고 안전하게 종료(Graceful Shutdown)됨을 콘솔 로그로 확인할 수 있어야 한다.
-- FastAPI에서 제공하는 상태 제어 API를 비동기 멀티스레드 환경에서 동시 호출하는 테스트(Pytest)를 통과하며, 엔진 상태의 무결성이 100% 유지되어야 한다.
-- React 대시보드에서 `ErrorLogModal.tsx`에 10만 자의 텍스트와 이모지를 주입하는 테스트를 실행 시, 브라우저 스레드 블로킹 없이 1초 이내에 렌더링이 완료되어야 한다.
-- API 서버 구동 시 CORS가 `*`가 아닌 명시적인 `manbalboy.com` 및 `localhost` Origin만 허용하고 있음을 검증하는 자동화 테스트가 성공해야 한다.
-- 빌드된 Docker Preview 컨테이너가 7000~7099 포트로 바인딩되며, 외부 도메인(`http://ssh.manbalboy.com:7000`)에서 접속 시 응답을 반환해야 한다.
+- 브라우저 탭 비활성화 시 `useLoopStatus` 훅에서 API 폴링이 정상적으로 중지되거나 주기가 늦춰짐을 검증.
+- 최소 설치 도커 환경(Alpine 등)에서 `ss` 또는 `lsof`가 없어도 3100번대 포트 할당 스크립트가 파이썬 Fallback을 통해 정상 구동됨.
+- 의도적으로 조작된 긴 길이의 ZWJ 문자열을 에러 로그로 주입해도 브라우저 렌더링 스레드가 블로킹되지 않음.
+- 정지된 `LoopSimulator`에 대한 Start 재요청 시, `_consumed_budget` 및 기존 평가 점수가 완전히 0으로 소멸되지 않고 정책에 따라 이어서 실행됨.
+- `ErrorLogModal`의 테스트 벤치마크 시간이 22초 대에서 3초 이내로 단축되어 CI 병목이 해소됨.
+- Docker Preview 컨테이너 실행 결과가 PR 본문에 기록된 포트(7000~7099)로 서빙되며, 지정된 CORS 정책을 엄격히 준수함.
 
 ## 4. Risks and test strategy
-
-**Risks**
-- 백그라운드 스레드나 비동기 코루틴으로 실행되는 Loop 엔진 동작 도중 Stop/Pause API가 수신될 때, 락(Lock) 데드락이나 상태 불일치가 발생할 가능성.
-- 거대한 문자열 청크가 브라우저 DOM에 마운트될 때 React의 렌더링 큐가 막혀 UI가 멈추거나 Out Of Memory가 발생할 가능성.
-
-**Test Strategy**
-- **동시성 및 락 테스트**: 멀티프로세스 혹은 코루틴 풀을 이용해 `test_loop_simulator.py`에 Race Condition 모의 환경을 구축하여 상태 덮어쓰기나 데드락 징후를 자동 검사.
-- **스트레스 및 렌더링 테스트**: Jest 및 React Testing Library 환경에서 대량 로그 청크 배열을 `ErrorLogModal` 컴포넌트에 주입한 뒤, DOM 렌더링 소요 시간을 측정하고 Timeout 경계선을 1초로 제한하여 검증.
-- **인프라 결함 주입 테스트**: `nc -l 3100` 명령어로 네트워크 자원을 점유시킨 뒤, `run-api-31xx.sh` 스크립트를 백그라운드 실행하여 정상 에러 코드 뱉음 및 좀비 프로세스 미발생을 확인하는 bash 테스트 스크립트 작성.
+- **Risks:** 
+  - 탭 비활성화 이벤트 전이 시 Race condition으로 인한 백그라운드 폴링 영구 정지 가능성.
+  - 보안을 위한 ZWJ 길이 제한 및 필터링 시 정상적인 다국어 문자와 이모지 혼합 문자열이 유실될 위험.
+  - 3100~3199 포트가 완전히 고갈된 상황에서 포트 대기로 인한 스크립트 무한 지연 현상.
+- **Test strategy:**
+  - `document.visibilityState` 및 이벤트 리스너 모킹을 기반으로 한 상태 변경/복구 단위 테스트 작성.
+  - 극단적인 특수 문자열과 일반적인 다국어/이모지 조합 페이로드를 활용한 정규식 파싱 및 렌더링 무결성 검증.
+  - 가상의 3100~3199 전체 포트 점유 환경을 구성해 둔 후, 설정된 재시도 횟수(Max Retry) 이후 정상적인 실패 종료 코드(1)를 반환하는지 통합 스크립트 엣지 테스트 수행.
 
 ## 5. Design intent and style direction
-
-- **기획 의도**: 개발자(사용자)가 24시간 자가 발전하는 엔진을 조작함에 있어, 복잡한 시스템의 톱니바퀴를 한 치의 오차 없이 "안정적이고 투명하게" 통제하고 모니터링할 수 있다는 신뢰감을 주어야 합니다.
-- **디자인 풍**: 모던 개발자 중심의 대시보드형 (Modern Dashboard). 복잡한 지표를 군더더기 없이 보여주는 터미널 인터페이스(CLI) 기반의 감성.
-- **시각 원칙**:
-  - 컬러: 어두운 다크 테마(Slate/Charcoal 바탕)를 기본으로 하며, 작동 중 시그널은 터미널 그린(Terminal Green), 정지 및 경고 시그널은 아토믹 레드(Atomic Red)를 사용합니다.
-  - 패딩/마진: 화면 낭비를 줄이기 위해 모니터링 로그 리스트는 촘촘한 마진(Tight margin)을 유지하고, 굵직한 제어 버튼 및 모달 창에는 넉넉한 여백을 두어 조작 실수를 방지합니다.
-  - 타이포: 시스템 출력 로그와 에러 메시지는 시인성 높은 Monospace 글꼴을 적용하여 코드 렌더링 방향성을 따릅니다.
-- **반응형 원칙**: 고해상도 모니터(Desktop-First)에 최적화된 로그 모니터링 비율을 우선 구성하되, 모바일 환경 접근 시 텍스트 박스가 수평 스크롤 처리되고 핵심 제어 버튼이 탭 가능하도록 최소한의 반응형 처리를 준수합니다.
+- **기획 의도:** 사람의 개입 없이 24시간 자율적으로 동작하는 프로그램의 생태를 개발자가 실시간으로 모니터링하고, 에러나 품질 지표를 투명하게 관찰/제어할 수 있는 관제 뷰(Dashboard)를 제공.
+- **디자인 풍:** 모던 대시보드형 (터미널 뷰어 스타일 기반의 미니멀리즘).
+- **시각 원칙:** 
+  - 컬러: 장시간 로그 관찰에 눈 피로도가 적은 다크 테마(Dark Mode) 배경, 각 상태(실행, 대기, 성공, 에러)를 직관적으로 표현하는 하이라이트/포인트 컬러 규칙 적용.
+  - 패딩/마진: 화면 내 높은 밀도의 텍스트 정보를 수용하기 위해 여백을 간결하고 규칙적으로 설계.
+  - 타이포그래피: 에러 스택 트레이스 및 코드 스니펫의 가독성 향상을 위해 시스템 기본 Monospace 폰트 우선 적용.
+- **반응형 원칙:** 모바일 우선 규칙(Mobile-first) 적용. 작은 화면의 모바일 디바이스에서는 필수 제어 버튼(Start/Stop)과 핵심 상태 요약만을 배치하고, 태블릿 및 데스크탑의 넓은 화면에서는 로그 뷰어와 전체 아키텍처 대시보드가 점진적으로 확장되도록 유연한 그리드 활용.
 
 ## 6. Technology ruleset
+- **플랫폼 분류:** web / api
+- **web:** React 프레임워크(TypeScript) 및 Vite 빌드 환경을 기반으로 프론트엔드 웹 UI 구축.
+- **api:** FastAPI 프레임워크 기반으로 LoopSimulator 엔진과 상태 동기화를 담당하는 안정적이고 빠른 REST API 구축. 로컬 서버는 3000번대(31xx) 포트 활용.
 
-- **플랫폼 분류**: web / api
-- **web**: React (Vite 기반, TypeScript) 환경. UI 가상화 및 대용량 성능 렌더링 최적화를 위해 `react-window` 또는 `react-virtuoso`와 같은 기술 도입. 상태 관리와 API 폴링 통신은 커스텀 React 훅으로 모듈화.
-- **api**: FastAPI 기반 비동기 설계. `asyncio` 기반의 백그라운드 루프 엔진과 `Lock`을 통한 메모리 상태 스레드 세이프 제어 구현. 테스트 환경은 `pytest` 및 `httpx` 활용. 배포 스크립트는 POSIX 호환 쉘 스크립트(`bash`)를 사용.
+## 7. 고도화 플랜 (Advancement Plan)
+본 프로젝트의 뼈대가 되는 `REVIEW.md` 피드백을 수용하여, 기존 구현체와 자연스럽게 연결되며 엔진의 안정성을 극대화하는 인접 기능 2가지를 추가로 고도화합니다.
+
+- **추가 기능 1: 초경량 배포 환경을 위한 포트 충돌 Fallback 자동화**
+  - **근거:** Docker Alpine과 같이 의존성이 최소화된 배포 환경에서는 `ss`, `lsof`와 같은 시스템 유틸리티가 누락되어 포트 감지 스크립트가 오작동할 우려가 큽니다. 범용적인 호환성을 확보하기 위해 필수적입니다.
+  - **구현 경계:** `scripts/run-api-31xx.sh`의 흐름은 유지하되, 시스템 명령어 실패 시 즉시 Python의 내장 `socket` 모듈을 활용한 포트 스캔 스크립트 기반으로 대체(Fallback) 실행되도록 래핑하고, 포트 입력값에 대한 셸 인젝션 방어를 강화합니다.
+
+- **추가 기능 2: 장기 실행(Long-Running) 연속성을 위한 메모리 이력 유지**
+  - **근거:** Self-Improvement Loop 시스템의 '24시간 지속 발전' 목표에 맞춰, 예산 한도(budget)에 도달해 중지된 루프를 재가동할 때 AI의 분석 내역과 상태가 소멸되지 않고 이전 단계부터 유연하게 이어가도록 보장해야 합니다.
+  - **구현 경계:** `api/app/services/loop_simulator.py` 내의 `start` 제어 로직을 보완하여, 상태가 `stopped`에서 `running`으로 전환될 때 `_consumed_budget` 및 `_quality_score` 히스토리를 무조건 초기화하지 않고 재시작 플래그에 따라 메모리 상태를 안전하게 이어나갈 수 있도록 전이 구조를 개선합니다.
