@@ -964,3 +964,8 @@
 - node_id: review
 - decided_by: reviewer@main
 - payload: {"approval_id": 88, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+
+## 2026-03-05T11:42:14.792304+00:00 · cancelled
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"approval_id": 88, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
