@@ -857,7 +857,12 @@ def resume_run(run_id: int, db: Session = Depends(get_db)):
     try:
         updated = engine.resume_run(db, run)
     except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        detail = str(exc)
+        if detail == "run lock is busy":
+            latest = _load_run_or_404(db, run_id)
+            if latest.status in {"running", "done", "failed"}:
+                return latest
+        raise HTTPException(status_code=409, detail=detail) from exc
     except ValueError as exc:
         detail = str(exc)
         latest = _load_run_or_404(db, run_id)

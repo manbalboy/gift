@@ -89,6 +89,10 @@ export default function Dashboard({
               <div>
                 <strong>실행 실패 감지</strong>
                 <p className="mono">node={failedNode.node_id} · 즉시 재시도로 복구를 시도하세요.</p>
+                <p className="mono">{`Attempt ${failedNode.attempt_count ?? 0}/${failedNode.attempt_limit ?? 1}`}</p>
+                {(failedNode.error_snippet ?? '').trim() && (
+                  <pre className="mono failed-snippet">{failedNode.error_snippet}</pre>
+                )}
               </div>
               <button
                 className="btn btn-danger"

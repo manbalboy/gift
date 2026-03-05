@@ -576,6 +576,7 @@ class WorkflowEngine:
             for attempt in range(1, attempts + 1):
                 if cancel_event.is_set():
                     break
+                logs.append(f"[attempt {attempt}/{attempts}] node execution started")
                 if attempt > 1:
                     wait_for = backoff * (2 ** (attempt - 2))
                     if wait_for > 0:

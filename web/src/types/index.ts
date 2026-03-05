@@ -30,6 +30,9 @@ export type NodeRun = {
   sequence: number;
   log: string;
   artifact_path: string | null;
+  attempt_count?: number;
+  attempt_limit?: number;
+  error_snippet?: string;
   updated_at: string;
 };
 

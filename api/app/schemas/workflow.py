@@ -107,6 +107,9 @@ class NodeRunOut(BaseModel):
     sequence: int
     log: str
     artifact_path: str | None
+    attempt_count: int = 0
+    attempt_limit: int = 1
+    error_snippet: str = ""
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

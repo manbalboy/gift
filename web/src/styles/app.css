@@ -470,6 +470,27 @@ select {
   background: color-mix(in srgb, var(--color-status-failed) 14%, var(--color-bg-surface));
 }
 
+.workflow-node-attempt {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--color-text-muted);
+}
+
+.workflow-node-retry {
+  min-height: 36px;
+  border: 1px solid color-mix(in srgb, var(--color-status-failed) 72%, var(--color-border-default));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-status-failed) 16%, var(--color-bg-elevated));
+  color: var(--color-status-failed);
+  font-size: 13px;
+  padding: 0 var(--space-8);
+  cursor: pointer;
+}
+
+.workflow-node-retry:hover {
+  background: color-mix(in srgb, var(--color-status-failed) 24%, var(--color-bg-elevated));
+}
+
 .react-flow__node.status-running .workflow-node {
   border-color: color-mix(in srgb, var(--color-status-running) 68%, var(--color-border-default));
 }
@@ -640,6 +661,19 @@ select {
   font-size: 13px;
   line-height: 20px;
   color: var(--color-text-secondary);
+}
+
+.failed-snippet {
+  margin-top: var(--space-8);
+  max-height: 180px;
+  overflow: auto;
+  padding: var(--space-8);
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-status-failed) 58%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-bg-base) 86%, var(--color-status-failed));
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .empty {

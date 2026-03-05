@@ -1,25 +1,32 @@
 import net from 'node:net';
 
-const PORT = 3100;
+const START_PORT = 3100;
+const END_PORT = 3199;
 const HOST = '0.0.0.0';
-const MESSAGE = '이미 3100 포트를 점유 중인 프로세스가 있습니다.';
 
-const server = net.createServer();
-
-server.once('error', (error) => {
-  if (error && typeof error === 'object' && 'code' in error && error.code === 'EADDRINUSE') {
-    console.error(MESSAGE);
-    process.exit(1);
-    return;
-  }
-  console.error('포트 점검 중 알 수 없는 오류가 발생했습니다.');
-  process.exit(1);
-});
-
-server.once('listening', () => {
-  server.close(() => {
-    process.exit(0);
+function checkPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, HOST);
   });
-});
+}
 
-server.listen(PORT, HOST);
+async function main() {
+  for (let port = START_PORT; port <= END_PORT; port += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const available = await checkPortAvailable(port);
+    if (available) {
+      process.stdout.write(String(port));
+      process.exit(0);
+      return;
+    }
+  }
+  console.error('3100~3199 포트가 모두 사용 중입니다.');
+  process.exit(1);
+}
+
+void main();

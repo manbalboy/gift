@@ -334,6 +334,20 @@ export default function App() {
       ),
     [run?.node_runs],
   );
+  const nodeMeta = useMemo(
+    () =>
+      Object.fromEntries(
+        (run?.node_runs ?? []).map((node) => [
+          node.node_id,
+          {
+            attemptCount: node.attempt_count ?? 0,
+            attemptLimit: node.attempt_limit ?? 1,
+            errorSnippet: node.error_snippet ?? '',
+          },
+        ]),
+      ),
+    [run?.node_runs],
+  );
 
   const handleSaveWorkflow = async (payload: Omit<Workflow, 'id'>, existingId?: number) => {
     try {
@@ -666,6 +680,10 @@ export default function App() {
             onValidate={api.validateWorkflowGraph}
             mobileViewOnly={isMobilePortrait}
             nodeStatuses={nodeStatuses}
+            nodeMeta={nodeMeta}
+            onRetryNode={(nodeId) => {
+              void handleRetryNode(nodeId);
+            }}
             onClientValidationError={(message) => {
               enqueueToast('error', message);
             }}

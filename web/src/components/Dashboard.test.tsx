@@ -28,6 +28,9 @@ const runFixture: WorkflowRun = {
       sequence: 1,
       log: 'broken',
       artifact_path: null,
+      attempt_count: 2,
+      attempt_limit: 3,
+      error_snippet: 'line1\nline2',
       updated_at: '2026-03-04T10:02:20Z',
     },
   ],
@@ -75,6 +78,8 @@ describe('Dashboard', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry Node' }));
     expect(onRetryNode).toHaveBeenCalledWith('test');
+    expect(screen.getByText('Attempt 2/3')).toBeInTheDocument();
+    expect(screen.getByText(/line1\s+line2/)).toBeInTheDocument();
   });
 
   test('Webhook 차단 로그를 표시한다', () => {

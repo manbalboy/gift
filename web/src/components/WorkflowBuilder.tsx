@@ -130,8 +130,21 @@ function validateGraphForSave(graph: Workflow['graph']): string | null {
   return null;
 }
 
-function TaskNode({ data }: NodeProps<{ label: string; status?: string }>) {
+function TaskNode({
+  data,
+}: NodeProps<{
+  label: string;
+  status?: string;
+  attemptCount?: number;
+  attemptLimit?: number;
+  errorSnippet?: string;
+  onRetryNode?: (nodeId: string) => void;
+  nodeId: string;
+}>) {
   const status = normalizeNodeStatus(data.status);
+  const attemptCount = Math.max(0, Number(data.attemptCount ?? 0));
+  const attemptLimit = Math.max(1, Number(data.attemptLimit ?? 1));
+  const snippet = String(data.errorSnippet ?? '').trim();
   return (
     <div className="workflow-node">
       <Handle type="target" position={Position.Left} />
@@ -140,6 +153,21 @@ function TaskNode({ data }: NodeProps<{ label: string; status?: string }>) {
         <span aria-hidden>{statusIcon[status] ?? '○'}</span>
         <span className="mono">{status}</span>
       </div>
+      <div className="workflow-node-attempt mono">{`Attempt ${attemptCount}/${attemptLimit}`}</div>
+      {status === 'failed' && (
+        <button
+          type="button"
+          className="workflow-node-retry"
+          title={snippet || '실패 로그가 없습니다.'}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            data.onRetryNode?.(data.nodeId);
+          }}
+        >
+          Retry Node
+        </button>
+      )}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -190,6 +218,8 @@ export default function WorkflowBuilder({
   onValidate,
   mobileViewOnly,
   nodeStatuses,
+  nodeMeta,
+  onRetryNode,
   onNodeFallback,
   focusNodeRequest,
   onFocusNodeHandled,
@@ -200,6 +230,8 @@ export default function WorkflowBuilder({
   onValidate?: (graph: Workflow['graph']) => Promise<WorkflowGraphValidationResult>;
   mobileViewOnly: boolean;
   nodeStatuses?: Record<string, string>;
+  nodeMeta?: Record<string, { attemptCount: number; attemptLimit: number; errorSnippet: string }>;
+  onRetryNode?: (nodeId: string) => void;
   onNodeFallback?: (payload: { count: number; signature: string; nodeIds: string[] }) => void;
   focusNodeRequest?: { nodeId: string; requestId: number } | null;
   onFocusNodeHandled?: () => void;
@@ -247,10 +279,15 @@ export default function WorkflowBuilder({
           data: {
             ...node.data,
             status,
+            attemptCount: nodeMeta?.[node.id]?.attemptCount ?? 0,
+            attemptLimit: nodeMeta?.[node.id]?.attemptLimit ?? 1,
+            errorSnippet: nodeMeta?.[node.id]?.errorSnippet ?? '',
+            onRetryNode,
+            nodeId: node.id,
           },
         };
       }),
-    [nodeStatuses, nodes],
+    [nodeMeta, nodeStatuses, nodes, onRetryNode],
   );
 
   useEffect(() => {

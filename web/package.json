@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "node ./scripts/check-port.mjs && vite --host 0.0.0.0 --port 3100",
+    "dev": "PORT=${WEB_PORT:-$(node ./scripts/check-port.mjs)} && vite --host 0.0.0.0 --port $PORT",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 3100",
+    "preview": "PORT=${WEB_PORT:-$(node ./scripts/check-port.mjs)} && vite preview --host 0.0.0.0 --port $PORT",
     "test": "jest --runInBand",
     "test:e2e": "playwright test"
   },

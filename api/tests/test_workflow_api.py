@@ -1220,8 +1220,9 @@ def test_resume_run_concurrent_requests_are_idempotent():
         detail = response.json().get("detail", "")
         return response.status_code, detail
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(_resume_once, range(4)))
+    request_count = 50
+    with ThreadPoolExecutor(max_workers=50) as pool:
+        results = list(pool.map(_resume_once, range(request_count)))
 
     success_count = sum(1 for status_code, _ in results if status_code == 200)
     conflict_count = sum(

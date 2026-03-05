@@ -10,7 +10,7 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: 'VITE_API_BASE=http://localhost:3108/api npm run dev',
+    command: 'WEB_PORT=3100 VITE_API_BASE=http://localhost:3108/api npm run dev',
     url: 'http://127.0.0.1:3100',
     reuseExistingServer: true,
     timeout: 30_000,

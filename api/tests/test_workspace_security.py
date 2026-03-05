@@ -43,6 +43,25 @@ def test_write_artifact_raises_on_write_text_failure(monkeypatch):
         workspace.write_artifact(run_id=4, node_id="plan", content="data")
 
 
+def test_write_artifact_retries_on_permission_lock(monkeypatch):
+    workspace = WorkspaceService()
+    calls = {"count": 0}
+
+    original_write_text = Path.write_text
+
+    def flaky_write(path_obj: Path, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise PermissionError("file is temporarily locked")
+        return original_write_text(path_obj, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", flaky_write)
+
+    result_path = workspace.write_artifact(run_id=5, node_id="retry-lock", content="ok")
+    assert result_path.endswith("retry-lock.md")
+    assert calls["count"] == 3
+
+
 def test_human_gate_rejects_cross_workspace_approval_with_403(monkeypatch):
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")

@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
+import re
 
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.core.config import settings
 
 
 def now_utc() -> datetime:
@@ -56,6 +58,33 @@ class NodeRun(Base):
 
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="node_runs")
     artifacts: Mapped[list["Artifact"]] = relationship(back_populates="node_run", cascade="all, delete-orphan")
+
+    @property
+    def attempt_count(self) -> int:
+        text = (self.log or "").strip()
+        if not text:
+            return 0
+        matches = re.findall(r"\[attempt\s+(\d+)/(\d+)\]", text, flags=re.IGNORECASE)
+        if matches:
+            return max(int(current) for current, _ in matches)
+        if self.status in {"done", "failed", "running", "paused"}:
+            return 1
+        return 0
+
+    @property
+    def attempt_limit(self) -> int:
+        limit = int(getattr(settings, "workflow_node_max_retries", 3))
+        if limit < 1:
+            return 1
+        return limit
+
+    @property
+    def error_snippet(self) -> str:
+        lines = (self.log or "").splitlines()
+        if not lines:
+            return ""
+        snippet = lines[-40:]
+        return "\n".join(snippet)
 
 
 class Artifact(Base):

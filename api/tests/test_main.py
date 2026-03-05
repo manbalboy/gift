@@ -1,7 +1,7 @@
 import pytest
 import time
 
-from app.core.config import settings
+from app.core.config import _as_float, _as_int, settings
 from app.services.agent_runner import DockerRunner
 from .conftest import client
 
@@ -281,3 +281,18 @@ def test_localhost_spoof_guard_ports_parser_ignores_overflow_ranges(monkeypatch)
     monkeypatch.setattr(settings, "localhost_spoof_guard_ports", "9999999999-10000000000,3100")
     parsed = settings.spoof_guard_ports
     assert parsed == {3100}
+
+
+def test_config_safe_int_parser_falls_back_on_invalid_values():
+    assert _as_int(None, 7) == 7
+    assert _as_int("", 7) == 7
+    assert _as_int("  ", 7) == 7
+    assert _as_int("@@@", 7) == 7
+    assert _as_int("10", 7) == 10
+
+
+def test_config_safe_float_parser_falls_back_on_invalid_values():
+    assert _as_float(None, 0.5) == 0.5
+    assert _as_float("", 0.5) == 0.5
+    assert _as_float("NaNNaN", 0.5) == 0.5
+    assert _as_float("1.25", 0.5) == 1.25

@@ -1,6 +1,9 @@
 import re
 from pathlib import Path
 import logging
+import errno
+import time
+from collections.abc import Callable
 
 from app.core.config import settings
 
@@ -32,6 +35,22 @@ class WorkspaceService:
             raise InvalidNodeIdError(f"unsafe workspace path: {path}")
         return resolved
 
+    def _run_with_lock_retry(self, operation: Callable[[], object]) -> object:
+        attempts = 3
+        base_delay = 0.03
+        for attempt in range(1, attempts + 1):
+            try:
+                return operation()
+            except OSError as exc:
+                is_lock_related = exc.errno in {errno.EACCES, errno.EAGAIN, errno.EBUSY, errno.ETXTBSY} or isinstance(
+                    exc,
+                    PermissionError,
+                )
+                if not is_lock_related or attempt >= attempts:
+                    raise
+                time.sleep(base_delay * attempt)
+        raise RuntimeError("workspace retry loop exhausted")
+
     def write_artifact(self, run_id: int, node_id: str, content: str) -> str:
         if not is_safe_node_id(node_id):
             raise InvalidNodeIdError(f"unsafe node_id: {node_id}")
@@ -40,9 +59,9 @@ class WorkspaceService:
 
         target_dir = self._resolve_under_root(self.root / "main" / "runs" / str(run_id))
         try:
-            target_dir.mkdir(parents=True, exist_ok=True)
+            self._run_with_lock_retry(lambda: target_dir.mkdir(parents=True, exist_ok=True))
         except OSError as exc:
-            logger.exception(
+            logger.error(
                 "workspace_dir_access_failed",
                 extra={
                     "run_id": run_id,
@@ -50,15 +69,16 @@ class WorkspaceService:
                     "path": str(target_dir),
                     "error_type": exc.__class__.__name__,
                 },
+                exc_info=True,
             )
             raise WorkspaceArtifactIOError(
                 f"workspace artifact directory access failed: {target_dir} ({exc.__class__.__name__})"
             ) from exc
         artifact = self._resolve_under_root(target_dir / f"{node_id}.md")
         try:
-            artifact.write_text(content, encoding="utf-8")
+            self._run_with_lock_retry(lambda: artifact.write_text(content, encoding="utf-8"))
         except OSError as exc:
-            logger.exception(
+            logger.error(
                 "workspace_write_failed",
                 extra={
                     "run_id": run_id,
@@ -66,6 +86,7 @@ class WorkspaceService:
                     "path": str(artifact),
                     "error_type": exc.__class__.__name__,
                 },
+                exc_info=True,
             )
             raise WorkspaceArtifactIOError(
                 f"workspace artifact write failed: {artifact} ({exc.__class__.__name__})"
@@ -85,12 +106,16 @@ class WorkspaceService:
             raise FileNotFoundError(str(artifact))
 
         try:
-            size = artifact.stat().st_size
-            with artifact.open("rb") as file_obj:
-                file_obj.seek(safe_offset)
-                raw = file_obj.read(safe_limit)
+            def _read_chunk() -> tuple[int, bytes]:
+                size_local = artifact.stat().st_size
+                with artifact.open("rb") as file_obj:
+                    file_obj.seek(safe_offset)
+                    raw_local = file_obj.read(safe_limit)
+                return size_local, raw_local
+
+            size, raw = self._run_with_lock_retry(_read_chunk)  # type: ignore[misc]
         except OSError as exc:
-            logger.exception(
+            logger.error(
                 "workspace_read_failed",
                 extra={
                     "run_id": run_id,
@@ -98,6 +123,7 @@ class WorkspaceService:
                     "path": str(artifact),
                     "error_type": exc.__class__.__name__,
                 },
+                exc_info=True,
             )
             raise WorkspaceArtifactIOError(
                 f"workspace artifact read failed: {artifact} ({exc.__class__.__name__})"
@@ -115,10 +141,10 @@ class WorkspaceService:
 
         sandbox_dir = self._resolve_under_root(self.root / "main" / "runs" / str(run_id) / "sandbox" / node_id)
         try:
-            sandbox_dir.mkdir(parents=True, exist_ok=True)
-            sandbox_dir.chmod(0o777)
+            self._run_with_lock_retry(lambda: sandbox_dir.mkdir(parents=True, exist_ok=True))
+            self._run_with_lock_retry(lambda: sandbox_dir.chmod(0o777))
         except OSError as exc:
-            logger.exception(
+            logger.error(
                 "workspace_sandbox_access_failed",
                 extra={
                     "run_id": run_id,
@@ -126,6 +152,7 @@ class WorkspaceService:
                     "path": str(sandbox_dir),
                     "error_type": exc.__class__.__name__,
                 },
+                exc_info=True,
             )
             raise WorkspaceArtifactIOError(
                 f"workspace sandbox access failed: {sandbox_dir} ({exc.__class__.__name__})"

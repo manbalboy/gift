@@ -8,6 +8,39 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _as_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    text = str(value).strip()
+    if not text:
+        return default
+    try:
+        return int(text)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _as_float(value: str | None, default: float) -> float:
+    if value is None:
+        return default
+    text = str(value).strip()
+    if not text:
+        return default
+    try:
+        return float(text)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _as_csv_set(value: str | None, *, lower: bool = False) -> set[str]:
+    if not isinstance(value, str):
+        return set()
+    chunks = [item.strip() for item in value.split(",")]
+    if lower:
+        return {item.lower() for item in chunks if item}
+    return {item for item in chunks if item}
+
+
 def _parse_ports_csv(value: str | None) -> set[int]:
     if not isinstance(value, str):
         return set()
@@ -68,9 +101,10 @@ class Settings:
         os.getenv("DEVFLOW_REQUIRE_DOCKER_PING_PER_RUN"),
         default=True,
     )
-    docker_ping_cache_ttl_seconds: float = float(os.getenv("DEVFLOW_DOCKER_PING_CACHE_TTL_SECONDS", "15"))
-    docker_ping_negative_cache_ttl_seconds: float = float(
-        os.getenv("DEVFLOW_DOCKER_PING_NEGATIVE_CACHE_TTL_SECONDS", "4")
+    docker_ping_cache_ttl_seconds: float = _as_float(os.getenv("DEVFLOW_DOCKER_PING_CACHE_TTL_SECONDS"), 15.0)
+    docker_ping_negative_cache_ttl_seconds: float = _as_float(
+        os.getenv("DEVFLOW_DOCKER_PING_NEGATIVE_CACHE_TTL_SECONDS"),
+        4.0,
     )
     docker_image: str = os.getenv("DEVFLOW_DOCKER_IMAGE", "bash:5.2")
     github_webhook_secret: str = os.getenv("DEVFLOW_GITHUB_WEBHOOK_SECRET", "")
@@ -78,7 +112,7 @@ class Settings:
     viewer_token: str = os.getenv("DEVFLOW_VIEWER_TOKEN", "")
     human_gate_approver_token: str = os.getenv("DEVFLOW_HUMAN_GATE_APPROVER_TOKEN", "")
     human_gate_session_secret: str = os.getenv("DEVFLOW_HUMAN_GATE_SESSION_SECRET", "")
-    human_gate_session_ttl_seconds: int = int(os.getenv("DEVFLOW_HUMAN_GATE_SESSION_TTL_SECONDS", "1800"))
+    human_gate_session_ttl_seconds: int = _as_int(os.getenv("DEVFLOW_HUMAN_GATE_SESSION_TTL_SECONDS"), 1800)
     human_gate_session_secure_cookie: bool = _as_bool(
         os.getenv("DEVFLOW_HUMAN_GATE_SESSION_SECURE_COOKIE"),
         default=False,
@@ -90,37 +124,40 @@ class Settings:
 
     lock_backend: str = os.getenv("DEVFLOW_LOCK_BACKEND", "local")
     redis_url: str = os.getenv("DEVFLOW_REDIS_URL", "redis://localhost:6379/0")
-    lock_ttl_seconds: int = int(os.getenv("DEVFLOW_LOCK_TTL_SECONDS", "30"))
+    lock_ttl_seconds: int = _as_int(os.getenv("DEVFLOW_LOCK_TTL_SECONDS"), 30)
 
-    sse_reconnect_limit_per_second: int = int(os.getenv("DEVFLOW_SSE_RECONNECT_LIMIT_PER_SECOND", "2"))
+    sse_reconnect_limit_per_second: int = _as_int(os.getenv("DEVFLOW_SSE_RECONNECT_LIMIT_PER_SECOND"), 2)
     sse_rate_limit_backend: str = os.getenv("DEVFLOW_SSE_RATE_LIMIT_BACKEND", "redis")
-    sse_rate_limit_window_seconds: int = int(os.getenv("DEVFLOW_SSE_RATE_LIMIT_WINDOW_SECONDS", "1"))
-    sse_heartbeat_interval_seconds: float = float(os.getenv("DEVFLOW_SSE_HEARTBEAT_INTERVAL_SECONDS", "15"))
-    sse_local_fallback_limit_ratio: float = float(os.getenv("DEVFLOW_SSE_LOCAL_FALLBACK_LIMIT_RATIO", "0.5"))
-    sse_redis_fallback_ttl_seconds: float = float(os.getenv("DEVFLOW_SSE_REDIS_FALLBACK_TTL_SECONDS", "4"))
+    sse_rate_limit_window_seconds: int = _as_int(os.getenv("DEVFLOW_SSE_RATE_LIMIT_WINDOW_SECONDS"), 1)
+    sse_heartbeat_interval_seconds: float = _as_float(os.getenv("DEVFLOW_SSE_HEARTBEAT_INTERVAL_SECONDS"), 15.0)
+    sse_local_fallback_limit_ratio: float = _as_float(os.getenv("DEVFLOW_SSE_LOCAL_FALLBACK_LIMIT_RATIO"), 0.5)
+    sse_redis_fallback_ttl_seconds: float = _as_float(os.getenv("DEVFLOW_SSE_REDIS_FALLBACK_TTL_SECONDS"), 4.0)
     sse_trusted_proxy_ips: str = os.getenv("DEVFLOW_SSE_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
-    webhook_rate_limit_per_window: int = int(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_PER_WINDOW", "10"))
-    webhook_rate_limit_window_seconds: float = float(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_WINDOW_SECONDS", "5"))
+    webhook_rate_limit_per_window: int = _as_int(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_PER_WINDOW"), 10)
+    webhook_rate_limit_window_seconds: float = _as_float(os.getenv("DEVFLOW_WEBHOOK_RATE_LIMIT_WINDOW_SECONDS"), 5.0)
     webhook_trusted_proxy_ips: str = os.getenv("DEVFLOW_WEBHOOK_TRUSTED_PROXY_IPS", "127.0.0.1,::1")
-    workflow_node_max_retries: int = int(os.getenv("DEVFLOW_WORKFLOW_NODE_MAX_RETRIES", "3"))
-    workflow_node_iteration_budget: int = int(os.getenv("DEVFLOW_WORKFLOW_NODE_ITERATION_BUDGET", "8"))
-    workflow_node_timeout_seconds: float = float(os.getenv("DEVFLOW_WORKFLOW_NODE_TIMEOUT_SECONDS", "1800"))
-    workflow_retry_backoff_seconds: float = float(os.getenv("DEVFLOW_WORKFLOW_RETRY_BACKOFF_SECONDS", "0.25"))
-    workflow_worker_poll_interval_seconds: float = float(
-        os.getenv("DEVFLOW_WORKFLOW_WORKER_POLL_INTERVAL_SECONDS", "0.1")
+    workflow_node_max_retries: int = _as_int(os.getenv("DEVFLOW_WORKFLOW_NODE_MAX_RETRIES"), 3)
+    workflow_node_iteration_budget: int = _as_int(os.getenv("DEVFLOW_WORKFLOW_NODE_ITERATION_BUDGET"), 8)
+    workflow_node_timeout_seconds: float = _as_float(os.getenv("DEVFLOW_WORKFLOW_NODE_TIMEOUT_SECONDS"), 1800.0)
+    workflow_retry_backoff_seconds: float = _as_float(os.getenv("DEVFLOW_WORKFLOW_RETRY_BACKOFF_SECONDS"), 0.25)
+    workflow_worker_poll_interval_seconds: float = _as_float(
+        os.getenv("DEVFLOW_WORKFLOW_WORKER_POLL_INTERVAL_SECONDS"),
+        0.1,
     )
-    workflow_approval_poll_interval_seconds: float = float(
-        os.getenv("DEVFLOW_WORKFLOW_APPROVAL_POLL_INTERVAL_SECONDS", "0.2")
+    workflow_approval_poll_interval_seconds: float = _as_float(
+        os.getenv("DEVFLOW_WORKFLOW_APPROVAL_POLL_INTERVAL_SECONDS"),
+        0.2,
     )
-    workflow_cancel_join_timeout_seconds: float = float(
-        os.getenv("DEVFLOW_WORKFLOW_CANCEL_JOIN_TIMEOUT_SECONDS", "2")
+    workflow_cancel_join_timeout_seconds: float = _as_float(
+        os.getenv("DEVFLOW_WORKFLOW_CANCEL_JOIN_TIMEOUT_SECONDS"),
+        2.0,
     )
-    workflow_human_gate_stale_hours: int = int(os.getenv("DEVFLOW_WORKFLOW_HUMAN_GATE_STALE_HOURS", "24"))
+    workflow_human_gate_stale_hours: int = _as_int(os.getenv("DEVFLOW_WORKFLOW_HUMAN_GATE_STALE_HOURS"), 24)
     preview_viewer_token_secret: str = os.getenv("DEVFLOW_PREVIEW_VIEWER_TOKEN_SECRET", "")
     preview_viewer_issue_secret: str = os.getenv("DEVFLOW_PREVIEW_VIEWER_ISSUE_SECRET", "")
-    preview_viewer_token_ttl_seconds: int = int(os.getenv("DEVFLOW_PREVIEW_VIEWER_TOKEN_TTL_SECONDS", "180"))
-    preview_protected_port_start: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_START", "3100"))
-    preview_protected_port_end: int = int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_END", "3199"))
+    preview_viewer_token_ttl_seconds: int = _as_int(os.getenv("DEVFLOW_PREVIEW_VIEWER_TOKEN_TTL_SECONDS"), 180)
+    preview_protected_port_start: int = _as_int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_START"), 3100)
+    preview_protected_port_end: int = _as_int(os.getenv("DEVFLOW_PREVIEW_PROTECTED_PORT_END"), 3199)
     localhost_spoof_guard_ports: str = os.getenv("DEVFLOW_LOCALHOST_SPOOF_GUARD_PORTS", "3100-3199")
 
     @property
@@ -129,28 +166,23 @@ class Settings:
 
     @property
     def trusted_webhook_proxy_ips(self) -> set[str]:
-        values = [item.strip() for item in self.webhook_trusted_proxy_ips.split(",")]
-        return {item for item in values if item}
+        return _as_csv_set(self.webhook_trusted_proxy_ips)
 
     @property
     def trusted_sse_proxy_ips(self) -> set[str]:
-        values = [item.strip() for item in self.sse_trusted_proxy_ips.split(",")]
-        return {item for item in values if item}
+        return _as_csv_set(self.sse_trusted_proxy_ips)
 
     @property
     def allowed_webhook_source_ips(self) -> set[str]:
-        values = [item.strip() for item in self.webhook_allowed_source_ips.split(",")]
-        return {item for item in values if item}
+        return _as_csv_set(self.webhook_allowed_source_ips)
 
     @property
     def allowed_human_gate_roles(self) -> set[str]:
-        values = [item.strip().lower() for item in self.human_gate_approver_roles.split(",")]
-        return {item for item in values if item}
+        return _as_csv_set(self.human_gate_approver_roles, lower=True)
 
     @property
     def allowed_human_gate_workspaces(self) -> set[str]:
-        values = [item.strip().lower() for item in self.human_gate_approver_workspaces.split(",")]
-        parsed = {item for item in values if item}
+        parsed = _as_csv_set(self.human_gate_approver_workspaces, lower=True)
         if not parsed:
             return {self.default_workspace_id.strip().lower() or "main"}
         return parsed
