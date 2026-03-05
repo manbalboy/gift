@@ -3,6 +3,8 @@ import type {
   ConstellationData,
   HumanGateAuditDecision,
   HumanGateStaleAlert,
+  LoopInstructionEnqueueResult,
+  LoopInstructionStatus,
   LoopEngineStatus,
   SystemAlertPageResponse,
   StatusArtifactAuditListResponse,
@@ -14,7 +16,7 @@ import type {
 } from '../types';
 import { subscribeSSE } from '../hooks/useSSE';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3101/api';
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3100/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
 const WORKFLOW_CONTROL_TOKEN = import.meta.env.VITE_WORKFLOW_CONTROL_TOKEN ?? '';
 const WORKFLOW_CONTROL_ROLE = import.meta.env.VITE_WORKFLOW_CONTROL_ROLE ?? '';
@@ -218,9 +220,13 @@ export const api = {
   resumeLoopEngine: () => request<LoopEngineStatus>('/loop/resume', { method: 'POST', headers: workflowControlHeaders() }),
   stopLoopEngine: () => request<LoopEngineStatus>('/loop/stop', { method: 'POST', headers: workflowControlHeaders() }),
   injectLoopInstruction: (instruction: string) =>
-    request<LoopEngineStatus>('/loop/inject', {
+    request<LoopInstructionEnqueueResult>('/loop/inject', {
       method: 'POST',
       headers: workflowControlHeaders(),
       body: JSON.stringify({ instruction }),
+    }),
+  getLoopInstructionStatus: (instructionId: string) =>
+    request<LoopInstructionStatus>(`/loop/instruction/${encodeURIComponent(instructionId)}`, {
+      headers: workflowControlHeaders(),
     }),
 };

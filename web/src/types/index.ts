@@ -155,3 +155,18 @@ export type LoopEngineStatus = {
   started_at: string | null;
   updated_at: string;
 };
+
+export type LoopInstructionEnqueueResult = {
+  instruction_id: string;
+  status: LoopEngineStatus;
+};
+
+export type LoopInstructionStatus = {
+  id: string;
+  instruction: string;
+  status: 'queued' | 'applied' | 'dropped';
+  queued_at: string;
+  updated_at: string;
+  applied_at: string | null;
+  dropped_reason: string | null;
+};

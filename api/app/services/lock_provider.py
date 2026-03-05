@@ -61,6 +61,29 @@ class LocalLockProvider:
             return LocalRunLock(lock)
 
 
+class UnavailableRunLock:
+    def __init__(self, reason: str) -> None:
+        self._reason = reason
+
+    def acquire(self, blocking: bool = False, timeout: float | None = None) -> bool:
+        logger.error("distributed lock unavailable, acquire denied: %s", self._reason)
+        return False
+
+    def release(self) -> None:
+        return
+
+    def extend(self, ttl_seconds: int | None = None) -> bool:
+        return False
+
+
+class UnavailableLockProvider:
+    def __init__(self, reason: str) -> None:
+        self._reason = reason
+
+    def get_run_lock(self, run_id: int) -> RunLock:
+        return UnavailableRunLock(f"{self._reason} (run_id={run_id})")
+
+
 @dataclass
 class RedisRunLock:
     client: object
@@ -120,34 +143,24 @@ class RedisRunLock:
         return bool(result)
 
 
-class FallbackRunLock:
-    def __init__(self, primary: RedisRunLock, fallback: RunLock) -> None:
+class FailFastRunLock:
+    def __init__(self, primary: RedisRunLock) -> None:
         self._primary = primary
-        self._fallback = fallback
-        self._use_fallback = False
 
     def acquire(self, blocking: bool = False, timeout: float | None = None) -> bool:
         try:
-            acquired = self._primary.acquire(blocking=blocking, timeout=timeout)
-            self._use_fallback = False
-            return acquired
+            return self._primary.acquire(blocking=blocking, timeout=timeout)
         except RedisError as exc:
-            self._use_fallback = True
-            logger.warning("Redis lock acquire failed, falling back to local lock: %s", exc)
-            return self._fallback.acquire(blocking=blocking, timeout=timeout)
+            logger.error("Redis lock acquire failed, fail-fast stop: %s", exc)
+            return False
 
     def release(self) -> None:
-        if self._use_fallback:
-            self._fallback.release()
-            return
         try:
             self._primary.release()
         except RedisError as exc:
             logger.warning("Redis lock release failed: %s", exc)
 
     def extend(self, ttl_seconds: int | None = None) -> bool:
-        if self._use_fallback:
-            return self._fallback.extend(ttl_seconds)
         try:
             return self._primary.extend(ttl_seconds)
         except RedisError as exc:
@@ -162,18 +175,16 @@ class RedisLockProvider:
         self.client = redis_lib.Redis.from_url(redis_url, decode_responses=True)
         self.ttl_seconds = max(5, ttl_seconds)
         self.key_prefix = key_prefix
-        self.fallback = LocalLockProvider()
 
     def get_run_lock(self, run_id: int) -> RunLock:
         key = f"{self.key_prefix}:{run_id}"
         primary = RedisRunLock(client=self.client, key=key, ttl_seconds=self.ttl_seconds)
-        fallback = self.fallback.get_run_lock(run_id)
-        return FallbackRunLock(primary=primary, fallback=fallback)
+        return FailFastRunLock(primary=primary)
 
 
 class LockProviderFactory:
     @staticmethod
-    def create(backend: str | None = None) -> LocalLockProvider | RedisLockProvider:
+    def create(backend: str | None = None) -> LocalLockProvider | RedisLockProvider | UnavailableLockProvider:
         selected = (backend or settings.lock_backend).lower()
         if selected == "redis":
             try:
@@ -182,6 +193,6 @@ class LockProviderFactory:
                     ttl_seconds=settings.lock_ttl_seconds,
                 )
             except Exception as exc:
-                logger.warning("Redis lock provider disabled, using local lock provider: %s", exc)
-                return LocalLockProvider()
+                logger.error("Redis lock provider unavailable, fail-closed mode enabled: %s", exc)
+                return UnavailableLockProvider(reason=str(exc))
         return LocalLockProvider()

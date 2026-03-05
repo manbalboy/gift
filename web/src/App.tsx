@@ -376,7 +376,7 @@ export default function App() {
           return;
         }
         if (state === 'failed') {
-          setApiDegradedMessage('실시간 스트림 재연결 한도를 초과했습니다. 네트워크 또는 API 서버(3101) 상태를 확인하세요.');
+          setApiDegradedMessage('실시간 스트림 재연결 한도를 초과했습니다. 네트워크 또는 API 서버(3100) 상태를 확인하세요.');
         }
       },
       onReconnectSchedule: (payload) => {
@@ -785,10 +785,10 @@ export default function App() {
     if (!instruction || loopEngineActionLoading) return;
     setLoopEngineActionLoading(true);
     try {
-      const next = await api.injectLoopInstruction(instruction);
-      setLoopEngineStatus(next);
+      const queued = await api.injectLoopInstruction(instruction);
+      setLoopEngineStatus(queued.status);
       setLoopInjectInstruction('');
-      enqueueToast('warning', 'Inject Instruction을 큐에 등록했습니다.');
+      enqueueToast('warning', `Inject Instruction을 큐에 등록했습니다. (${queued.instruction_id})`);
     } catch (error) {
       const message = resolveErrorMessage(error, 'Inject Instruction 등록 실패');
       enqueueToast('error', `Inject Instruction 등록 실패 (${message})`);
@@ -849,7 +849,7 @@ export default function App() {
       {streamState === 'failed' && (
         <section className="network-banner network-banner-danger" role="alert" aria-live="assertive">
           <strong>서버 통신 실패</strong>
-          <span className="mono">SSE 재연결 5회 초과로 자동 재시도를 중단했습니다. 네트워크 또는 API 서버(3101)를 확인하세요.</span>
+          <span className="mono">SSE 재연결 5회 초과로 자동 재시도를 중단했습니다. 네트워크 또는 API 서버(3100)를 확인하세요.</span>
           <button
             type="button"
             className="btn btn-danger"

@@ -234,14 +234,17 @@ describe('App', () => {
       updated_at: '2026-03-05T00:00:05Z',
     });
     (api.injectLoopInstruction as jest.Mock).mockResolvedValue({
-      mode: 'running',
-      current_stage: 'planner',
-      cycle_count: 1,
-      emitted_alert_count: 6,
-      pending_instruction_count: 1,
-      quality_score: 72,
-      started_at: '2026-03-05T00:00:00Z',
-      updated_at: '2026-03-05T00:00:06Z',
+      instruction_id: 'instr-001',
+      status: {
+        mode: 'running',
+        current_stage: 'planner',
+        cycle_count: 1,
+        emitted_alert_count: 6,
+        pending_instruction_count: 1,
+        quality_score: 72,
+        started_at: '2026-03-05T00:00:00Z',
+        updated_at: '2026-03-05T00:00:06Z',
+      },
     });
     (api.getStatusArtifactAudits as jest.Mock).mockResolvedValue({
       items: [],

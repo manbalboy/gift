@@ -24,7 +24,8 @@ describe('security utils', () => {
       '<svg onload=alert(1)> token=abc123\u0000\u0008 password:hunter2 Bearer hello.world+123 api_key=ZZZ';
     const result = sanitizeAlertText(payload);
 
-    expect(result).toContain('<svg onload=alert(1)>');
+    expect(result).not.toContain('<svg');
+    expect(result).not.toContain('onload=');
     expect(result).toContain(`token=${MASKED_TOKEN}`);
     expect(result).toContain(`password=${MASKED_TOKEN}`);
     expect(result).toContain(`api_key=${MASKED_TOKEN}`);

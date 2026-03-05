@@ -12,7 +12,7 @@ from app.models.workflow import NodeRun, WorkflowDefinition, WorkflowRun
 from app.core.config import settings
 from app.schemas.agent import AgentTaskRequest, AgentTaskResult
 from app.services.agent_runner import AgentRunner, DockerRunner
-from app.services.lock_provider import LockProviderFactory, RedisLockProvider
+from app.services.lock_provider import RedisLockProvider
 from app.services.workflow_engine import _normalize_semantic_text
 
 from .conftest import client
@@ -980,7 +980,6 @@ def test_redis_lock_ttl_expiration_recovery():
     provider.client = FakeRedisClient()
     provider.ttl_seconds = 1
     provider.key_prefix = "devflow:run-lock"
-    provider.fallback = LockProviderFactory.create("local")
 
     lock1 = provider.get_run_lock(99)
     assert lock1.acquire(blocking=False) is True
@@ -990,16 +989,15 @@ def test_redis_lock_ttl_expiration_recovery():
     lock2.release()
 
 
-def test_redis_lock_provider_fallbacks_to_local_on_connection_error():
+def test_redis_lock_provider_fail_fast_on_connection_error():
     provider = RedisLockProvider.__new__(RedisLockProvider)
     fake = FakeRedisClient()
     fake.raise_on_set = True
     provider.client = fake
     provider.ttl_seconds = 30
     provider.key_prefix = "devflow:run-lock"
-    provider.fallback = LockProviderFactory.create("local")
 
     lock = provider.get_run_lock(42)
-    assert lock.acquire(blocking=False) is True
-    assert lock.extend() is True
+    assert lock.acquire(blocking=False) is False
+    assert lock.extend() is False
     lock.release()

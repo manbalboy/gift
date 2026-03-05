@@ -45,7 +45,8 @@ def test_loop_engine_lifecycle_and_status():
     inject_response = client.post('/api/loop/inject', json={'instruction': '테스트 지시문'})
     assert inject_response.status_code == 200
     injected = inject_response.json()
-    assert injected['pending_instruction_count'] >= 1
+    assert injected['instruction_id'].startswith('instr-')
+    assert injected['status']['pending_instruction_count'] >= 1
 
     stop_response = client.post('/api/loop/stop')
     assert stop_response.status_code == 200
@@ -149,19 +150,51 @@ def test_loop_engine_inject_instruction_is_applied_during_running_cycle():
 
     injected = client.post('/api/loop/inject', json={'instruction': '품질 점수 개선 제약 조건을 강화하세요.'})
     assert injected.status_code == 200
-    assert injected.json()['pending_instruction_count'] >= 1
+    payload = injected.json()
+    instruction_id = payload['instruction_id']
+    assert payload['status']['pending_instruction_count'] >= 1
 
     assert _wait_until(
-        lambda: any(
-            item.get('code') == 'LOOP_INJECT_APPLIED'
-            for item in client.get('/api/logs/system-alerts?limit=30').json().get('items', [])
-        ),
+        lambda: client.get(f'/api/loop/instruction/{instruction_id}').json().get('status') == 'applied',
         timeout=3.5,
     )
 
     status = client.get('/api/loop/status')
     assert status.status_code == 200
     assert status.json()['pending_instruction_count'] == 0
+
+    client.post('/api/loop/stop')
+
+
+def test_loop_engine_instruction_status_not_found_returns_404():
+    response = client.get('/api/loop/instruction/not-exists')
+    assert response.status_code == 404
+    assert response.json()['detail'] == 'instruction not found'
+
+
+def test_loop_engine_instruction_queue_is_bounded():
+    started = client.post('/api/loop/start')
+    assert started.status_code == 200
+    paused = client.post('/api/loop/pause')
+    assert paused.status_code == 200
+
+    first_instruction_id: str | None = None
+    for idx in range(300):
+        injected = client.post('/api/loop/inject', json={'instruction': f'queued instruction {idx}'})
+        assert injected.status_code == 200
+        instruction_id = injected.json()['instruction_id']
+        if idx == 0:
+            first_instruction_id = instruction_id
+
+    status = client.get('/api/loop/status')
+    assert status.status_code == 200
+    assert status.json()['pending_instruction_count'] <= 256
+
+    assert first_instruction_id is not None
+    first_status = client.get(f'/api/loop/instruction/{first_instruction_id}')
+    assert first_status.status_code == 200
+    assert first_status.json()['status'] == 'dropped'
+    assert first_status.json()['dropped_reason'] == 'queue_overflow'
 
     client.post('/api/loop/stop')
 

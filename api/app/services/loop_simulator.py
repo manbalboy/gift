@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from threading import Event, RLock, Thread
 import time
+from uuid import uuid4
 
 from app.core.config import settings
 from app.services.lock_provider import LockProviderFactory
@@ -23,6 +24,8 @@ _LOOP_STAGE_LABELS = {
 }
 _LOOP_SIMULATOR_LOCK_KEY = -73_001
 _LOCK_EXTEND_INTERVAL_SECONDS = 5.0
+_MAX_PENDING_INSTRUCTIONS = 256
+_MAX_INSTRUCTION_STATUS_HISTORY = 2_048
 
 
 @dataclass
@@ -49,17 +52,41 @@ class LoopStatus:
         }
 
 
+@dataclass
+class InstructionStatus:
+    id: str
+    instruction: str
+    status: str
+    queued_at: datetime
+    updated_at: datetime
+    applied_at: datetime | None = None
+    dropped_reason: str | None = None
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "instruction": self.instruction,
+            "status": self.status,
+            "queued_at": self.queued_at,
+            "updated_at": self.updated_at,
+            "applied_at": self.applied_at,
+            "dropped_reason": self.dropped_reason,
+        }
+
+
 class LoopSimulator:
     def __init__(self) -> None:
         self._lock = RLock()
         self._thread: Thread | None = None
         self._stop_event = Event()
         self._pause_event = Event()
+        self._pause_event.set()
         self._mode = "idle"
         self._current_stage: str | None = None
         self._cycle_count = 0
         self._emitted_alert_count = 0
-        self._pending_instructions: deque[str] = deque()
+        self._pending_instructions: deque[tuple[str, str]] = deque(maxlen=_MAX_PENDING_INSTRUCTIONS)
+        self._instruction_statuses: OrderedDict[str, InstructionStatus] = OrderedDict()
         self._quality_score: int | None = None
         self._safe_mode_reason: str | None = None
         self._started_at: datetime | None = None
@@ -91,6 +118,7 @@ class LoopSimulator:
 
             self._stop_event = Event()
             self._pause_event = Event()
+            self._pause_event.set()
             self._mode = "running"
             self._current_stage = _LOOP_STAGES[0]
             self._cycle_count = 0
@@ -120,6 +148,7 @@ class LoopSimulator:
         if self._mode in {"paused", "safe_mode"} and self._thread and self._thread.is_alive():
             self._mode = "running"
             self._safe_mode_reason = None
+            self._pause_event.set()
             self._touch_locked()
             self._emit_lifecycle_alert_locked(
                 code="LOOP_RESUME",
@@ -129,25 +158,57 @@ class LoopSimulator:
             return self._snapshot_locked().to_payload()
         return self._snapshot_locked().to_payload()
 
-    def inject_instruction(self, instruction: str) -> dict[str, object]:
+    def inject_instruction(self, instruction: str) -> tuple[str | None, dict[str, object]]:
         sanitized = " ".join(instruction.strip().split())
         with self._lock:
             if not sanitized:
-                return self._snapshot_locked().to_payload()
-            self._pending_instructions.append(sanitized[:2000])
+                return None, self._snapshot_locked().to_payload()
+
+            instruction_id = f"instr-{uuid4().hex[:12]}"
+            instruction_text = sanitized[:2000]
+            queued_at = datetime.now(timezone.utc)
+
+            if len(self._pending_instructions) >= _MAX_PENDING_INSTRUCTIONS:
+                dropped_id, dropped_instruction = self._pending_instructions.popleft()
+                dropped = self._instruction_statuses.get(dropped_id)
+                if dropped is None:
+                    dropped = InstructionStatus(
+                        id=dropped_id,
+                        instruction=dropped_instruction,
+                        status="queued",
+                        queued_at=queued_at,
+                        updated_at=queued_at,
+                    )
+                dropped.status = "dropped"
+                dropped.updated_at = queued_at
+                dropped.dropped_reason = "queue_overflow"
+                self._instruction_statuses[dropped_id] = dropped
+                self._instruction_statuses.move_to_end(dropped_id)
+
+            self._pending_instructions.append((instruction_id, instruction_text))
+            self._instruction_statuses[instruction_id] = InstructionStatus(
+                id=instruction_id,
+                instruction=instruction_text,
+                status="queued",
+                queued_at=queued_at,
+                updated_at=queued_at,
+            )
+            self._instruction_statuses.move_to_end(instruction_id)
+            self._trim_instruction_statuses_locked()
             self._touch_locked()
             self._emit_lifecycle_alert_locked(
                 code="LOOP_INJECT_QUEUED",
                 message=f"Inject Instruction 등록: {sanitized[:120]}",
                 level="warning",
             )
-            return self._snapshot_locked().to_payload()
+            return instruction_id, self._snapshot_locked().to_payload()
 
     def pause(self) -> dict[str, object]:
         with self._lock:
             if self._mode != "running":
                 return self._snapshot_locked().to_payload()
             self._mode = "paused"
+            self._pause_event.clear()
             self._touch_locked()
             self._emit_lifecycle_alert_locked(
                 code="LOOP_PAUSE",
@@ -169,6 +230,7 @@ class LoopSimulator:
             self._mode = "stopped"
             self._current_stage = None
             self._stop_event.set()
+            self._pause_event.set()
             self._touch_locked()
             self._emit_lifecycle_alert_locked(
                 code="LOOP_STOP",
@@ -196,6 +258,7 @@ class LoopSimulator:
             self._cycle_count = 0
             self._emitted_alert_count = 0
             self._pending_instructions.clear()
+            self._instruction_statuses.clear()
             self._quality_score = None
             self._safe_mode_reason = None
             self._started_at = None
@@ -210,7 +273,7 @@ class LoopSimulator:
                     break
 
                 if self._is_paused():
-                    time.sleep(0.12)
+                    self._pause_event.wait(timeout=1.0)
                     continue
 
                 self._drain_next_instruction()
@@ -317,6 +380,7 @@ class LoopSimulator:
                 return
             self._mode = "safe_mode"
             self._safe_mode_reason = reason
+            self._pause_event.clear()
             self._touch_locked()
             self._emit_lifecycle_alert_locked(
                 code="LOOP_SAFE_MODE",
@@ -325,12 +389,22 @@ class LoopSimulator:
             )
 
     def _drain_next_instruction(self) -> None:
+        instruction_id: str | None = None
         with self._lock:
             if self._mode != "running" or not self._pending_instructions:
                 return
-            instruction = self._pending_instructions.popleft()
+            instruction_id, instruction = self._pending_instructions.popleft()
             cycle = self._cycle_count + 1
             stage = self._current_stage
+            applied_at = datetime.now(timezone.utc)
+            tracked = self._instruction_statuses.get(instruction_id)
+            if tracked is not None:
+                tracked.status = "applied"
+                tracked.updated_at = applied_at
+                tracked.applied_at = applied_at
+                tracked.dropped_reason = None
+                self._instruction_statuses.move_to_end(instruction_id)
+            self._trim_instruction_statuses_locked()
             self._touch_locked()
 
         record_system_alert(
@@ -398,6 +472,7 @@ class LoopSimulator:
         with self._lock:
             if not self._execution_lock_held:
                 self._stop_event.set()
+                self._pause_event.set()
                 return False
             try:
                 extended = bool(self._execution_lock.extend(settings.lock_ttl_seconds))
@@ -411,12 +486,27 @@ class LoopSimulator:
             self._mode = "stopped"
             self._current_stage = None
             self._stop_event.set()
+            self._pause_event.set()
             self._emit_lifecycle_alert_locked(
                 code="LOOP_LOCK_LOST",
                 message="분산 락 갱신에 실패해 루프 엔진을 안전 정지합니다.",
                 level="error",
             )
             return False
+
+    def get_instruction_status(self, instruction_id: str) -> dict[str, object] | None:
+        with self._lock:
+            normalized = instruction_id.strip()
+            if not normalized:
+                return None
+            status = self._instruction_statuses.get(normalized)
+            if status is None:
+                return None
+            return status.to_payload()
+
+    def _trim_instruction_statuses_locked(self) -> None:
+        while len(self._instruction_statuses) > _MAX_INSTRUCTION_STATUS_HISTORY:
+            self._instruction_statuses.popitem(last=False)
 
     def _touch_locked(self) -> None:
         self._updated_at = datetime.now(timezone.utc)

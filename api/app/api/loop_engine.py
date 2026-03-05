@@ -3,7 +3,7 @@ import hmac
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.core.config import settings
-from app.schemas.loop import LoopInstructionIn, LoopStatusOut
+from app.schemas.loop import LoopInstructionEnqueueOut, LoopInstructionIn, LoopInstructionStatusOut, LoopStatusOut
 from app.services.loop_simulator import loop_simulator
 
 
@@ -83,12 +83,26 @@ def stop_loop_engine(_authorized_role: str = Depends(require_loop_action_permiss
     return loop_simulator.stop()
 
 
-@router.post("/inject", response_model=LoopStatusOut)
+@router.post("/inject", response_model=LoopInstructionEnqueueOut)
 def inject_loop_instruction(
     payload: LoopInstructionIn,
     _authorized_role: str = Depends(require_loop_action_permission("loop:inject")),
 ):
-    return loop_simulator.inject_instruction(payload.instruction)
+    instruction_id, status = loop_simulator.inject_instruction(payload.instruction)
+    if not instruction_id:
+        raise HTTPException(status_code=400, detail="instruction is empty")
+    return {"instruction_id": instruction_id, "status": status}
+
+
+@router.get("/instruction/{instruction_id}", response_model=LoopInstructionStatusOut)
+def get_instruction_status(
+    instruction_id: str,
+    _authorized_role: str = Depends(require_loop_action_permission("loop:inject")),
+):
+    status = loop_simulator.get_instruction_status(instruction_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="instruction not found")
+    return status
 
 
 @router.get("/status", response_model=LoopStatusOut)

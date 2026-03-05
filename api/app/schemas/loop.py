@@ -17,3 +17,18 @@ class LoopStatusOut(BaseModel):
 
 class LoopInstructionIn(BaseModel):
     instruction: str = Field(min_length=1, max_length=2000)
+
+
+class LoopInstructionEnqueueOut(BaseModel):
+    instruction_id: str
+    status: LoopStatusOut
+
+
+class LoopInstructionStatusOut(BaseModel):
+    id: str
+    instruction: str
+    status: Literal["queued", "applied", "dropped"]
+    queued_at: datetime
+    updated_at: datetime
+    applied_at: datetime | None = None
+    dropped_reason: str | None = None
