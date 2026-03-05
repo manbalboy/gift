@@ -1,7 +1,7 @@
+import asyncio
 import json
-import time
 import hmac
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 import logging
 from ipaddress import ip_address
 from threading import Lock
@@ -12,8 +12,16 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.workflow import NodeRun, WorkflowDefinition, WorkflowRun
-from app.schemas.workflow import RunEventOut, WorkflowCreate, WorkflowGraph, WorkflowOut, WorkflowRunOut, WorkflowUpdate
+from app.models.workflow import HumanGateDecisionAudit, NodeRun, WorkflowDefinition, WorkflowRun
+from app.schemas.workflow import (
+    HumanGateDecisionAuditOut,
+    RunEventOut,
+    WorkflowCreate,
+    WorkflowGraph,
+    WorkflowOut,
+    WorkflowRunOut,
+    WorkflowUpdate,
+)
 from app.services.rate_limiter import create_sse_reconnect_limiter
 from app.services.workflow_engine import WorkflowEngine
 from app.services.workspace import InvalidNodeIdError
@@ -88,7 +96,7 @@ def _is_reconnect_rate_limited(client_key: str) -> bool:
     )
 
 
-def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks: int) -> Iterator[str]:
+async def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks: int) -> AsyncIterator[str]:
     global active_stream_connections
     generation_on_start = _get_stream_generation(workflow_id)
     with active_stream_connections_lock:
@@ -123,8 +131,11 @@ def _stream_workflow_runs_events(db: Session, workflow_id: int, max_ticks: int) 
             if encoded != last_data:
                 last_data = encoded
                 yield f"event: run_status\ndata: {encoded}\n\n"
-            time.sleep(1.0)
+            await asyncio.sleep(1.0)
         yield "event: end\ndata: stream closed\n\n"
+    except asyncio.CancelledError:
+        # Ensure ASGI disconnect/cancellation propagates while keeping cleanup in finally.
+        raise
     finally:
         with active_stream_connections_lock:
             active_stream_connections = max(0, active_stream_connections - 1)
@@ -273,6 +284,12 @@ def _resolve_workflow_workspace_id(workflow: WorkflowDefinition | None) -> str:
     return settings.default_workspace_id
 
 
+def _build_decider_identity(role: str, workspace: str) -> str:
+    safe_role = role.strip().lower() or "unknown"
+    safe_workspace = workspace.strip().lower() or "unknown"
+    return f"{safe_role}@{safe_workspace}"
+
+
 @run_router.post("/{run_id}/approve", response_model=WorkflowRunOut)
 def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session = Depends(get_db)):
     configured_token = settings.human_gate_approver_token.strip()
@@ -311,7 +328,18 @@ def approve_human_gate(run_id: int, node_id: str, request: Request, db: Session 
         raise HTTPException(status_code=409, detail="run is not waiting for approval")
 
     try:
-        updated = engine.approve_human_gate(db, run=run, node_id=node_id)
+        updated = engine.approve_human_gate(
+            db,
+            run=run,
+            node_id=node_id,
+            decided_by=_build_decider_identity(approver_role, approver_workspace),
+            payload={
+                "node_id": node_id,
+                "decision": "approved",
+                "role": approver_role,
+                "workspace_id": approver_workspace,
+            },
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -357,12 +385,38 @@ def reject_human_gate(run_id: int, node_id: str, request: Request, db: Session =
         raise HTTPException(status_code=409, detail="run is not waiting for approval")
 
     try:
-        updated = engine.reject_human_gate(db, run=run, node_id=node_id)
+        updated = engine.reject_human_gate(
+            db,
+            run=run,
+            node_id=node_id,
+            decided_by=_build_decider_identity(approver_role, approver_workspace),
+            payload={
+                "node_id": node_id,
+                "decision": "rejected",
+                "role": approver_role,
+                "workspace_id": approver_workspace,
+            },
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return updated
+
+
+@run_router.get("/{run_id}/human-gate-audits", response_model=list[HumanGateDecisionAuditOut])
+def list_human_gate_audits(run_id: int, db: Session = Depends(get_db)):
+    run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    records = (
+        db.query(HumanGateDecisionAudit)
+        .filter(HumanGateDecisionAudit.run_id == run_id)
+        .order_by(HumanGateDecisionAudit.decided_at.desc(), HumanGateDecisionAudit.id.desc())
+        .all()
+    )
+    return records
 
 
 @run_router.post("/{run_id}/cancel", response_model=WorkflowRunOut)

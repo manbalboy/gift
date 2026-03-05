@@ -691,6 +691,37 @@ input {
   overflow: auto;
 }
 
+.audit-summary {
+  margin-top: var(--space-16);
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  padding: var(--space-12);
+  background: var(--color-bg-elevated);
+  display: grid;
+  gap: var(--space-8);
+}
+
+.audit-summary-line {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--color-text-secondary);
+}
+
+.audit-modal {
+  max-height: min(80vh, 680px);
+}
+
+.audit-log-list {
+  border: 1px solid var(--color-border-default);
+  border-radius: 10px;
+  padding: var(--space-8);
+  background: var(--color-bg-elevated);
+  max-height: 360px;
+  overflow: auto;
+  display: grid;
+  gap: var(--space-8);
+}
+
 .btn {
   border-radius: 10px;
   border: 1px solid var(--color-border-default);

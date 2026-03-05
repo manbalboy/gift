@@ -11,12 +11,12 @@ from .conftest import client
     [
         "http://localhost",
         "https://localhost",
-        "http://localhost:3999",
+        "http://localhost:3109",
         "http://127.0.0.1",
         "https://127.0.0.1:3101",
         "https://127.0.0.1:7099",
         "https://manbalboy.com",
-        "http://manbalboy.com:3001",
+        "http://manbalboy.com:3102",
         "http://ssh.manbalboy.com:7005",
     ],
 )

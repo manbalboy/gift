@@ -1,6 +1,7 @@
 from app.schemas.agent import AgentCreate, AgentOut, AgentTaskRequest, AgentTaskResult, AgentUpdate
 from app.schemas.webhook import WebhookBlockedEventOut, WebhookEventOut
 from app.schemas.workflow import (
+    HumanGateDecisionAuditOut,
     NodeRunOut,
     RunEventOut,
     WorkflowCreate,
@@ -28,5 +29,6 @@ __all__ = [
     "WorkflowOut",
     "NodeRunOut",
     "WorkflowRunOut",
+    "HumanGateDecisionAuditOut",
     "RunEventOut",
 ]

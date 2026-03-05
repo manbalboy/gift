@@ -7,7 +7,7 @@ import WorkflowBuilder from './components/WorkflowBuilder';
 import { useViewport } from './hooks/useViewport';
 import { LAYER_Z_INDEX } from './constants/layers';
 import { ApiError, api } from './services/api';
-import type { ConstellationData, WebhookBlockedEvent, Workflow, WorkflowRun } from './types';
+import type { ConstellationData, HumanGateAuditEntry, WebhookBlockedEvent, Workflow, WorkflowRun } from './types';
 import { createToastId } from './utils/toastId';
 
 export default function App() {
@@ -26,6 +26,9 @@ export default function App() {
   const [artifactHasMore, setArtifactHasMore] = useState(false);
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [blockedWebhookEvents, setBlockedWebhookEvents] = useState<WebhookBlockedEvent[]>([]);
+  const [humanGateAudits, setHumanGateAudits] = useState<HumanGateAuditEntry[]>([]);
+  const [humanGateAuditsLoading, setHumanGateAuditsLoading] = useState(false);
+  const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMessage, setAuthModalMessage] = useState('reviewer/admin 권한 또는 workspace 접근 권한이 필요합니다.');
   const viewport = useViewport();
@@ -143,6 +146,39 @@ export default function App() {
   }, [run?.id, run?.updated_at]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!run) {
+      setHumanGateAudits([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const syncAudits = async () => {
+      setHumanGateAuditsLoading(true);
+      try {
+        const records = await api.getHumanGateAudits(run.id);
+        if (!cancelled) {
+          setHumanGateAudits(records);
+        }
+      } catch {
+        if (!cancelled) {
+          setHumanGateAudits([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setHumanGateAuditsLoading(false);
+        }
+      }
+    };
+
+    void syncAudits();
+    return () => {
+      cancelled = true;
+    };
+  }, [run?.id, run?.updated_at]);
+
+  useEffect(() => {
     if (!activeWorkflow) return;
 
     const unsubscribe = api.subscribeWorkflowRuns(activeWorkflow.id, {
@@ -162,7 +198,9 @@ export default function App() {
         }
       },
       onError: () => {
-        enqueueToast('error', '실시간 스트림 연결이 끊겼습니다.');
+        enqueueToast('error', '실시간 스트림 연결이 끊겨 재연결을 시도합니다.', {
+          dedupeKey: 'stream-disconnect',
+        });
       },
       onStateChange: (state) => {
         setStreamState(state);
@@ -173,6 +211,12 @@ export default function App() {
   }, [activeWorkflow?.id]);
 
   const runStatus = useMemo(() => run?.status ?? 'queued', [run?.status]);
+  const streamStateLabel = useMemo(() => {
+    if (streamState === 'connected') return '연결됨';
+    if (streamState === 'connecting') return '연결 중';
+    if (streamState === 'reconnecting') return '재연결 중';
+    return '연결 종료';
+  }, [streamState]);
   const nodeStatuses = useMemo(
     () =>
       Object.fromEntries(
@@ -342,7 +386,7 @@ export default function App() {
         <h1>DevFlow Agent Hub</h1>
         <div className="top-actions">
           <span className={`live-indicator live-${streamState}`} aria-label={`실시간 연결 상태 ${streamState}`}>
-            {streamState}
+            {streamStateLabel}
           </span>
           <StatusBadge status={runStatus} />
           <button className="btn btn-primary" onClick={handleStartRun} disabled={!activeWorkflow}>
@@ -477,6 +521,29 @@ export default function App() {
                 </button>
               </div>
             </div>
+            <div className="audit-summary">
+              <div className="artifact-viewer-header">
+                <strong>Human Gate 감사 로그</strong>
+                <span className="mono">{humanGateAudits.length}건</span>
+              </div>
+              <div className="webhook-actions-row">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={!run}
+                  onClick={() => setHumanGateAuditModalOpen(true)}
+                >
+                  이력 보기
+                </button>
+              </div>
+              <p className="mono audit-summary-line">
+                {humanGateAuditsLoading
+                  ? '감사 로그를 불러오는 중입니다.'
+                  : humanGateAudits[0]
+                    ? `${humanGateAudits[0].decision} · ${humanGateAudits[0].decided_by}`
+                    : '기록된 Human Gate 결정 이력이 없습니다.'}
+              </p>
+            </div>
           </section>
         </aside>
       </div>
@@ -495,6 +562,45 @@ export default function App() {
             <div className="builder-actions">
               <button type="button" className="btn btn-primary" onClick={() => setAuthModalOpen(false)}>
                 확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {humanGateAuditModalOpen && (
+        <div className="auth-modal-backdrop" role="presentation" onClick={() => setHumanGateAuditModalOpen(false)}>
+          <div
+            className="auth-modal card audit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Human Gate 감사 로그"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Human Gate 감사 로그</h2>
+            <p>승인/반려 이력을 읽기 전용으로 제공합니다.</p>
+            {humanGateAuditsLoading ? (
+              <p className="mono">로딩 중...</p>
+            ) : humanGateAudits.length === 0 ? (
+              <p className="mono">기록이 없습니다.</p>
+            ) : (
+              <div className="audit-log-list">
+                {humanGateAudits.map((audit) => (
+                  <article key={audit.id} className="blocked-event-item">
+                    <div className="blocked-event-head">
+                      <strong className="mono">{audit.decision}</strong>
+                      <span className="mono">{new Date(audit.decided_at).toLocaleString('ko-KR', { hour12: false })}</span>
+                    </div>
+                    <p className="mono">
+                      node: {audit.node_id} · by: {audit.decided_by}
+                    </p>
+                    <p className="mono">{JSON.stringify(audit.payload)}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+            <div className="builder-actions">
+              <button type="button" className="btn btn-primary" onClick={() => setHumanGateAuditModalOpen(false)}>
+                닫기
               </button>
             </div>
           </div>

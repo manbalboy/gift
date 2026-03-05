@@ -1,3 +1,4 @@
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from app.api import workflows as workflows_api
@@ -8,7 +9,10 @@ from .test_workflow_api import PAYLOAD
 
 
 def test_sse_reconnect_rate_limit_under_concurrency(monkeypatch):
-    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    async def _instant_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
     monkeypatch.setattr(workflows_api.settings, "sse_reconnect_limit_per_second", 1)
     monkeypatch.setattr(workflows_api.settings, "sse_rate_limit_window_seconds", 1)
     workflows_api.reconnect_rate_limiter.reset_for_tests()

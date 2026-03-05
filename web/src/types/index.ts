@@ -78,3 +78,13 @@ export type WebhookBlockedEvent = {
   event_type: string;
   detail: string;
 };
+
+export type HumanGateAuditEntry = {
+  id: number;
+  run_id: number;
+  node_id: string;
+  decision: string;
+  decided_by: string;
+  decided_at: string;
+  payload: Record<string, unknown>;
+};

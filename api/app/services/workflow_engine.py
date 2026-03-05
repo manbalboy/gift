@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.workflow import NodeRun, WorkflowDefinition, WorkflowRun
+from app.models.workflow import HumanGateDecisionAudit, NodeRun, WorkflowDefinition, WorkflowRun
 from app.schemas.agent import AgentTaskRequest
 from app.services.agent_runner import AgentRunner
 from app.services.lock_provider import LockProviderFactory
@@ -508,7 +508,52 @@ class WorkflowEngine:
         latest = db.query(WorkflowRun).filter(WorkflowRun.id == run.id).first()
         return latest or run
 
-    def approve_human_gate(self, db: Session, run: WorkflowRun, node_id: str) -> WorkflowRun:
+    def approve_human_gate(
+        self,
+        db: Session,
+        run: WorkflowRun,
+        node_id: str,
+        *,
+        decided_by: str = "system",
+        payload: dict | None = None,
+    ) -> WorkflowRun:
+        return self._handle_human_gate_decision(
+            db=db,
+            run=run,
+            node_id=node_id,
+            decision="approved",
+            decided_by=decided_by,
+            payload=payload,
+        )
+
+    def reject_human_gate(
+        self,
+        db: Session,
+        run: WorkflowRun,
+        node_id: str,
+        *,
+        decided_by: str = "system",
+        payload: dict | None = None,
+    ) -> WorkflowRun:
+        return self._handle_human_gate_decision(
+            db=db,
+            run=run,
+            node_id=node_id,
+            decision="rejected",
+            decided_by=decided_by,
+            payload=payload,
+        )
+
+    def _handle_human_gate_decision(
+        self,
+        db: Session,
+        run: WorkflowRun,
+        node_id: str,
+        *,
+        decision: str,
+        decided_by: str,
+        payload: dict | None,
+    ) -> WorkflowRun:
         run_lock = self.lock_provider.get_run_lock(run.id)
         if not run_lock.acquire(blocking=False):
             raise RuntimeError("run lock is busy")
@@ -531,14 +576,33 @@ class WorkflowEngine:
             if node.status != "approval_pending":
                 raise ValueError("node is not approval_pending")
 
-            node.status = "done"
-            previous = (node.log or "").strip()
-            node.log = f"[human_gate] approved\n{previous}".strip()
+            if decision == "approved":
+                node.status = "done"
+                previous = (node.log or "").strip()
+                node.log = f"[human_gate] approved\n{previous}".strip()
+            else:
+                node.status = "failed"
+                previous = (node.log or "").strip()
+                node.log = f"[human_gate] rejected\n{previous}".strip()
 
             all_nodes = self._load_locked_nodes(db, run.id)
-            self._sync_run_status(locked_run, all_nodes)
-            if locked_run.status == "waiting" and any(item.status == "queued" for item in all_nodes):
-                locked_run.status = "running"
+            if decision == "approved":
+                self._sync_run_status(locked_run, all_nodes)
+                if locked_run.status == "waiting" and any(item.status == "queued" for item in all_nodes):
+                    locked_run.status = "running"
+            else:
+                locked_run.status = "failed"
+                self._sync_run_status(locked_run, all_nodes)
+
+            audit = HumanGateDecisionAudit(
+                run_id=run.id,
+                node_id=node_id,
+                decision=decision,
+                decided_by=decided_by,
+                decided_at=datetime.now(timezone.utc),
+                payload=payload or {},
+            )
+            db.add(audit)
 
             db.commit()
             db.refresh(locked_run)
@@ -550,50 +614,8 @@ class WorkflowEngine:
 
         approval_event = self._get_approval_event(run.id, node_id)
         approval_event.set()
-        self._start_background_worker(run.id)
-        return locked_run
-
-    def reject_human_gate(self, db: Session, run: WorkflowRun, node_id: str) -> WorkflowRun:
-        run_lock = self.lock_provider.get_run_lock(run.id)
-        if not run_lock.acquire(blocking=False):
-            raise RuntimeError("run lock is busy")
-
-        try:
-            locked_run = self._load_locked_run(db, run.id)
-            if not locked_run:
-                raise ValueError("run not found")
-            if locked_run.status in {"done", "failed", "cancelled"}:
-                raise ValueError("run cannot be rejected in terminal state")
-
-            node = (
-                db.query(NodeRun)
-                .filter(NodeRun.run_id == run.id, NodeRun.node_id == node_id)
-                .with_for_update()
-                .first()
-            )
-            if not node:
-                raise ValueError("node not found in run")
-            if node.status != "approval_pending":
-                raise ValueError("node is not approval_pending")
-
-            node.status = "failed"
-            previous = (node.log or "").strip()
-            node.log = f"[human_gate] rejected\n{previous}".strip()
-
-            all_nodes = self._load_locked_nodes(db, run.id)
-            locked_run.status = "failed"
-            self._sync_run_status(locked_run, all_nodes)
-
-            db.commit()
-            db.refresh(locked_run)
-        except SQLAlchemyError as exc:
-            db.rollback()
-            raise RuntimeError("rejection failed") from exc
-        finally:
-            run_lock.release()
-
-        approval_event = self._get_approval_event(run.id, node_id)
-        approval_event.set()
+        if decision == "approved":
+            self._start_background_worker(run.id)
         return locked_run
 
     def cancel_run(self, db: Session, run: WorkflowRun) -> WorkflowRun:

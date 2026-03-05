@@ -103,6 +103,18 @@ class WorkflowRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class HumanGateDecisionAuditOut(BaseModel):
+    id: int
+    run_id: int
+    node_id: str
+    decision: str
+    decided_by: str
+    decided_at: datetime
+    payload: dict
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class RunEventOut(BaseModel):
     run_id: int
     status: str

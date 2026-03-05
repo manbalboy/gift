@@ -1,3 +1,4 @@
+import asyncio
 import itertools
 import time
 import pytest
@@ -33,6 +34,10 @@ def reset_stream_rate_limiter():
     workflows_api.reconnect_rate_limiter.reset_for_tests()
     yield
     workflows_api.reconnect_rate_limiter.reset_for_tests()
+
+
+async def _instant_sleep(_seconds: float) -> None:
+    return None
 
 
 def test_workflow_create_and_get():
@@ -185,7 +190,7 @@ def test_workflow_run_rejects_unsafe_node_id_with_400():
 
 
 def test_workflow_runs_stream_endpoint_returns_sse(monkeypatch):
-    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
     created = client.post("/api/workflows", json=PAYLOAD)
     assert created.status_code == 200
     workflow_id = created.json()["id"]
@@ -197,7 +202,7 @@ def test_workflow_runs_stream_endpoint_returns_sse(monkeypatch):
 
 
 def test_workflow_runs_stream_disconnect_releases_connection(monkeypatch):
-    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
     workflows_api.active_stream_connections = 0
 
     created = client.post("/api/workflows", json=PAYLOAD)
@@ -216,7 +221,7 @@ def test_workflow_runs_stream_disconnect_releases_connection(monkeypatch):
 
 
 def test_workflow_runs_stream_rate_limit_returns_429(monkeypatch):
-    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
     monkeypatch.setattr(workflows_api.settings, "sse_reconnect_limit_per_second", 1)
 
     created = client.post("/api/workflows", json=PAYLOAD)
@@ -231,7 +236,7 @@ def test_workflow_runs_stream_rate_limit_returns_429(monkeypatch):
 
 
 def test_workflow_runs_stream_ignores_untrusted_forwarded_for(monkeypatch):
-    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
     monkeypatch.setattr(workflows_api.settings, "sse_reconnect_limit_per_second", 1)
     monkeypatch.setattr(workflows_api.settings, "sse_rate_limit_window_seconds", 5)
     monkeypatch.setattr(workflows_api.settings, "sse_trusted_proxy_ips", "127.0.0.1,::1")
@@ -255,7 +260,7 @@ def test_workflow_runs_stream_ignores_untrusted_forwarded_for(monkeypatch):
 
 
 def test_workflow_runs_stream_trusts_forwarded_for_from_trusted_proxy(monkeypatch):
-    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
     monkeypatch.setattr(workflows_api.settings, "sse_reconnect_limit_per_second", 1)
     monkeypatch.setattr(workflows_api.settings, "sse_rate_limit_window_seconds", 5)
     monkeypatch.setattr(workflows_api.settings, "sse_trusted_proxy_ips", "testclient")
@@ -495,6 +500,60 @@ def test_human_gate_reject_marks_run_failed(monkeypatch):
     assert "[human_gate] rejected" in review_node["log"]
 
 
+def test_human_gate_decision_creates_audit_log_and_can_be_listed(monkeypatch):
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")
+    monkeypatch.setattr(workflows_api.settings, "human_gate_approver_workspaces", "main")
+    payload = {
+        "name": "Human Gate Audit",
+        "description": "",
+        "graph": {
+            "nodes": [
+                {"id": "idea", "type": "task", "label": "Idea"},
+                {"id": "review", "type": "human_gate", "label": "Review"},
+                {"id": "pr", "type": "task", "label": "PR"},
+            ],
+            "edges": [
+                {"id": "e1", "source": "idea", "target": "review"},
+                {"id": "e2", "source": "review", "target": "pr"},
+            ],
+        },
+    }
+    created = client.post("/api/workflows", json=payload, headers={"X-Workspace-Id": "main"})
+    assert created.status_code == 200
+    run = client.post(f"/api/workflows/{created.json()['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    for _ in range(25):
+        current = client.get(f"/api/runs/{run_id}")
+        assert current.status_code == 200
+        if any(node["status"] == "approval_pending" for node in current.json()["node_runs"]):
+            break
+        time.sleep(0.1)
+
+    approved = client.post(
+        f"/api/runs/{run_id}/approve?node_id=review",
+        headers={
+            "X-Approver-Token": "secret-approver",
+            "X-Approver-Role": "reviewer",
+            "X-Workspace-Id": "main",
+        },
+    )
+    assert approved.status_code == 200
+
+    audits = client.get(f"/api/runs/{run_id}/human-gate-audits")
+    assert audits.status_code == 200
+    rows = audits.json()
+    assert len(rows) >= 1
+    latest = rows[0]
+    assert latest["run_id"] == run_id
+    assert latest["node_id"] == "review"
+    assert latest["decision"] == "approved"
+    assert latest["decided_by"] == "reviewer@main"
+    assert latest["payload"]["workspace_id"] == "main"
+
+
 def test_cancel_run_marks_run_and_non_terminal_nodes_cancelled():
     payload = {
         "name": "Cancelable Flow",
@@ -558,7 +617,7 @@ def test_artifact_chunk_endpoint_returns_partial_content():
 
 
 def test_stream_metrics_endpoint_returns_active_connections(monkeypatch):
-    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _instant_sleep)
     workflows_api.active_stream_connections = 0
 
     created = client.post("/api/workflows", json=PAYLOAD)
@@ -573,8 +632,12 @@ def test_stream_metrics_endpoint_returns_active_connections(monkeypatch):
 
 
 def test_cancel_run_closes_active_workflow_stream(monkeypatch):
-    real_sleep = time.sleep
-    monkeypatch.setattr(workflows_api.time, "sleep", lambda _seconds: real_sleep(0.01))
+    real_async_sleep = asyncio.sleep
+
+    async def _tiny_sleep(_seconds: float) -> None:
+        await real_async_sleep(0.01)
+
+    monkeypatch.setattr(workflows_api.asyncio, "sleep", _tiny_sleep)
     created = client.post("/api/workflows", json=PAYLOAD)
     assert created.status_code == 200
     workflow_id = created.json()["id"]

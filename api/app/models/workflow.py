@@ -34,6 +34,10 @@ class WorkflowRun(Base):
 
     workflow: Mapped[WorkflowDefinition] = relationship(back_populates="runs")
     node_runs: Mapped[list["NodeRun"]] = relationship(back_populates="workflow_run", cascade="all, delete-orphan")
+    decision_audits: Mapped[list["HumanGateDecisionAudit"]] = relationship(
+        back_populates="workflow_run",
+        cascade="all, delete-orphan",
+    )
 
 
 class NodeRun(Base):
@@ -50,3 +54,17 @@ class NodeRun(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="node_runs")
+
+
+class HumanGateDecisionAudit(Base):
+    __tablename__ = "human_gate_decision_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
+    node_id: Mapped[str] = mapped_column(String(120), index=True)
+    decision: Mapped[str] = mapped_column(String(32), index=True)
+    decided_by: Mapped[str] = mapped_column(String(120))
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="decision_audits")

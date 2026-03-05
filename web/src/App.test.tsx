@@ -108,6 +108,7 @@ jest.mock('./services/api', () => {
       sendMalformedDevIntegrationWebhook: jest.fn(),
       subscribeWorkflowRuns: jest.fn(),
       listWebhookBlockedEvents: jest.fn(),
+      getHumanGateAudits: jest.fn(),
     },
   };
 });
@@ -159,6 +160,7 @@ describe('App', () => {
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
     (api.subscribeWorkflowRuns as jest.Mock).mockReturnValue(() => undefined);
     (api.listWebhookBlockedEvents as jest.Mock).mockResolvedValue([]);
+    (api.getHumanGateAudits as jest.Mock).mockResolvedValue([]);
   });
 
   test('동일 fallback 시그니처 알림은 한 번만 노출된다', async () => {
@@ -381,6 +383,58 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: '권한 안내' })).toBeInTheDocument();
       expect(screen.getByText('권한이 필요합니다')).toBeInTheDocument();
+    });
+  });
+
+  test('감사 로그 이력 보기 모달을 열어 Human Gate 이력을 확인한다', async () => {
+    (api.startRun as jest.Mock).mockResolvedValue({
+      id: 302,
+      workflow_id: 1,
+      status: 'done',
+      started_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:12Z',
+      node_runs: [
+        {
+          id: 1,
+          node_id: 'review',
+          node_name: 'Review',
+          status: 'done',
+          sequence: 0,
+          log: '[human_gate] approved',
+          artifact_path: null,
+          updated_at: '2026-03-05T00:00:10Z',
+        },
+      ],
+    });
+    (api.getConstellation as jest.Mock).mockResolvedValue({
+      run_id: 302,
+      status: 'done',
+      nodes: [{ id: 'review', label: 'Review', status: 'done', sequence: 0 }],
+      links: [],
+    });
+    (api.getHumanGateAudits as jest.Mock).mockResolvedValue([
+      {
+        id: 1,
+        run_id: 302,
+        node_id: 'review',
+        decision: 'approved',
+        decided_by: 'reviewer@main',
+        decided_at: '2026-03-05T00:00:10Z',
+        payload: { workspace_id: 'main' },
+      },
+    ]);
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Run 시작' }));
+    await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.getHumanGateAudits).toHaveBeenCalledWith(302));
+
+    fireEvent.click(screen.getByRole('button', { name: '이력 보기' }));
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Human Gate 감사 로그' })).toBeInTheDocument();
+      expect(screen.getByText('approved')).toBeInTheDocument();
+      expect(screen.getByText('node: review · by: reviewer@main')).toBeInTheDocument();
     });
   });
 });

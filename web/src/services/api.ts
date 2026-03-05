@@ -1,12 +1,14 @@
 import type {
   ArtifactChunkResponse,
   ConstellationData,
+  HumanGateAuditEntry,
   WebhookBlockedEvent,
   Workflow,
   WorkflowGraphValidationResult,
   WorkflowRun,
   WorkflowRunsStreamEvent,
 } from '../types';
+import { calculateReconnectDelayMs } from './reconnect';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3101/api';
 const API_ORIGIN = API_BASE.replace(/\/api$/, '');
@@ -146,24 +148,64 @@ export const api = {
       onStateChange?: (state: 'connecting' | 'connected' | 'reconnecting' | 'closed') => void;
     },
   ) => {
-    handlers.onStateChange?.('connecting');
-    const stream = new EventSource(`${API_ORIGIN}/api/workflows/${workflowId}/runs/stream?max_ticks=600`);
-    stream.addEventListener('open', () => {
-      handlers.onStateChange?.('connected');
-    });
-    stream.addEventListener('run_status', (event) => {
-      const message = event as MessageEvent<string>;
-      handlers.onRunStatus(JSON.parse(message.data) as WorkflowRunsStreamEvent);
-    });
-    stream.onerror = (event) => {
-      handlers.onStateChange?.('reconnecting');
-      handlers.onError?.(event);
-    };
-    return () => {
-      handlers.onStateChange?.('closed');
+    let closedByClient = false;
+    let stream: EventSource | null = null;
+    let reconnectTimer: number | null = null;
+    let reconnectAttempt = 0;
+
+    const closeStream = () => {
+      if (!stream) return;
       stream.close();
+      stream = null;
+    };
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer === null) return;
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    };
+
+    const scheduleReconnect = () => {
+      if (closedByClient) return;
+      handlers.onStateChange?.('reconnecting');
+      reconnectAttempt += 1;
+      const delayMs = calculateReconnectDelayMs(reconnectAttempt);
+      clearReconnectTimer();
+      reconnectTimer = window.setTimeout(() => {
+        connect();
+      }, delayMs);
+    };
+
+    const connect = () => {
+      if (closedByClient) return;
+      clearReconnectTimer();
+      closeStream();
+      handlers.onStateChange?.(reconnectAttempt > 0 ? 'reconnecting' : 'connecting');
+      stream = new EventSource(`${API_ORIGIN}/api/workflows/${workflowId}/runs/stream?max_ticks=600`);
+      stream.addEventListener('open', () => {
+        reconnectAttempt = 0;
+        handlers.onStateChange?.('connected');
+      });
+      stream.addEventListener('run_status', (event) => {
+        const message = event as MessageEvent<string>;
+        handlers.onRunStatus(JSON.parse(message.data) as WorkflowRunsStreamEvent);
+      });
+      stream.onerror = (event) => {
+        handlers.onError?.(event);
+        closeStream();
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+    return () => {
+      closedByClient = true;
+      clearReconnectTimer();
+      closeStream();
+      handlers.onStateChange?.('closed');
     };
   },
   listWebhookBlockedEvents: (limit = 20) =>
     request<WebhookBlockedEvent[]>(`/webhooks/blocked-events?limit=${Math.max(1, Math.min(limit, 50))}`),
+  getHumanGateAudits: (runId: number) => request<HumanGateAuditEntry[]>(`/runs/${runId}/human-gate-audits`),
 };
