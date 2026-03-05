@@ -1,38 +1,28 @@
 # REVIEW
 
 ## Functional bugs
-- **대시보드 알림 위젯 레이아웃 붕괴**: `SystemAlertWidget.tsx`에서 텍스트 길이가 길어질 경우 뷰포트를 벗어나 화면 레이아웃이 깨지는 문제가 발생합니다. 긴 로그 텍스트를 처리하기 위한 `word-break: break-all` 및 내부 스크롤(`overflow-y: auto`) 처리가 누락되어 있습니다.
-- **포트 할당 무한 대기(Deadlock)**: 다중 워커 구동 또는 로컬 실행 시 포트 할당 과정(`check-port.mjs`)에서 락(Lock) 경합이 발생하여 무한 대기에 빠지거나 시스템이 프리징되는 현상이 있습니다.
-- **에이전트 무한 루프 및 자원 고갈**: 워크플로우 엔진에서 LLM 에이전트가 예산(Budget) 한도나 설정된 루프 횟수를 초과했을 때 강제로 실행을 중단(Blocked 처리)하는 로직이 정상적으로 동작하지 않아 자원 고갈 위험이 있습니다.
-- **로그 조회 성능 저하**: `system_alert_model.py`에서 시스템 알림과 로그를 최신순으로 조회할 때 `created_at` 컬럼에 대한 내림차순(DESC) 인덱스가 없어 데이터 누적 시 심각한 성능 병목이 발생할 수 있습니다.
+- `web/src/components/SystemAlertWidget.tsx`의 렌더링 시 알림 메시지가 극단적으로 긴 띄어쓰기 없는 텍스트로 올 경우, 부모 컨테이너를 벗어나 레이아웃이 붕괴될 가능성이 여전히 존재합니다. 스타일상에 명시적으로 `word-break: break-all`이나 `overflow-wrap: anyWhere` 설정이 올바르게 반영되었는지 재확인이 필요합니다.
+- `web/scripts/check-port.mjs`에서 락 타임아웃 방어 로직이 추가되었으나, 다중 워커가 동시에 구동되며 포트를 경합할 때 비정상 종료(SIGKILL 등)가 발생하면 남겨진 락 파일이 즉시 해제되지 않아 이후 워커들이 포트(예: 3100번, 3101번)를 할당받지 못하고 무한 대기하는 간헐적인 Race Condition 버그가 발생할 수 있습니다.
 
 ## Security concerns
-- **민감 정보 노출**: 에이전트 실행 로그나 시스템 알림 내에 로컬 디렉토리 절대 경로 및 API 인증 토큰 등 시크릿 문자열이 그대로 노출됩니다. 프론트엔드로 데이터를 전달하기 전에 `***[MASKED]***` 형태로 치환하는 보안 마스킹 필터 로직이 필요합니다.
-- **워크플로우 제어 API 인가 누락**: 워크플로우의 중단, 재개, 실행 등을 담당하는 제어 API(`workflows.py`) 라우터에 Role 기반 또는 HMAC 서명 검증과 같은 인가(Authorization) 미들웨어가 적용되어 있지 않아, 권한이 없는 사용자나 비정상적인 접근에 의해 워크플로우가 조작될 위험이 있습니다.
+- `api/app/services/system_alerts.py`에서 로컬 경로 및 토큰을 필터링하기 위해 사용된 정규표현식(`_SENSITIVE_PATH_PATTERN`, `_BEARER_TOKEN_PATTERN`)이 대량의 로그 데이터를 처리할 때 ReDoS(정규표현식 서비스 거부) 공격에 취약할 여지가 있습니다. 지나치게 긴 악의적 로그 페이로드가 인입될 경우 백엔드 CPU 병목을 유발할 수 있습니다.
+- `api/app/api/workflows.py` 워크플로우 제어 API 인가 실패 시 반환되는 에러 로그나 401/403 응답 객체에 클라이언트의 헤더 및 컨텍스트 정보가 담기면서 예측하지 못한 민감 데이터가 유출될 가능성이 있으므로, 에러 응답부에도 엄격한 마스킹 로직 전파가 필요합니다.
 
 ## Missing tests / weak test coverage
-- **백엔드 예산 통제 및 마스킹 테스트 누락**: `test_workflow_engine.py`에 에이전트 예산 초과 시 Blocked 상태로 정상 전이되는지 확인하는 단언(Assertion) 테스트가 부족합니다. 또한, 보안 마스킹 필터 로직에 대한 다양한 예외 패턴 검증 테스트가 필요합니다.
-- **API 인가 단위 테스트 누락**: 라우터 미들웨어의 인가 성공 및 실패(401/403 응답)를 검증하는 단위 테스트가 구성되어 있지 않습니다.
-- **프론트엔드 시각적 회귀 테스트(E2E) 부족**: `system-alert.spec.ts`에 데스크톱 및 모바일 뷰포트 교차 시 위젯의 오버플로우나 레이아웃 깨짐이 없는지 확인하는 Playwright 기반 시각적 회귀 검증이 누락되어 있습니다.
-- **인프라 포트 타임아웃 통합 검증 누락**: 의도적으로 3100번대 포트(예: 3100, 3101) 경합 상황을 발생시켜 할당 스크립트가 타임아웃을 발생시키고 락을 안전하게 해제하는지 시뮬레이션하는 `test-port-timeout.sh` 통합 테스트가 필요합니다.
+- `api/tests/test_workflow_engine.py`에 예산(Budget) 한도 초과 및 강제 전이 관련 단언 테스트가 존재하나, 예산 제한의 경계값(Boundary value: 정확히 Budget과 일치하는 시점 및 바로 직후)에 대한 촘촘한 분기 테스트 시나리오가 부족합니다.
+- `web/tests/e2e/system-alert.spec.ts`에서 극단적으로 긴 문장이나 특수 문자가 연속으로 주입되었을 때, 모바일 뷰포트 해상도에서 레이아웃이 화면 밖으로 밀려나지 않는지 시각적으로 검증하는 시나리오가 비어있습니다.
+- 다중 락 경합을 방어하기 위한 통합 쉘 스크립트(`web/scripts/test-port-timeout.sh`) 커버리지에서, 3100번대 포트(예: 3100)를 대상으로 여러 백그라운드 프로세스가 동시에 접근했을 때 타임아웃 후 정상 릴리즈되는지를 보장하는 견고한 통합 부하 테스트가 보강되어야 합니다.
+- 마스킹 정규표현식의 성능 저하(ReDoS)를 모사하는 악의적인 로그 문자열 주입 부하 테스트가 백엔드 테스트셋에 존재하지 않습니다.
 
 ## Edge cases
-- **반복적인 동일 노드 실패 처리**: 특정 워크플로우 노드에서 동일한 오류가 연속으로 발생할 경우, 단순 실패 로그만 남기는 것이 아니라 Risk Score를 누적하여 사용자에게 강력한 경고(Warning)를 표출하는 예외 처리가 필요합니다.
-- **비정상 종료 시 잔여 Lock 파일**: 워커가 비정상적으로 크래시되거나 강제 종료되었을 때, 포트 점유를 위해 생성된 Lock 파일이 소거되지 않고 남아있어 이후 3100~3199 범위 포트 할당이 영구적으로 차단되는 모서리 사례가 있습니다.
-- **마스킹 정규식 성능 저하(ReDoS 위험)**: 대량의 로그 유입이 폭증할 때 정규식 기반 치환 과정에서 CPU 병목 현상이 발생하여 알림 조회가 지연될 수 있으므로, 정규식 최적화 및 타임아웃 처리가 고려되어야 합니다.
-
----
+- 데이터베이스의 `created_at` 역순 인덱스가 추가되었으나, 동일한 밀리초(ms)에 대량의 로그 알림이 동시 삽입될 경우 조회 정렬 순서가 보장되지 않아 페이징(Paging)이나 커서(Cursor) 기반 조회 시 데이터가 누락되거나 중복 노출되는 엣지 케이스가 존재할 수 있습니다. `id`와 결합된 복합 인덱스 고려가 필요합니다.
+- `web/src/components/SystemAlertWidget.tsx`에서 마스킹 텍스트 하이라이트 처리를 위해 텍스트를 `split`하여 렌더링하고 있습니다. 원본 로그 텍스트 자체에 이미 사용자가 입력한 임의의 `***[MASKED]***` 문자열이 다수 포함되어 있을 경우 불필요한 DOM 요소가 과도하게 생성되어 브라우저 렌더링 성능을 저하시킬 수 있습니다.
+- 워크플로우 실행 시 노드 반복 실패 누적에 따른 Risk Score가 외부 이벤트와 겹쳐서 비정상적으로 급증할 경우, 예산 초과(Blocked) 전이가 발생하기 직전에 불필요하게 많은 알림 이벤트가 버스(Event Bus)를 덮어버리는 병목 구간이 생길 수 있습니다.
 
 ## TODO
-
-- [ ] `web/src/components/SystemAlertWidget.tsx` 레이아웃 버그 수정 (`overflow-y: auto`, `word-break: break-all` 적용)
-- [ ] `api/app/services/workflow_engine.py`에 예산(Budget) 한도 초과 시 에이전트 Blocked 강제 전이 로직 구현
-- [ ] `api/app/services/system_alerts.py`에 로컬 경로 및 인증 토큰 문자열을 `***[MASKED]***`로 치환하는 마스킹 필터 적용
-- [ ] `api/app/api/workflows.py` 워크플로우 제어 API에 Role/HMAC 인가 미들웨어 연동
-- [ ] `web/scripts/check-port.mjs`에 3100번대 포트 할당 시 락 타임아웃 및 잔여 Lock 파일 정리 로직 추가
-- [ ] `api/app/db/system_alert_model.py` 및 Alembic 마이그레이션을 통해 `created_at` DESC 데이터베이스 인덱스 추가
-- [ ] 워크플로우 노드 반복 실패 시 Risk Score 누적 및 상태 알림 연동 기능 구현
-- [ ] `api/tests/test_workflow_engine.py`에 예산 통제 로직 단언(Assertion) 테스트 작성
-- [ ] `web/tests/e2e/system-alert.spec.ts`에 다양한 뷰포트 크기에 대한 레이아웃 오버플로우 E2E 테스트 추가
-- [ ] `web/scripts/test-port-timeout.sh`를 작성하여 3100~3199 포트 경합 및 락 해제 통합 테스트 구현
-- [ ] `api/tests/test_workspace_security.py` (또는 관련 테스트 파일)에 마스킹 필터 성능 및 예외 패턴 테스트, 인가(401/403) 통제 테스트 추가
+- [ ] `SystemAlertWidget.tsx` 최상위 혹은 텍스트 컨테이너(p 태그 등)에 `word-break: break-all` 및 `overflow-wrap: break-word` CSS 속성이 정상 적용되었는지 확인
+- [ ] 마스킹 정규식 유틸리티(`api/app/services/system_alerts.py`)에 입력 텍스트 최대 길이(예: 10,000자) 제한 방어 로직 선제 추가하여 ReDoS 취약점 완화
+- [ ] `api/tests/test_workflow_engine.py` 파일 내에 Budget 경계값(Edge-case) 상황을 집중 검증하는 단위 테스트 케이스 보강
+- [ ] `web/tests/e2e/system-alert.spec.ts`에 극단적으로 긴 텍스트 주입 및 모바일 뷰포트(너비 320px) 대응 E2E 레이아웃 붕괴 검증 로직 추가
+- [ ] `web/scripts/test-port-timeout.sh` 테스트 실행 시, 명시적으로 3100번대 포트(예: 3100)를 활용하여 동시 락 선점 및 타임아웃 릴리즈 커버리지를 늘릴 것
+- [ ] 알림 조회 쿼리의 페이징 안정성 보장을 위해 데이터베이스 `created_at` 단일 인덱스를 `created_at`, `id` 복합 인덱스 정렬로 마이그레이션 적용 검토
