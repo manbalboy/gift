@@ -2,63 +2,63 @@
 
 ## 1. Task breakdown with priority
 
-### 우선순위 1: REVIEW 피드백 반영 (프론트엔드 모니터링 안정성 보강)
-> **목적**: 장기 실행되는 Loop Engine의 방대한 상태 로그를 UI에서 안정적으로 모니터링하기 위해 기존 SystemAlertWidget의 렌더링 및 보안 결함을 수정합니다.
-- **Task 1-1 [web]**: `web/src/utils/security.test.ts`에 XSS 페이로드 및 시스템 시크릿 키가 혼합된 복합 악성 데이터 주입 방어 테스트 추가.
-- **Task 1-2 [web]**: `web/src/utils/alertHighlighter.test.ts`에 URL 후행에 다중 구두점 및 괄호가 포함된 엣지 케이스(`http://test.com/api?v=1.0.`) 파싱 테스트 추가.
-- **Task 1-3 [web]**: `web/src/components/SystemAlertWidget.tsx` 가변 높이(Dynamic Height) 렌더링 개선. `ResizeObserver` 또는 검증된 가상화 라이브러리(`@tanstack/react-virtual` 등)를 도입하여 높이 계산 오차에 의한 스크롤 튐 버그를 수정하고, `visualViewport` 미지원 특수 환경에 대한 예외 처리 보강.
-- **Task 1-4 [web]**: 3100번 포트(`PORT=3100`)를 사용하는 프론트엔드 로컬 개발 환경에서, 동적 높이를 가진 대량의 더미 로그가 연속 스트리밍될 때 UI 프레임 드랍이나 렌더링 지연이 발생하는지 검증 테스트 수행.
+- **P0 (Critical/Blocker - 보안 및 시스템 안정성)**
+  - [API] 루프 엔진 제어 API(`api/app/api/loop_engine.py`)의 모든 제어 라우터(Start, Pause, Stop)에 인증/인가(`Depends`) 의존성 추가 및 권한 검증 구현.
+  - [API] 다중 워커 환경에서 `loop_simulator.py`의 중복 실행 방지를 위한 분산 락(예: Redis Lock) 적용.
+  - [API] 시스템 로그 데이터 급증 방지를 위한 오래된 더미 로그 정리(Retention/Windowing) 정책 구현.
+  - [UI] `web/src/components/SystemAlertWidget.tsx`의 가상 스크롤 로직을 `@tanstack/react-virtual` 등 검증된 라이브러리로 마이그레이션.
+  - [UI] 브라우저 메모리 최적화를 위한 UI 로그 데이터 윈도잉(일정 개수 초과 시 오래된 배열 제거) 정책 보강.
 
-### 우선순위 2: Self-Improvement Loop Engine 초안 설계 및 구현 (고도화 플랜)
-> **근거**: 전체 Loop Engine(Analyzer, Evaluator 등)의 실무 구현은 범위가 방대합니다. 따라서 `SystemAlertWidget`의 가변 높이 스크롤 최적화를 테스트하기 위한 대량의 실제 데이터 소스로 활용함과 동시에, Issue #71의 루프엔진 초안(MVP) 요구사항을 충족하기 위해 핵심 제어 뼈대만 자연스럽게 연계하여 구현합니다.
-> **구현 경계**: 실제 코드를 수정하고 판단하는 AI 로직은 제외하며, 4단계 상태 전이(순환)와 모니터링용 이벤트 생성을 담당하는 스텁(Stub) 레이어까지만 구현합니다.
-- **Task 2-1 [api]**: Loop Engine 상태 제어 API 라우터 구현 (`/api/loop/start`, `pause`, `stop`, `status`). 루프 사이클 시작과 상태 변경 명령을 수신하는 FastAPI 컨트롤러 뼈대 구축.
-- **Task 2-2 [api]**: Loop Engine 컴포넌트(Analyzer, Evaluator, Planner, Executor)의 사이클 흐름을 시뮬레이션하는 비동기 워커 스텁 작성. 각 단계 전환 시 상세 상태 로그를 생성하여 브로드캐스트.
-- **Task 2-3 [api/web]**: 생성된 Loop Engine의 모의 상태 로그 및 점수(Quality Score 등) 지표를 프론트엔드의 `SystemAlertWidget`으로 스트리밍하여 연동 확인.
+- **P1 (Core MVP - 엔진 기본 기능 고도화)**
+  - [API] Self-Improvement Loop 엔진의 상태 전이 제어 기능(Start, Pause, Resume, Stop, Inject Instruction) 보강 및 예외 처리 강화.
+  - [Test] `api/tests/test_loop_engine_api.py`에 권한 검증 실패 엣지 케이스 및 병렬 `start` 호출 방어를 위한 동시성 테스트 케이스 작성.
 
-### 변경 파일 후보 및 영향 범위
-- `web/src/utils/security.test.ts`: 방어 검증 로직 추가 (영향 범위: 테스트 한정)
-- `web/src/utils/alertHighlighter.test.ts`: 구두점/괄호 파싱 엣지 케이스 추가 (영향 범위: 테스트 한정)
-- `web/src/components/SystemAlertWidget.tsx`: 스크롤 위치 계산 및 가상화 구조 교체 (영향 범위: 시스템 로그가 표출되는 대시보드 UI 영역 및 레이아웃 렌더링 성능)
-- `api/app/api/loop_engine.py` (신규): Loop 제어용 API 엔드포인트 라우터 (영향 범위: 백엔드 API 라우팅 계층 신규 확장)
-- `api/app/services/loop_simulator.py` (신규): 루프 상태 전이 및 더미 로그 스트리밍을 수행하는 스텁 비즈니스 로직 (영향 범위: 시스템 알림 생성 도메인 연동)
+- **P2 (Performance/E2E - 성능 및 사용성 검증)**
+  - [Test] 로컬 포트 3100번 대에서 대용량 상태 로그 스트리밍을 재현하여 UI 프레임 드랍 유무 및 렌더링 성능을 점검하는 E2E 스트레스 테스트 스크립트 작성.
 
 ## 2. MVP scope / out-of-scope
 
-### MVP Scope
-- SystemAlertWidget의 URL 파서 우회 방어 및 보안 엣지 케이스 단위 테스트 보강.
-- SystemAlertWidget의 가상화 스크롤을 가변 높이 아이템 대응 구조로 변경하여, 수만 건의 로그에서도 렌더링 안정성 확보.
-- Self-Improvement Loop Engine의 라이프사이클(시작, 일시정지, 종료)을 제어하는 FastAPI 컨트롤러 뼈대 구현.
-- 루프 엔진의 각 단계(Analyzer -> Evaluator -> Planner -> Executor)를 순회하며 발생하는 상태 변화를 SystemAlertWidget UI에 스트리밍하여 프론트엔드 로그 출력 성능 검증과 결합.
+- **MVP Scope**
+  - 다중 워커 환경에서 안전하게 동작하며 인증이 적용된 기본 Loop Engine 제어 API.
+  - 무한 루프 및 장기 실행 시뮬레이션을 견딜 수 있는 로그 자동 정리(Retention) 시스템.
+  - 대용량 데이터 스트리밍 시에도 브라우저 렌더링을 방해하지 않는 안정적인 프론트엔드 대시보드 UI (가상 스크롤 적용).
+  - 변경 사항에 대한 통합 테스트 및 E2E UI 성능 검증.
 
-### Out-of-scope
-- Loop Engine 내의 실제 AI 프롬프트 체인 호출, 소스 코드 자동 수정, Pull Request 자동 생성 등 실무 개발 자동화 파트.
-- Long-Running 상태와 이력(기억)을 영구 보존하기 위한 분산 메모리 DB 아키텍처 도입.
-- 기존 대시보드 레이아웃을 완전히 벗어나는 Loop Engine 전용 대규모 신규 화면 구축 (기존 모니터링 UI 및 위젯을 최대한 재활용).
+- **Out-of-scope**
+  - Analyzer, Evaluator, Planner, Executor 등 AI 모델 기반 엔진의 완전한 실제 비즈니스 로직 연동 (현재는 루프 시스템의 '구조'와 '인프라 안정성'을 확보하는 초안 및 시뮬레이터 단계로 한정).
+  - 글로벌 트랜잭션 관리 및 복잡한 마이크로서비스 아키텍처로의 즉각적인 분리.
+  - 사용자별 복잡한 권한 그룹(RBAC) 관리 화면 개발 (기본적인 토큰/권한 검증 수준으로 한정).
 
 ## 3. Completion criteria
-- `security.test.ts` 및 `alertHighlighter.test.ts`에 새로 추가된 모든 엣지 케이스 테스트가 Pass 할 것.
-- `SystemAlertWidget`에 1만 건 이상의 가변 높이 로그가 유입되는 환경에서 가상화 스크롤이 매끄럽게 동작하고, 리스트 공백이나 스크롤 위치 점핑 현상이 없을 것.
-- Backend API (`/api/loop/start` 등) 호출 시, 엔진 스텁이 작동하며 4단계 순환 동작 로그를 실시간으로 스트리밍하여 UI에 노출시킬 수 있을 것.
-- **Deployment**: 변경 사항을 포함한 전체 시스템이 Docker 컨테이너 환경에서 정상 구동될 것.
-- **Preview**: 할당된 Preview 외부 노출 포트(7000~7099) 및 기준 호스트(`http://ssh.manbalboy.com:7000`)를 통해 접속 가능하며, CORS 정책이 `manbalboy.com` 및 `localhost` 계열로 제한 유지될 것.
+
+- `loop_engine.py`의 제어 API가 유효한 권한을 가진 요청에만 정상 응답함.
+- 서버 다중 워커 환경에서도 분산 락을 통해 루프 시뮬레이터가 단일 인스턴스로만 실행됨.
+- 데이터베이스 및 시스템 메모리에 오래된 로그가 누적되지 않고 설정된 임계치에 따라 자동 정리됨.
+- 프론트엔드 대시보드에서 대량의 로그 스트리밍 시 스크롤 점핑이나 메인 스레드 블로킹 현상 없이 원활하게 렌더링됨(`@tanstack/react-virtual` 적용 완료).
+- 작성된 보안 및 동시성 제어 백엔드 테스트(pytest)가 100% 통과함.
+- 로컬 포트 3100 환경을 타겟으로 한 대용량 E2E 스트레스 테스트가 성능 저하 없이 통과함.
 
 ## 4. Risks and test strategy
-- **Risk 1**: 브라우저 환경 및 `ResizeObserver` 성능 차이에 따른 가상화 렌더링 계산 오버헤드로 프레임 드랍 발생 가능성.
-  - **Strategy**: 가변 아이템 캐싱 기법 및 렌더링 디바운스/쓰로틀링을 적용하고, 개발 포트(3100) 환경에서 스트레스 테스트 봇을 통해 화면 부하를 중점적으로 체크합니다.
-- **Risk 2**: Loop Engine 스텁이 과도한 빈도로 이벤트를 방출 시 FastAPI 서버 혹은 브라우저 메모리 누수 발생.
-  - **Strategy**: 상태 이벤트 방출 주기를 제어하고, UI에서 일정 개수 이상의 오래된 로그는 메모리에서 안전하게 정리(GC)되도록 Windowing 정책을 보강합니다.
+
+- **분산 락 교착 상태(Deadlock) 위험:** 시뮬레이터 비정상 종료 시 락이 해제되지 않을 수 있음.
+  - **Test Strategy:** Redis Lock에 적절한 TTL(Time To Live)을 설정하고, 워커 프로세스 강제 종료 시나리오를 모사하여 락이 자동으로 만료 및 복구되는지 통합 테스트 수행.
+- **UI 렌더링 성능 저하 위험:** 비활성 탭 복귀 시 혹은 데이터 급증 시 가상 스크롤 오작동.
+  - **Test Strategy:** E2E 테스트 스크립트를 통해 수만 건의 로그 스트리밍을 발생시키고, 탭 전환(`visibilitychange`) 이벤트를 트리거하여 레이아웃 깨짐이나 스크롤 위치 점핑 현상이 없는지 검증.
+- **리소스 고갈 위험:** 루프 엔진의 무한 동작으로 인한 OOM(Out of Memory).
+  - **Test Strategy:** 더미 데이터를 지속 생성하는 스트레스 테스트 봇을 구동하고 일정 시간 경과 후 윈도잉 정책이 동작하여 API 및 브라우저의 메모리 사용량이 임계치 내에서 유지되는지 프로파일링.
 
 ## 5. Design intent and style direction
-- **기획 의도**: 지속 발전하는 자율형 AI(Self-Improvement Loop Engine)의 동작 상태, 판단 근거, 그리고 엔진 내부의 시스템 알림을 개발자가 투명하고 직관적으로 인지할 수 있도록, 끊김 없고 가벼운 모니터링 뷰어 경험을 제공한다.
-- **디자인 풍**: 모던 개발자 도구 및 터미널 콘솔(CLI)을 모티브로 한 대시보드형 로그 뷰어. 불필요한 장식과 그래픽 요소를 배제한 **미니멀 스타일**.
-- **시각 원칙**: 
-  - **컬러**: 어두운 배경(Dark Theme)에 가독성 높은 텍스트 하이라이트를 적용하고, 진행 상태 및 심각도에 따른 포인트 컬러(Red, Yellow, Green, Blue)를 절제하여 사용.
-  - **패딩/마진**: 방대한 로그 데이터의 정보 밀도를 극대화하기 위해 여백을 타이트하게 가져가는 컴팩트한 간격(Dense Layout) 유지.
-  - **타이포그래피**: 디버깅 로그와 상태 스니펫의 정렬 및 가독성 확보를 위해 시스템 기본 Monospace 폰트 적극 활용.
-- **반응형 원칙**: 모바일 우선(Mobile First). 모바일 환경에서도 로그 텍스트의 가로 스크롤 혹은 자연스러운 줄바꿈(Word-wrap)을 보장하고, 텍스트가 줄바꿈되어 늘어난 높이에도 레이아웃이 유연하게 확장되도록 지원.
+
+- **기획 의도:** 사람이 입력한 아이디어를 바탕으로 스스로 코드를 개선하는 'Autonomous Developer'의 24시간 가동 상태와 판단 내역을 실시간으로 투명하게 모니터링할 수 있는 관제 경험 제공.
+- **디자인 풍:** 모던하고 전문적인 대시보드형 터미널 뷰. 불필요한 시각적 장식을 배제하여 정보의 밀도와 시인성을 극대화한 형태.
+- **시각 원칙:**
+  - **컬러:** 개발자에게 친숙한 다크 테마(Dark Theme)를 기본으로 하며, 로그 성격에 따른 명확한 상태 컬러(정상: Green, 경고: Yellow, 에러: Red, 정보: Blue) 적용.
+  - **패딩/마진:** 한 화면에 많은 양의 로그와 지표를 표시하기 위해 컴팩트한 간격을 유지하되, 각 섹션(제어부, 로그 뷰어, 상태 요약) 간의 명확한 시각적 분리선 적용.
+  - **타이포:** 로그와 코드 영역에는 모노스페이스(Monospace) 폰트를 적용하여 정렬과 가독성을 확보하고, 제어 및 헤더 영역에는 가독성 높은 산세리프 폰트 혼용.
+- **반응형 원칙:** 모바일 우선(Mobile-First) 원칙 적용. 모바일 기기에서도 루프의 상태 확인과 긴급 제어(Stop/Pause)가 가능하도록 세로형 단일 컬럼 레이아웃을 제공하고, 데스크탑에서는 다단 분할 뷰로 화면을 넓게 활용.
 
 ## 6. Technology ruleset
-- **플랫폼 분류**: web, api
-- **web**: React 및 Vite 환경 기반. 가상화 렌더링 지원을 위해 React 생태계의 표준화된 구현체(직접 구현 또는 `@tanstack/react-virtual` 등)를 채택하여 고성능 DOM 관리를 계획.
-- **api**: FastAPI 기반. 비동기 Task 처리, 루프 상태 관리 라우터, 그리고 프론트엔드 연동을 위한 이벤트 스트리밍(SSE 또는 WebSockets) 구조로 계획.
+
+- **플랫폼 분류:** web 및 api
+- **web:** React 기반 프레임워크 (Vite, TypeScript 환경) 사용. UI 최적화를 위해 `@tanstack/react-virtual` 채택. 로컬 실행 포트는 `3100` 등 3000번대 사용.
+- **api:** FastAPI 기반 프레임워크 (Python). 백그라운드 태스크 제어 및 비동기 처리 적용. 다중 워커 동기화를 위한 분산 락(Redis Lock 등) 매커니즘 구현. 로컬 실행 포트는 `3000`번대 사용.
