@@ -3,17 +3,20 @@
 - Job: `fcf3231c-99dd-4033-85f7-19cdb448617b`
 - Issue: `#69`
 - Stage: `summarize_code_changes`
-- Generated at: `2026-03-05T08:14:58.128405+00:00`
+- Generated at: `2026-03-05T08:34:44.008299+00:00`
 
 ## Changed Files
 | Status | Path | Added | Deleted |
 |---|---|---:|---:|
 | `M` | `COMMIT_MESSAGE_COMMIT_FIX.txt` | `1` | `1` |
 | `M` | `ex-code/main` | `0` | `0` |
-| `M` | `web/src/components/SystemAlertWidget.tsx` | `88` | `25` |
-| `M` | `web/src/styles/app.css` | `99` | `1` |
-| `M` | `web/tests/e2e/system-alert.spec.ts` | `201` | `0` |
-| `??` | `web/src/components/SystemAlertWidget.test.tsx` | `-` | `-` |
+| `M` | `web/package.json` | `2` | `2` |
+| `M` | `web/src/components/LiveRunConstellation.test.tsx` | `2` | `0` |
+| `M` | `web/src/components/LiveRunConstellation.tsx` | `7` | `2` |
+| `M` | `web/src/components/SystemAlertWidget.test.tsx` | `83` | `1` |
+| `M` | `web/src/components/SystemAlertWidget.tsx` | `68` | `10` |
+| `M` | `web/src/styles/app.css` | `22` | `0` |
+| `M` | `web/tests/e2e/system-alert.spec.ts` | `121` | `0` |
 
 ## Notes
 - 본 문서는 구현 직후 변경 파일을 빠르게 검토하기 위한 자동 요약입니다.
