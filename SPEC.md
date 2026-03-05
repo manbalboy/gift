@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> 최우선 1차 목표: `ex-code` 내부 코드를 분석해 현재 프로젝트에 모든 기능을 구현한다.
+> 현재 실행 플랜 요약: P0(워크플로우 버그/보안) -> P1(휴먼게이트 E2E + 워커 헬스체크/DLQ 테스트) -> P2(SSE 레이스 컨디션 방어)
+
 # SPEC
 
         - Repository: manbalboy/agent-hub
