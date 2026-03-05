@@ -23,6 +23,7 @@ export default function Dashboard({
   onRejectHumanGate,
   onCancelRun,
   onResumeRun,
+  onRetryNode,
 }: {
   run: WorkflowRun | null;
   blockedEvents?: WebhookBlockedEvent[];
@@ -32,6 +33,7 @@ export default function Dashboard({
   onRejectHumanGate?: (nodeId: string) => Promise<void>;
   onCancelRun?: () => Promise<void>;
   onResumeRun?: () => Promise<void>;
+  onRetryNode?: (nodeId: string) => Promise<void>;
 }) {
   const nodeRuns = run?.node_runs ?? [];
   const doneCount = nodeRuns.filter((n) => n.status === 'done').length;
@@ -54,6 +56,7 @@ export default function Dashboard({
 
   const completionRate = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
   const pendingApproval = nodeRuns.find((node) => node.status === 'approval_pending') ?? null;
+  const failedNode = nodeRuns.find((node) => node.status === 'failed') ?? null;
   const recentBlockedEvents = blockedEvents ?? [];
 
   return (
@@ -78,6 +81,23 @@ export default function Dashboard({
                 }}
               >
                 Run 재개
+              </button>
+            </section>
+          )}
+          {failedNode && (
+            <section className="failed-alert" role="alert" aria-live="assertive">
+              <div>
+                <strong>실행 실패 감지</strong>
+                <p className="mono">node={failedNode.node_id} · 즉시 재시도로 복구를 시도하세요.</p>
+              </div>
+              <button
+                className="btn btn-danger"
+                type="button"
+                onClick={() => {
+                  void onRetryNode?.(failedNode.node_id);
+                }}
+              >
+                Retry Node
               </button>
             </section>
           )}

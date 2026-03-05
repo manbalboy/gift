@@ -471,6 +471,28 @@ export default function App() {
     }
   };
 
+  const handleRetryNode = async (nodeId: string) => {
+    if (!activeWorkflow) return;
+    setFocusNodeRequest({ nodeId, requestId: Date.now() });
+
+    if (run?.status === 'paused') {
+      await handleResumeRun();
+      return;
+    }
+
+    try {
+      const created = await api.startRun(activeWorkflow.id);
+      setRun(created);
+      await refreshRunAndConstellation(created.id);
+      clearApiDegraded();
+      enqueueToast('warning', `Retry Node 실행: ${nodeId}`);
+    } catch (error) {
+      const message = resolveErrorMessage(error, 'Retry Node 실행 실패');
+      markApiDegraded(error, '서버 상태가 불안정합니다');
+      enqueueToast('error', `Retry Node 실행 실패 (${message})`);
+    }
+  };
+
   const handleCancelPendingApproval = async () => {
     if (!run || !pendingApprovalNode) return;
     try {
@@ -636,6 +658,7 @@ export default function App() {
             onRejectHumanGate={handleRejectHumanGate}
             onCancelRun={handleCancelRun}
             onResumeRun={handleResumeRun}
+            onRetryNode={handleRetryNode}
           />
           <WorkflowBuilder
             workflow={activeWorkflow}

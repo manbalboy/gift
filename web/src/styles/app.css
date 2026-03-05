@@ -429,14 +429,59 @@ select {
   background: var(--color-bg-elevated);
   color: var(--color-text-primary);
   border-radius: 10px;
-  padding: var(--space-8) var(--space-12);
+  padding: var(--space-12) var(--space-16);
   text-align: center;
   font-size: 13px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  display: grid;
+  gap: var(--space-8);
 }
 
 .workflow-node-label {
   white-space: nowrap;
+}
+
+.workflow-node-status {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  min-height: 22px;
+  padding: 0 var(--space-8);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-surface) 84%, transparent);
+}
+
+.workflow-node-status-running {
+  color: var(--color-status-running);
+}
+
+.workflow-node-status-done {
+  color: var(--color-status-success);
+}
+
+.workflow-node-status-failed {
+  color: var(--color-status-failed);
+  border-color: color-mix(in srgb, var(--color-status-failed) 72%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-status-failed) 14%, var(--color-bg-surface));
+}
+
+.react-flow__node.status-running .workflow-node {
+  border-color: color-mix(in srgb, var(--color-status-running) 68%, var(--color-border-default));
+}
+
+.react-flow__node.status-done .workflow-node {
+  border-color: color-mix(in srgb, var(--color-status-success) 62%, var(--color-border-default));
+}
+
+.react-flow__node.status-failed .workflow-node {
+  border-color: var(--color-status-failed);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-failed) 34%, transparent), 0 14px 28px rgba(0, 0, 0, 0.32);
+  background: color-mix(in srgb, var(--color-status-failed) 12%, var(--color-bg-elevated));
 }
 
 .mobile-blocker {
@@ -572,6 +617,25 @@ select {
 }
 
 .pause-alert p {
+  margin-top: var(--space-4);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-text-secondary);
+}
+
+.failed-alert {
+  margin-bottom: var(--space-16);
+  border: 1px solid color-mix(in srgb, var(--color-status-failed) 64%, var(--color-border-default));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-status-failed) 16%, var(--color-bg-elevated));
+  padding: var(--space-12);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.failed-alert p {
   margin-top: var(--space-4);
   font-size: 13px;
   line-height: 20px;
@@ -1035,6 +1099,15 @@ select {
   }
 
   .pause-alert .btn-warning {
+    height: 44px;
+  }
+
+  .failed-alert {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .failed-alert .btn-danger {
     height: 44px;
   }
 

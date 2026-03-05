@@ -27,6 +27,21 @@ const baseNodes = [
   { id: 'pr', type: 'task', label: 'PR' },
 ];
 
+const statusIcon: Record<string, string> = {
+  queued: '○',
+  paused: 'Ⅱ',
+  running: '▶',
+  done: '✓',
+  failed: '!',
+  review_needed: '◆',
+};
+
+function normalizeNodeStatus(raw: string | undefined): string {
+  const normalized = String(raw ?? 'queued').trim().toLowerCase();
+  if (!normalized) return 'queued';
+  return normalized;
+}
+
 function wouldCreateCycle(source: string, target: string, edges: Edge[]): boolean {
   if (source === target) return true;
   const adjacency = new Map<string, string[]>();
@@ -115,11 +130,16 @@ function validateGraphForSave(graph: Workflow['graph']): string | null {
   return null;
 }
 
-function TaskNode({ data }: NodeProps<{ label: string }>) {
+function TaskNode({ data }: NodeProps<{ label: string; status?: string }>) {
+  const status = normalizeNodeStatus(data.status);
   return (
     <div className="workflow-node">
       <Handle type="target" position={Position.Left} />
       <div className="workflow-node-label">{data.label}</div>
+      <div className={`workflow-node-status workflow-node-status-${status}`}>
+        <span aria-hidden>{statusIcon[status] ?? '○'}</span>
+        <span className="mono">{status}</span>
+      </div>
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -217,6 +237,21 @@ export default function WorkflowBuilder({
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance | null>(null);
   const nodeTypes = useMemo(() => ({ taskNode: TaskNode }), []);
+  const flowNodes = useMemo(
+    () =>
+      nodes.map((node) => {
+        const status = normalizeNodeStatus(nodeStatuses?.[node.id]);
+        return {
+          ...node,
+          className: `status-${status}`,
+          data: {
+            ...node.data,
+            status,
+          },
+        };
+      }),
+    [nodeStatuses, nodes],
+  );
 
   useEffect(() => {
     setTitle(workflow?.name ?? 'Level 1 SDLC Pipeline');
@@ -439,7 +474,7 @@ export default function WorkflowBuilder({
             flowRef.current = instance;
           }}
           nodeTypes={nodeTypes}
-          nodes={nodes}
+          nodes={flowNodes}
           edges={edges}
           onNodesChange={mobileViewOnly ? undefined : onNodesChange}
           onEdgesChange={mobileViewOnly ? undefined : onEdgesChange}

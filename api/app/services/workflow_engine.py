@@ -17,7 +17,7 @@ from app.models.workflow import Artifact, HumanGateDecisionAudit, NodeRun, Workf
 from app.schemas.agent import AgentTaskRequest
 from app.services.agent_runner import AgentRunner
 from app.services.lock_provider import LockProviderFactory
-from app.services.workspace import InvalidNodeIdError, WorkspaceService, is_safe_node_id
+from app.services.workspace import InvalidNodeIdError, WorkspaceArtifactIOError, WorkspaceService, is_safe_node_id
 
 
 DEFAULT_COMPENSATION_TIMEOUT_SECONDS = 120
@@ -264,7 +264,7 @@ class WorkflowEngine:
         composed = f"{existing}\n\n{artifact_entry}\n"
         try:
             return self.workspace.write_artifact(run_id=run_id, node_id="status", content=composed)
-        except InvalidNodeIdError:
+        except (InvalidNodeIdError, WorkspaceArtifactIOError):
             return None
 
     def _upsert_artifact_record(
@@ -531,89 +531,136 @@ class WorkflowEngine:
             node.log = f"[cancelled] user requested cancellation\n{previous}".strip()
         run.status = "cancelled"
 
-    def _execute_task_node(self, run_id: int, node_id: str, node_name: str, command: str | None) -> None:
-        attempts = max(1, int(settings.workflow_node_max_retries))
-        backoff = max(0.0, float(settings.workflow_retry_backoff_seconds))
-        cancel_event = self._get_cancel_event(run_id)
-
-        logs: list[str] = []
-        last_ok = False
-        for attempt in range(1, attempts + 1):
-            if cancel_event.is_set():
-                break
-            if attempt > 1:
-                wait_for = backoff * (2 ** (attempt - 2))
-                if wait_for > 0:
-                    logs.append(f"[retry] backoff {wait_for:.2f}s before attempt {attempt}")
-                    time.sleep(wait_for)
-
-            payload: dict[str, str | int] = {"run_id": run_id}
-            if command:
-                payload["command"] = command
-
-            result = self.agent_runner.run(
-                AgentTaskRequest(
-                    node_id=node_id,
-                    node_name=node_name,
-                    payload=payload,
-                )
-            )
-            logs.append(result.log.strip())
-            if result.ok:
-                last_ok = True
-                break
-
+    def _fail_run_gracefully(self, run_id: int, *, reason: str) -> None:
         db = SessionLocal()
         run_lock = self.lock_provider.get_run_lock(run_id)
         acquired = run_lock.acquire(blocking=True, timeout=2)
         if not acquired:
             db.close()
+            logger.error("failed to acquire run lock while handling failure", extra={"run_id": run_id, "reason": reason})
             return
 
         try:
             run = self._load_locked_run(db, run_id)
             if not run:
                 return
+
             nodes = self._load_locked_nodes(db, run_id)
-            node = next((item for item in nodes if item.node_id == node_id), None)
-            if not node:
-                return
-            if cancel_event.is_set() or run.status == "cancelled":
-                self._mark_run_cancelled_locked(run, nodes)
-                db.commit()
-                return
-            if node.status != "running":
-                db.commit()
-                return
+            for node in nodes:
+                if node.status in {"done", "failed", "cancelled"}:
+                    continue
+                previous = (node.log or "").strip()
+                node.status = "failed"
+                node.log = f"[system_failed] {reason}\n{previous}".strip()
 
-            node.status = "done" if last_ok else "failed"
-            node.log = "\n".join(part for part in logs if part).strip()
-            if node.status == "done":
-                try:
-                    node.artifact_path = self.workspace.write_artifact(
-                        run_id,
-                        node.node_id,
-                        f"# Artifact\n\n- run_id: {run_id}\n- node: {node.node_name}\n- result: success\n",
-                    )
-                    self._upsert_artifact_record(
-                        db,
-                        run_id=run_id,
-                        node=node,
-                        node_id=node.node_id,
-                        category="node_output",
-                        path=node.artifact_path,
-                    )
-                except InvalidNodeIdError as exc:
-                    node.status = "failed"
-                    node.log = f"invalid node_id: {exc}"
-
-            self._sync_run_status(run, nodes)
+            run.status = "failed"
             db.commit()
         except SQLAlchemyError:
             db.rollback()
+            logger.exception(
+                "failed to persist graceful failure",
+                extra={"run_id": run_id, "reason": reason},
+            )
         finally:
             run_lock.release()
             db.close()
+
+    def _execute_task_node(self, run_id: int, node_id: str, node_name: str, command: str | None) -> None:
+        try:
+            attempts = max(1, int(settings.workflow_node_max_retries))
+            backoff = max(0.0, float(settings.workflow_retry_backoff_seconds))
+            cancel_event = self._get_cancel_event(run_id)
+
+            logs: list[str] = []
+            last_ok = False
+            for attempt in range(1, attempts + 1):
+                if cancel_event.is_set():
+                    break
+                if attempt > 1:
+                    wait_for = backoff * (2 ** (attempt - 2))
+                    if wait_for > 0:
+                        logs.append(f"[retry] backoff {wait_for:.2f}s before attempt {attempt}")
+                        time.sleep(wait_for)
+
+                payload: dict[str, str | int] = {"run_id": run_id}
+                if command:
+                    payload["command"] = command
+
+                result = self.agent_runner.run(
+                    AgentTaskRequest(
+                        node_id=node_id,
+                        node_name=node_name,
+                        payload=payload,
+                    )
+                )
+                logs.append(result.log.strip())
+                if result.ok:
+                    last_ok = True
+                    break
+
+            db = SessionLocal()
+            run_lock = self.lock_provider.get_run_lock(run_id)
+            acquired = run_lock.acquire(blocking=True, timeout=2)
+            if not acquired:
+                db.close()
+                return
+
+            try:
+                run = self._load_locked_run(db, run_id)
+                if not run:
+                    return
+                nodes = self._load_locked_nodes(db, run_id)
+                node = next((item for item in nodes if item.node_id == node_id), None)
+                if not node:
+                    return
+                if cancel_event.is_set() or run.status == "cancelled":
+                    self._mark_run_cancelled_locked(run, nodes)
+                    db.commit()
+                    return
+                if node.status != "running":
+                    db.commit()
+                    return
+
+                node.status = "done" if last_ok else "failed"
+                node.log = "\n".join(part for part in logs if part).strip()
+                if node.status == "done":
+                    try:
+                        node.artifact_path = self.workspace.write_artifact(
+                            run_id,
+                            node.node_id,
+                            f"# Artifact\n\n- run_id: {run_id}\n- node: {node.node_name}\n- result: success\n",
+                        )
+                        self._upsert_artifact_record(
+                            db,
+                            run_id=run_id,
+                            node=node,
+                            node_id=node.node_id,
+                            category="node_output",
+                            path=node.artifact_path,
+                        )
+                    except InvalidNodeIdError as exc:
+                        node.status = "failed"
+                        node.log = f"invalid node_id: {exc}"
+                    except WorkspaceArtifactIOError as exc:
+                        node.status = "failed"
+                        node.log = f"workspace artifact io failed: {exc}"
+
+                self._sync_run_status(run, nodes)
+                db.commit()
+            except SQLAlchemyError:
+                db.rollback()
+            finally:
+                run_lock.release()
+                db.close()
+        except Exception as exc:
+            logger.exception(
+                "task node execution crashed",
+                extra={"run_id": run_id, "node_id": node_id, "node_name": node_name},
+            )
+            self._fail_run_gracefully(
+                run_id,
+                reason=f"task node {node_id} crashed: {exc.__class__.__name__}: {exc}",
+            )
 
     def _background_worker_loop(self, run_id: int) -> None:
         cancel_event = self._get_cancel_event(run_id)
@@ -772,6 +819,9 @@ class WorkflowEngine:
 
                 if should_sleep:
                     time.sleep(max(0.02, float(settings.workflow_worker_poll_interval_seconds)))
+        except Exception as exc:
+            logger.exception("background worker loop crashed", extra={"run_id": run_id})
+            self._fail_run_gracefully(run_id, reason=f"background worker crashed: {exc.__class__.__name__}: {exc}")
         finally:
             self._clear_run_runtime_state(run_id)
 

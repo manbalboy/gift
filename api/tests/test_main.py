@@ -253,3 +253,31 @@ def test_localhost_spoof_guard_ports_fallback_to_preview_range_when_invalid(monk
     monkeypatch.setattr(settings, "preview_protected_port_end", 3106)
 
     assert settings.spoof_guard_ports == {3104, 3105, 3106}
+
+
+def test_localhost_spoof_guard_ports_parser_handles_special_and_boundary_input(monkeypatch):
+    monkeypatch.setattr(settings, "localhost_spoof_guard_ports", " ,@@@,65535,65536,-1,3200-3198,3100-3101,abc-123")
+    parsed = settings.spoof_guard_ports
+    assert 65535 in parsed
+    assert 65536 not in parsed
+    assert parsed.issuperset({3100, 3101, 3198, 3199, 3200})
+
+
+def test_localhost_spoof_guard_ports_parser_handles_none_input(monkeypatch):
+    monkeypatch.setattr(settings, "localhost_spoof_guard_ports", None)
+    monkeypatch.setattr(settings, "preview_protected_port_start", 3110)
+    monkeypatch.setattr(settings, "preview_protected_port_end", 3111)
+    assert settings.spoof_guard_ports == {3110, 3111}
+
+
+def test_localhost_spoof_guard_ports_parser_handles_empty_string(monkeypatch):
+    monkeypatch.setattr(settings, "localhost_spoof_guard_ports", "   ")
+    monkeypatch.setattr(settings, "preview_protected_port_start", 3120)
+    monkeypatch.setattr(settings, "preview_protected_port_end", 3122)
+    assert settings.spoof_guard_ports == {3120, 3121, 3122}
+
+
+def test_localhost_spoof_guard_ports_parser_ignores_overflow_ranges(monkeypatch):
+    monkeypatch.setattr(settings, "localhost_spoof_guard_ports", "9999999999-10000000000,3100")
+    parsed = settings.spoof_guard_ports
+    assert parsed == {3100}

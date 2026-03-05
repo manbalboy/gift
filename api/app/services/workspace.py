@@ -1,13 +1,19 @@
 import re
 from pathlib import Path
+import logging
 
 from app.core.config import settings
 
 
 NODE_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+logger = logging.getLogger(__name__)
 
 
 class InvalidNodeIdError(ValueError):
+    pass
+
+
+class WorkspaceArtifactIOError(OSError):
     pass
 
 
@@ -33,9 +39,37 @@ class WorkspaceService:
             raise InvalidNodeIdError(f"unsafe run_id: {run_id}")
 
         target_dir = self._resolve_under_root(self.root / "main" / "runs" / str(run_id))
-        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.exception(
+                "workspace_dir_access_failed",
+                extra={
+                    "run_id": run_id,
+                    "node_id": node_id,
+                    "path": str(target_dir),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            raise WorkspaceArtifactIOError(
+                f"workspace artifact directory access failed: {target_dir} ({exc.__class__.__name__})"
+            ) from exc
         artifact = self._resolve_under_root(target_dir / f"{node_id}.md")
-        artifact.write_text(content, encoding="utf-8")
+        try:
+            artifact.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            logger.exception(
+                "workspace_write_failed",
+                extra={
+                    "run_id": run_id,
+                    "node_id": node_id,
+                    "path": str(artifact),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            raise WorkspaceArtifactIOError(
+                f"workspace artifact write failed: {artifact} ({exc.__class__.__name__})"
+            ) from exc
         return str(artifact)
 
     def read_artifact_chunk(self, run_id: int, node_id: str, offset: int = 0, limit: int = 16384) -> tuple[str, bool, int]:
@@ -50,10 +84,24 @@ class WorkspaceService:
         if not artifact.exists():
             raise FileNotFoundError(str(artifact))
 
-        size = artifact.stat().st_size
-        with artifact.open("rb") as file_obj:
-            file_obj.seek(safe_offset)
-            raw = file_obj.read(safe_limit)
+        try:
+            size = artifact.stat().st_size
+            with artifact.open("rb") as file_obj:
+                file_obj.seek(safe_offset)
+                raw = file_obj.read(safe_limit)
+        except OSError as exc:
+            logger.exception(
+                "workspace_read_failed",
+                extra={
+                    "run_id": run_id,
+                    "node_id": node_id,
+                    "path": str(artifact),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            raise WorkspaceArtifactIOError(
+                f"workspace artifact read failed: {artifact} ({exc.__class__.__name__})"
+            ) from exc
         chunk = raw.decode("utf-8", errors="replace")
         next_offset = safe_offset + len(raw)
         has_more = next_offset < size
@@ -66,6 +114,20 @@ class WorkspaceService:
             raise InvalidNodeIdError(f"unsafe run_id: {run_id}")
 
         sandbox_dir = self._resolve_under_root(self.root / "main" / "runs" / str(run_id) / "sandbox" / node_id)
-        sandbox_dir.mkdir(parents=True, exist_ok=True)
-        sandbox_dir.chmod(0o777)
+        try:
+            sandbox_dir.mkdir(parents=True, exist_ok=True)
+            sandbox_dir.chmod(0o777)
+        except OSError as exc:
+            logger.exception(
+                "workspace_sandbox_access_failed",
+                extra={
+                    "run_id": run_id,
+                    "node_id": node_id,
+                    "path": str(sandbox_dir),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            raise WorkspaceArtifactIOError(
+                f"workspace sandbox access failed: {sandbox_dir} ({exc.__class__.__name__})"
+            ) from exc
         return sandbox_dir

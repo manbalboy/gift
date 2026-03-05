@@ -3,7 +3,7 @@ from pathlib import Path
 import time
 
 from app.api import workflows as workflows_api
-from app.services.workspace import InvalidNodeIdError, WorkspaceService
+from app.services.workspace import InvalidNodeIdError, WorkspaceArtifactIOError, WorkspaceService
 from .conftest import client
 
 
@@ -27,7 +27,7 @@ def test_write_artifact_raises_on_directory_creation_failure(monkeypatch):
 
     monkeypatch.setattr(Path, "mkdir", raise_permission)
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(WorkspaceArtifactIOError):
         workspace.write_artifact(run_id=3, node_id="idea", content="data")
 
 
@@ -39,7 +39,7 @@ def test_write_artifact_raises_on_write_text_failure(monkeypatch):
 
     monkeypatch.setattr(Path, "write_text", raise_oserror)
 
-    with pytest.raises(OSError):
+    with pytest.raises(WorkspaceArtifactIOError):
         workspace.write_artifact(run_id=4, node_id="plan", content="data")
 
 

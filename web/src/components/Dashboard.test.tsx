@@ -69,6 +69,14 @@ describe('Dashboard', () => {
     expect(onTriggerInvalidWorkflowWebhook).toHaveBeenCalledTimes(1);
   });
 
+  test('실패 노드가 있으면 Retry Node 버튼이 표시되고 콜백을 호출한다', () => {
+    const onRetryNode = jest.fn().mockResolvedValue(undefined);
+    render(<Dashboard run={runFixture} onRetryNode={onRetryNode} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Node' }));
+    expect(onRetryNode).toHaveBeenCalledWith('test');
+  });
+
   test('Webhook 차단 로그를 표시한다', () => {
     render(
       <Dashboard

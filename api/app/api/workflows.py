@@ -32,7 +32,7 @@ from app.services.rate_limiter import create_sse_reconnect_limiter
 from app.services.human_gate_audit import as_utc, parse_status_artifact_entries, scan_stale_human_gate_nodes
 from app.services.lock_provider import LockProviderFactory
 from app.services.workflow_engine import WorkflowEngine
-from app.services.workspace import InvalidNodeIdError
+from app.services.workspace import InvalidNodeIdError, WorkspaceArtifactIOError
 
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -884,6 +884,8 @@ def get_artifact_chunk(run_id: int, node_id: str, offset: int = 0, limit: int = 
         raise HTTPException(status_code=404, detail="artifact not found") from exc
     except InvalidNodeIdError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except WorkspaceArtifactIOError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return {
         "run_id": run_id,

@@ -8,9 +8,17 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _parse_ports_csv(value: str) -> set[int]:
+def _parse_ports_csv(value: str | None) -> set[int]:
+    if not isinstance(value, str):
+        return set()
+
     parsed: set[int] = set()
-    for token in value.split(","):
+    try:
+        tokens = value.split(",")
+    except Exception:
+        return set()
+
+    for token in tokens:
         chunk = token.strip()
         if not chunk:
             continue
@@ -18,8 +26,11 @@ def _parse_ports_csv(value: str) -> set[int]:
             start_text, end_text = chunk.split("-", maxsplit=1)
             if not (start_text.strip().isdigit() and end_text.strip().isdigit()):
                 continue
-            start = int(start_text.strip())
-            end = int(end_text.strip())
+            try:
+                start = int(start_text.strip())
+                end = int(end_text.strip())
+            except (TypeError, ValueError, OverflowError):
+                continue
             if start > end:
                 start, end = end, start
             for port in range(start, end + 1):
@@ -27,7 +38,10 @@ def _parse_ports_csv(value: str) -> set[int]:
                     parsed.add(port)
             continue
         if chunk.isdigit():
-            port = int(chunk)
+            try:
+                port = int(chunk)
+            except (TypeError, ValueError, OverflowError):
+                continue
             if 1 <= port <= 65535:
                 parsed.add(port)
     return parsed

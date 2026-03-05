@@ -240,3 +240,84 @@ test('단절/다중 Entry 그래프는 저장 전에 클라이언트에서 차�
   await expect(page.getByTestId('toast-stack').getByText(message)).toBeVisible();
   expect(saveCallCount).toBe(0);
 });
+
+test('실패 상태 수신 시 캔버스 노드가 Failed(red) 스타일로 렌더링된다', async ({ page }) => {
+  const runId = 990;
+  const workflow = {
+    id: 1,
+    name: 'Failure Render Flow',
+    description: 'failed node rendering',
+    graph: {
+      nodes: [
+        { id: 'idea', type: 'task', label: 'Idea' },
+        { id: 'test', type: 'task', label: 'Test' },
+      ],
+      edges: [{ id: 'e1', source: 'idea', target: 'test' }],
+    },
+  };
+  const failedRun = {
+    id: runId,
+    workflow_id: 1,
+    status: 'failed',
+    started_at: '2026-03-05T00:00:00Z',
+    updated_at: '2026-03-05T00:00:09Z',
+    node_runs: [
+      {
+        id: 100,
+        node_id: 'idea',
+        node_name: 'Idea',
+        status: 'done',
+        sequence: 0,
+        log: 'ok',
+        artifact_path: '/tmp/idea.md',
+        updated_at: '2026-03-05T00:00:05Z',
+      },
+      {
+        id: 101,
+        node_id: 'test',
+        node_name: 'Test',
+        status: 'failed',
+        sequence: 1,
+        log: '[resume_failed] workspace missing',
+        artifact_path: null,
+        updated_at: '2026-03-05T00:00:09Z',
+      },
+    ],
+  };
+
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([workflow]) });
+      return;
+    }
+    await route.continue();
+  });
+  await page.route('**/api/workflows/1/runs', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(failedRun) });
+  });
+  await page.route(`**/api/runs/${runId}`, async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(failedRun) });
+  });
+  await page.route(`**/api/runs/${runId}/constellation`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        run_id: runId,
+        status: 'failed',
+        nodes: [
+          { id: 'idea', label: 'Idea', status: 'done', sequence: 0 },
+          { id: 'test', label: 'Test', status: 'failed', sequence: 1 },
+        ],
+        links: [{ source: 'idea', target: 'test' }],
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Run 시작' }).click();
+
+  const failedNode = page.locator('.react-flow__node.status-failed').first();
+  await expect(failedNode).toBeVisible();
+  await expect(failedNode.getByText('failed')).toBeVisible();
+});

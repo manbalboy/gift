@@ -18,6 +18,13 @@ jest.mock('reactflow', () => {
         <div>
           <div data-testid="node-count">{nodes.length}</div>
           <div data-testid="edge-count">{edges.length}</div>
+          <div data-testid="flow-nodes">
+            {nodes.map((node: any) => (
+              <div key={node.id} data-testid={`flow-node-${node.id}`} className={node.className}>
+                {String(node.data?.status ?? 'queued')}
+              </div>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => onConnect?.({ source: nodes[0]?.id ?? 'idea', target: nodes[1]?.id ?? 'plan' })}
@@ -230,8 +237,10 @@ describe('WorkflowBuilder', () => {
       />,
     );
 
-    expect(screen.getByText('running')).toBeInTheDocument();
-    expect(screen.getByText('failed')).toBeInTheDocument();
+    expect(screen.getAllByText('running').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('failed').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('flow-node-idea')).toHaveClass('status-running');
+    expect(screen.getByTestId('flow-node-plan')).toHaveClass('status-failed');
   });
 
   test('모바일 세로 전환 시 편집이 비활성화되고 안내가 표시된다', () => {

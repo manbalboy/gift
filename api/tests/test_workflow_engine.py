@@ -440,6 +440,48 @@ def test_engine_retries_failed_node_with_backoff(monkeypatch):
     assert "recovered" in first_node["log"]
 
 
+def test_engine_marks_run_failed_when_agent_runner_raises_unexpected_error(monkeypatch):
+    payload = {
+        "name": "Crash Safety Flow",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "crash-node", "type": "task", "label": "Crash Node"}],
+            "edges": [],
+        },
+    }
+    workflow = client.post("/api/workflows", json=payload).json()
+
+    class CrashRunner:
+        def run(self, _request):
+            raise RuntimeError("runner crashed unexpectedly")
+
+    original_runner = workflow_engine.agent_runner
+    monkeypatch.setattr(workflow_engine, "agent_runner", CrashRunner())
+
+    try:
+        run = client.post(f"/api/workflows/{workflow['id']}/runs")
+        assert run.status_code == 200
+        run_id = run.json()["id"]
+
+        final = None
+        for _ in range(40):
+            response = client.get(f"/api/runs/{run_id}")
+            assert response.status_code == 200
+            body = response.json()
+            if body["status"] in {"done", "failed"}:
+                final = body
+                break
+            time.sleep(0.1)
+    finally:
+        monkeypatch.setattr(workflow_engine, "agent_runner", original_runner)
+
+    assert final is not None
+    assert final["status"] == "failed"
+    failed_nodes = [node for node in final["node_runs"] if node["status"] == "failed"]
+    assert failed_nodes
+    assert "runner crashed unexpectedly" in failed_nodes[0]["log"]
+
+
 def test_agent_runner_timeout_kills_process_group(tmp_path):
     marker = tmp_path / "should_not_exist.txt"
     command = f"(sleep 2; echo leaked > '{marker}') & while true; do :; done"
