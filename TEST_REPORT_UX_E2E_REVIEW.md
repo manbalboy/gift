@@ -4,134 +4,82 @@
 - Tester: `gemini`
 - Status: `FAIL`
 - Exit code: `1`
-- Duration: `51.77s`
+- Duration: `54.85s`
 - Command: `/home/docker/agentHub/workspaces/main/scripts/run_agenthub_tests.sh e2e`
 
 ## 통과한 항목
-- 통과된 테스트 수를 감지했습니다: 193
+- 통과된 테스트 수를 감지했습니다: 201
 
 ## 통과하지 못한 항목
 - 테스트 명령이 종료코드 1로 실패했습니다.
-- 실패한 테스트 수를 감지했습니다: 4
+- 실패한 테스트 수를 감지했습니다: 1
 
 ## 요약 카운트
-- passed: `193`
-- failed: `4`
+- passed: `201`
+- failed: `1`
 - skipped: `0`
 - errors: `0`
 
 ## stdout (tail)
 ```text
 [agenthub-test] running pytest
-.....................................................FFF................ [ 36%]
-.........................................F.............................. [ 73%]
-.....................................................                    [100%]
+........................................................................ [ 35%]
+........................................................................ [ 71%]
+...............................................F..........               [100%]
 =================================== FAILURES ===================================
-__________ test_cors_blocks_untrusted_origins[http://localhost:7000] ___________
+__________ test_resume_api_propagates_fail_fast_lock_error_to_client ___________
 
-origin = 'http://localhost:7000'
+    def test_resume_api_propagates_fail_fast_lock_error_to_client():
+        workflow = client.post("/api/workflows", json=PAYLOAD).json()
+        run = client.post(f"/api/workflows/{workflow['id']}/runs")
+        assert run.status_code == 200
+        run_id = run.json()["id"]
+    
+        db = SessionLocal()
+        try:
+            target_run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+            assert target_run is not None
+            target_run.status = "paused"
+            db.commit()
+        finally:
+            db.close()
+    
+        class BusyRunLock:
+            def acquire(self, blocking=False, timeout=None):
+                return False
+    
+            def release(self):
+                return None
+    
+            def extend(self, ttl_seconds=None):
+                return False
+    
+        class BusyLockProvider:
+            def get_run_lock(self, _run_id):
+                return BusyRunLock()
+    
+        original_provider = workflow_engine.lock_provider
+        workflow_engine.lock_provider = BusyLockProvider()
+        try:
+            response = client.post(f"/api/runs/{run_id}/resume")
+        finally:
+            workflow_engine.lock_provider = original_provider
+    
+        assert response.status_code == 409
+        assert response.json()["detail"] == "run lock is busy"
+    
+        latest = client.get(f"/api/runs/{run_id}")
+        assert latest.status_code == 200
+>       assert latest.json()["status"] == "paused"
+E       AssertionError: assert 'queued' == 'paused'
+E         
+E         - paused
+E         + queued
 
-    @pytest.mark.parametrize(
-        "origin",
-        [
-            "http://evil-example.com:3100",
-            "http://manbalboy.com.evil.com:3100",
-            "http://amanbalboy.com:3101",
-            "http://localhost:2999",
-            "http://127.0.0.1:7100",
-            "http://ssh.manbalboy.com:3200",
-            "http://localhost:7000",
-            "https://127.0.0.1:7099",
-            "http://ssh.manbalboy.com:7008",
-        ],
-    )
-    def test_cors_blocks_untrusted_origins(origin: str):
-        response = client.options(
-            "/api/workflows",
-            headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
-        )
->       assert response.status_code == 400
-E       assert 200 == 400
-E        +  where 200 = <Response [200 OK]>.status_code
-
-api/tests/test_main.py:51: AssertionError
-__________ test_cors_blocks_untrusted_origins[https://127.0.0.1:7099] __________
-
-origin = 'https://127.0.0.1:7099'
-
-    @pytest.mark.parametrize(
-        "origin",
-        [
-            "http://evil-example.com:3100",
-            "http://manbalboy.com.evil.com:3100",
-            "http://amanbalboy.com:3101",
-            "http://localhost:2999",
-            "http://127.0.0.1:7100",
-            "http://ssh.manbalboy.com:3200",
-            "http://localhost:7000",
-            "https://127.0.0.1:7099",
-            "http://ssh.manbalboy.com:7008",
-        ],
-    )
-    def test_cors_blocks_untrusted_origins(origin: str):
-        response = client.options(
-            "/api/workflows",
-            headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
-        )
->       assert response.status_code == 400
-E       assert 200 == 400
-E        +  where 200 = <Response [200 OK]>.status_code
-
-api/tests/test_main.py:51: AssertionError
-______ test_cors_blocks_untrusted_origins[http://ssh.manbalboy.com:7008] _______
-
-origin = 'http://ssh.manbalboy.com:7008'
-
-    @pytest.mark.parametrize(
-        "origin",
-        [
-            "http://evil-example.com:3100",
-            "http://manbalboy.com.evil.com:3100",
-            "http://amanbalboy.com:3101",
-            "http://localhost:2999",
-            "http://127.0.0.1:7100",
-            "http://ssh.manbalboy.com:3200",
-            "http://localhost:7000",
-            "https://127.0.0.1:7099",
-            "http://ssh.manbalboy.com:7008",
-        ],
-    )
-    def test_cors_blocks_untrusted_origins(origin: str):
-        response = client.options(
-            "/api/workflows",
-            headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
-        )
->       assert response.status_code == 400
-E       assert 200 == 400
-E        +  where 200 = <Response [200 OK]>.status_code
-
-api/tests/test_main.py:51: AssertionError
-___________________ test_cors_blocks_preview_port_7000_range ___________________
-
-    def test_cors_blocks_preview_port_7000_range():
-        response = client.options(
-            "/api/workflows",
-            headers={
-                "Origin": "http://localhost:7007",
-                "Access-Control-Request-Method": "GET",
-            },
-        )
->       assert response.status_code == 400
-E       assert 200 == 400
-E        +  where 200 = <Response [200 OK]>.status_code
-
-api/tests/test_workflow_api.py:139: AssertionError
+api/tests/test_workflow_engine.py:1047: AssertionError
 =========================== short test summary info ============================
-FAILED api/tests/test_main.py::test_cors_blocks_untrusted_origins[http://localhost:7000]
-FAILED api/tests/test_main.py::test_cors_blocks_untrusted_origins[https://127.0.0.1:7099]
-FAILED api/tests/test_main.py::test_cors_blocks_untrusted_origins[http://ssh.manbalboy.com:7008]
-FAILED api/tests/test_workflow_api.py::test_cors_blocks_preview_port_7000_range
-4 failed, 193 passed in 49.23s
+FAILED api/tests/test_workflow_engine.py::test_resume_api_propagates_fail_fast_lock_error_to_client
+1 failed, 201 passed in 51.99s
 ```
 
 ## stderr (tail)

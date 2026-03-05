@@ -4,8 +4,8 @@
 - Stage: `ux_e2e_review`
 - Verdict: `NEEDS_FIX`
 - Test status: `FAIL`
-- Preview URL: http://ssh.manbalboy.com:7005
-- Health URL: http://127.0.0.1:7005/
+- Preview URL: http://ssh.manbalboy.com:7002
+- Health URL: http://127.0.0.1:7002/
 
 ## Screenshot Artifacts
 - PC: `artifacts/ux/pc.png` (captured) - Desktop Chrome capture completed
