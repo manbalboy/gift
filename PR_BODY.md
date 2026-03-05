@@ -1,79 +1,73 @@
-```markdown
+---
+
 ## Summary
 
-이 PR은 이슈 #71 **[초장기] 루프엔진 설계해서 초안을 준비하시오**의 구현 결과물입니다.
+이슈 #71 "[초장기] 루프엔진 설계해서 초안을 준비하시오" 요건을 충족하는 **Self-Improvement Loop Engine MVP 초안**을 구현합니다.
 
-Self-Improvement Loop Engine의 핵심 컴포넌트(Analyzer → Evaluator → Improvement Planner → Executor)를 설계하고, 루프 실행 중 발생하는 에러 로그를 안전하고 효율적으로 표시하기 위한 `ErrorLogModal` 개선 및 보안 강화 작업을 수행하였습니다. 급격한 아키텍처 변경 없이 기존 구조를 유지하면서 MVP 범위 내에서 점진적으로 기능을 수용하는 방식을 채택하였습니다.
+아이디어 입력 → 계획 → 코드 생성 → 테스트 → 평가 → 개선을 24시간 반복 수행하는 Autonomous Developer 시스템의 핵심 4대 엔진(Analyzer / Evaluator / Planner / Executor) 아키텍처와 모의(Mock) 엔드포인트를 설계하였습니다. 동시에 프론트엔드 대용량 로그 렌더링 안정성 및 보안 취약점 패치를 병행하였습니다.
 
 ---
 
 ## What Changed
 
-### 1. ErrorLogModal 컴포넌트 분리 및 개선
-- `ErrorLogModal`을 독립 컴포넌트로 추출하여 관심사 분리(Separation of Concerns)를 강화
-- 대용량 에러 로그(5,000자 초과) 유입 시 텍스트를 Truncation하고 **'Show more'** 버튼으로 확장하는 기능 구현
-- `<pre>` 영역에 `overflow-y: auto` 및 `word-break: break-all` 속성 적용으로 레이아웃 붕괴 방지
-- 클립보드 복사 성공/실패 시 **Toast 알림** 피드백 추가 (디바운싱 처리로 중복 알림 방지)
-- `navigator.clipboard.writeText` 호출 실패 시 앱 크래시 방지를 위한 예외 처리 강화
+### Backend (FastAPI)
 
-### 2. 루프 오버런(Loop Overrun) 표시 수정
-- 루프 최대 반복 횟수(`max_loop_count`) 초과 시 UI에 정확한 오버런 상태를 표시하도록 수정
-- 품질 임계값(`quality_threshold`) 미달 및 중복 변경 감지(`duplicate_change_detection`) 상태 표현 개선
+| 영역 | 내용 |
+|---|---|
+| Loop Engine API | Analyzer / Evaluator / Planner / Executor 4대 엔진의 Mock 엔드포인트 초안 (`/loop/analyze`, `/loop/evaluate`, `/loop/plan`, `/loop/execute`) |
+| Loop Control | `max_loop_count`, `budget_limit`, `duplicate_change_detection`, `quality_threshold` 기반 루프 안정성 제어 스키마 (Pydantic / SQLAlchemy) |
+| 루프 시뮬레이터 | `LoopSimulator` 백그라운드 스레드 Start / Pause / Resume / Stop / InjectInstruction 상태 제어 구현 |
+| 장기 기억 스키마 | `project architecture`, `design decisions`, `bug history`, `improvement history`, `test results`, `performance metrics` 저장을 위한 Memory 스키마 정의 |
+| CORS 수정 | `_CORS_ALLOWED_PORT_PATTERN` 정규식을 `(?:31\d{2})` → `(?:31\d{2}\|70\d{2})`로 수정하여 7000-7099 Preview 포트 허용 |
 
-### 3. XSS 방어 정규식 패턴 보강
-- `<scr<script>ipt>` 등 중첩·분할형 비정형 XSS 페이로드를 차단하는 심화 정규식 패턴 적용
-- 제네릭 타입 문법(`<T>` 등) 정상 텍스트의 오탐(False Positive) 방지 예외 처리 추가
+### Frontend (React / Vite)
 
-### 4. 테스트 커버리지 강화
-- `ErrorLogModal.test.tsx`: `navigator.clipboard.writeText` Mock 기반 복사 성공/실패 단위 테스트 추가
-- `security.test.ts`: 비정형 XSS 페이로드 우회 방어 심화 엣지 케이스 1~2개 추가
-- 빈 로그(`null`, 빈 문자열) 유입 시 대체 텍스트 렌더링 엣지 케이스 검증
+| 영역 | 내용 |
+|---|---|
+| ErrorLogModal 컴포넌트 분리 | 인라인 렌더링 구조에서 별도 컴포넌트(`ErrorLogModal.tsx`)로 추출 |
+| 대용량 로그 Truncation | 5,000자 초과 시 "Show more" 버튼 노출, `overflow-y: auto` / `word-break: break-all` 적용 |
+| 루프 오버런 카운트 표시 | 루프 횟수 초과 시 UI 상 오버런 카운트 시각화 |
+| XSS 보안 정규식 패치 | `SAFE_GENERIC_PATTERN` ReDoS 방지 처리 및 제네릭 문법(`<T>`) 오탐 방지 정규식 수정 |
+| 클립보드 예외 처리 | `navigator.clipboard.writeText` 권한 거부 상황 예외 처리 및 Toast 알림 연동 |
 
 ---
 
 ## Test Results
 
-| Stage | 상태 | 통과 | 실패 | 소요 시간 |
-|---|---|---|---|---|
-| `test_after_implement` | ✅ PASS | 192 | 0 | 48.23s |
-| `ux_e2e_review` | ✅ PASS | 192 | 0 | 49.52s |
-| `test_after_fix` | ✅ PASS | 192 | 0 | 50.44s |
+| 구분 | 결과 | 비고 |
+|---|---|---|
+| API 단위 테스트 (`pytest`) | 통과 | Loop Engine 엔드포인트 Mock 응답 검증 |
+| Web 단위 테스트 (`Vitest`) | 통과 | XSS 방어 페이로드 / 제네릭 교차 검증, 클립보드 Mock 테스트 |
+| 로컬 수동 통합 테스트 | 통과 | 빈 문자열 / 극단적 대용량 텍스트 주입 시 UI 레이아웃 붕괴 없음 |
+| CORS Preflight 테스트 | 통과 | `manbalboy.com` / `localhost` 계열 허용, 이외 도메인 차단 확인 |
+| Docker Preview | **실패** | `http://ssh.manbalboy.com:7004` — `[Errno 104] Connection reset by peer` |
 
-전체 192개 테스트 케이스 **100% 통과**, stderr 오류 없음.
-
-### Docker Preview
-
-| 항목 | 값 |
-|---|---|
-| 컨테이너 | `agenthub-preview-cdb309bd` |
-| 이미지 | `agenthub/new-mind-cdb309bd:latest` |
-| 컨테이너 포트 | `7000` |
-| 외부 URL | http://ssh.manbalboy.com:7004 |
-| CORS 허용 출처 | `manbalboy.com` 계열, `localhost` 계열 |
-| 상태 | ⚠️ `failed` — `[Errno 104] Connection reset by peer` |
-
-> Docker Preview 컨테이너가 연결 오류로 외부 접근에 실패하였습니다. 컨테이너 기동 자체는 완료되었으나 네트워크 레벨 연결 재설정이 발생하였습니다. 로컬 환경에서는 정상 동작이 확인되었습니다.
+> Docker Preview 빌드 실패로 인해 외부 URL 접근 불가 상태입니다. 후속 작업으로 원인 조사 필요합니다.
 
 ---
 
 ## Risks / Follow-ups
 
-### 위험 요소
-- **클립보드 API 환경 의존성**: `navigator.clipboard.writeText`는 브라우저 보안 정책(HTTPS 전용, 사용자 권한)에 따라 동작이 달라질 수 있어, Mocking 테스트와 실제 런타임 환경 간 불일치 가능성이 잔존합니다.
-- **XSS 정규식 회귀 위험**: 비정형 패턴 방어 강화 시 향후 추가되는 정상 마크업 패턴과 충돌할 수 있으므로, 정규식 변경 시마다 교차 검증이 필요합니다.
-- **Docker Preview 불안정**: Preview 컨테이너의 `Connection reset by peer` 오류 원인이 불명확하며 네트워크 인프라 측 점검이 필요합니다.
+### 잔존 위험
 
-### 후속 작업 (Follow-ups)
-- [ ] Self-Improvement Loop 백엔드 핵심 엔진(Analyzer, Evaluator, Executor)의 실제 구현체 개발 — 현재 PR은 설계 초안 및 프론트엔드 MVP 범위
-- [ ] Loop Control 명령(Start / Pause / Resume / Stop / Inject Instruction) API 엔드포인트 구현
-- [ ] Memory 시스템 연동: 개선 이력·버그 이력·성능 메트릭 장기 저장소 설계
-- [ ] `LoopMonitorWidget`과의 실시간 상태 연동(SSE/Polling) 고도화
-- [ ] Docker Preview 네트워크 오류 근본 원인 분석 및 안정화
+- **Loop Engine 좀비 상태**: `_run_forever` 내부 예외 발생 시 `self._mode`가 `"running"`으로 고착될 수 있습니다. 전역 `try-except` 블록 및 `self._mode = "stopped"` 복구 로직이 필요합니다.
+- **XSS 복원 잠재 취약점**: `restoreSafeGenericTokens` 복원 후 `dangerouslySetInnerHTML` 사용 시 이벤트 핸들러 속성 기반 XSS가 실행될 수 있습니다. 허용 속성/태그 화이트리스트 교차 검증 로직 강화가 필요합니다.
+- **멀티바이트 문자 절삭 깨짐**: `.slice(0, 5000)` 경계에 한글·이모지 등 멀티바이트 문자가 위치할 경우 깨진 문자가 렌더링될 수 있습니다.
+- **ErrorLogModal 전체 보기 프리징**: "전체 보기" 전환 시 수만 자 이상의 텍스트가 DOM에 즉시 렌더링되면 브라우저 메인 스레드가 차단될 수 있습니다. 가상화(Virtualization) 또는 청크 페이지네이션 도입이 권장됩니다.
+
+### 후속 과제
+
+- [ ] `LoopSimulator._run_forever` 글로벌 예외 처리 및 상태 복구 로직 추가
+- [ ] `security.ts` 복원 로직 XSS 화이트리스트 교차 검증 강화
+- [ ] `ErrorLogModal` 전체 보기 렌더링 가상화 적용
+- [ ] 멀티바이트 문자 안전 절삭(`Intl.Segmenter` 또는 유사 방법) 처리
+- [ ] Docker Preview 빌드 실패 원인(`Connection reset by peer`) 조사 및 수정
+- [ ] 백그라운드 루프 비정상 종료 / 예산 초과 시나리오에 대한 pytest 단위 테스트 추가
+- [ ] 실제 AI 모델 연동 (현재 MVP는 Mock 수준)
 
 ---
 
 Closes #71
-```
 
 ## Deployment Preview
 - Docker Pod/Container: `agenthub-preview-cdb309bd`
