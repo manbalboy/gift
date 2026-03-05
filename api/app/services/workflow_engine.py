@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+from pathlib import Path
 import threading
 import time
 
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.workflow import HumanGateDecisionAudit, NodeRun, WorkflowDefinition, WorkflowRun
+from app.models.workflow import Artifact, HumanGateDecisionAudit, NodeRun, WorkflowDefinition, WorkflowRun
 from app.schemas.agent import AgentTaskRequest
 from app.services.agent_runner import AgentRunner
 from app.services.lock_provider import LockProviderFactory
@@ -111,6 +112,48 @@ class WorkflowEngine:
             return self.workspace.write_artifact(run_id=run_id, node_id="status", content=composed)
         except InvalidNodeIdError:
             return None
+
+    def _upsert_artifact_record(
+        self,
+        db: Session,
+        *,
+        run_id: int,
+        node: NodeRun | None,
+        node_id: str,
+        category: str,
+        path: str,
+    ) -> None:
+        size_bytes = 0
+        try:
+            size_bytes = max(0, int(Path(path).stat().st_size))
+        except Exception:
+            size_bytes = 0
+
+        existing = (
+            db.query(Artifact)
+            .filter(
+                Artifact.run_id == run_id,
+                Artifact.node_id == node_id,
+                Artifact.path == path,
+                Artifact.category == category,
+            )
+            .order_by(Artifact.id.desc())
+            .first()
+        )
+        if existing:
+            existing.size_bytes = size_bytes
+            return
+
+        db.add(
+            Artifact(
+                run_id=run_id,
+                node_run_id=node.id if node else None,
+                node_id=node_id,
+                category=category,
+                path=path,
+                size_bytes=size_bytes,
+            )
+        )
 
     def recover_stuck_runs(self, db: Session, stale_after_seconds: int = DEFAULT_COMPENSATION_TIMEOUT_SECONDS) -> int:
         now = datetime.now(timezone.utc)
@@ -369,6 +412,14 @@ class WorkflowEngine:
                         run_id,
                         node.node_id,
                         f"# Artifact\n\n- run_id: {run_id}\n- node: {node.node_name}\n- result: success\n",
+                    )
+                    self._upsert_artifact_record(
+                        db,
+                        run_id=run_id,
+                        node=node,
+                        node_id=node.node_id,
+                        category="node_output",
+                        path=node.artifact_path,
                     )
                 except InvalidNodeIdError as exc:
                     node.status = "failed"
@@ -645,6 +696,14 @@ class WorkflowEngine:
             )
             if status_artifact_path:
                 node.artifact_path = status_artifact_path
+                self._upsert_artifact_record(
+                    db,
+                    run_id=run.id,
+                    node=node,
+                    node_id="status",
+                    category="human_gate_status_log",
+                    path=status_artifact_path,
+                )
 
             db.commit()
             db.refresh(locked_run)
@@ -718,6 +777,14 @@ class WorkflowEngine:
             )
             if status_artifact_path:
                 node.artifact_path = status_artifact_path
+                self._upsert_artifact_record(
+                    db,
+                    run_id=run.id,
+                    node=node,
+                    node_id="status",
+                    category="human_gate_status_log",
+                    path=status_artifact_path,
+                )
             db.commit()
             db.refresh(locked_run)
         except SQLAlchemyError as exc:

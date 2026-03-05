@@ -34,6 +34,7 @@ class WorkflowRun(Base):
 
     workflow: Mapped[WorkflowDefinition] = relationship(back_populates="runs")
     node_runs: Mapped[list["NodeRun"]] = relationship(back_populates="workflow_run", cascade="all, delete-orphan")
+    artifacts: Mapped[list["Artifact"]] = relationship(back_populates="workflow_run", cascade="all, delete-orphan")
     decision_audits: Mapped[list["HumanGateDecisionAudit"]] = relationship(
         back_populates="workflow_run",
         cascade="all, delete-orphan",
@@ -54,6 +55,24 @@ class NodeRun(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="node_runs")
+    artifacts: Mapped[list["Artifact"]] = relationship(back_populates="node_run", cascade="all, delete-orphan")
+
+
+class Artifact(Base):
+    __tablename__ = "artifacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("workflow_runs.id"), index=True)
+    node_run_id: Mapped[int | None] = mapped_column(ForeignKey("node_runs.id"), nullable=True, index=True)
+    node_id: Mapped[str] = mapped_column(String(120), index=True)
+    category: Mapped[str] = mapped_column(String(40), default="artifact", index=True)
+    path: Mapped[str] = mapped_column(String(255))
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="artifacts")
+    node_run: Mapped[NodeRun | None] = relationship(back_populates="artifacts")
 
 
 class HumanGateDecisionAudit(Base):

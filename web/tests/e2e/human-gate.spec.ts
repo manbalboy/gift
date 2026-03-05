@@ -628,3 +628,51 @@ test('네트워크 오프라인 전환 후 온라인 복구 시 재연결 배너
   await expect(page.locator('.live-indicator')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Run 시작' })).toBeVisible();
 });
+
+test('localhost:3108 프록시에서 15초 이상 SSE 지연 후에도 재연결이 복구된다', async ({ page }) => {
+  test.setTimeout(60_000);
+  let streamAttempt = 0;
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 1,
+          name: 'Proxy Delay Flow',
+          description: 'sse delay recover',
+          graph: { nodes: [{ id: 'idea', type: 'task', label: 'Idea' }], edges: [] },
+        },
+      ]),
+    });
+  });
+  await page.route('**/api/workflows/1/runs/stream**', async (route) => {
+    streamAttempt += 1;
+    if (streamAttempt <= 3) {
+      await new Promise((resolve) => setTimeout(resolve, 5200));
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'proxy timeout' }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'event: run_status\ndata: {"workflow_id":1,"runs":[]}\n\n',
+    });
+  });
+  await page.route('**/api/webhooks/blocked-events**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  await page.goto('/');
+  await expect(page.locator('.network-banner')).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByRole('button', { name: 'Run 시작' })).toBeVisible();
+  await expect(page.locator('.live-indicator')).toContainText(/연결|재연결/);
+});

@@ -30,6 +30,7 @@ from app.schemas.workflow import (
 )
 from app.services.rate_limiter import create_sse_reconnect_limiter
 from app.services.human_gate_audit import as_utc, parse_status_artifact_entries, scan_stale_human_gate_nodes
+from app.services.lock_provider import LockProviderFactory
 from app.services.workflow_engine import WorkflowEngine
 from app.services.workspace import InvalidNodeIdError
 
@@ -47,6 +48,8 @@ reconnect_rate_limiter = create_sse_reconnect_limiter()
 logger = logging.getLogger(__name__)
 HUMAN_GATE_SESSION_COOKIE = "devflow_human_gate_session"
 MAX_STREAM_EVENT_BUFFER_SIZE = 256
+STALE_SCAN_LOCK_KEY = -9_001_001
+stale_scan_lock_provider = LockProviderFactory.create()
 
 
 def _get_stream_generation(workflow_id: int) -> int:
@@ -753,11 +756,17 @@ def scan_stale_human_gate_alerts(
 ):
     configured_hours = max(1, int(settings.workflow_human_gate_stale_hours))
     safe_stale_hours = max(1, int(stale_hours or configured_hours))
-    return scan_stale_human_gate_nodes(
-        db,
-        stale_hours=safe_stale_hours,
-        limit=limit,
-    )
+    scan_lock = stale_scan_lock_provider.get_run_lock(STALE_SCAN_LOCK_KEY)
+    if not scan_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="human gate stale scan lock is busy")
+    try:
+        return scan_stale_human_gate_nodes(
+            db,
+            stale_hours=safe_stale_hours,
+            limit=limit,
+        )
+    finally:
+        scan_lock.release()
 
 
 @approval_router.post("/{approval_id}/cancel", response_model=WorkflowRunOut)

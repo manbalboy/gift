@@ -1,6 +1,11 @@
 import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 
 const CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+const BLOCKED_PROTOCOL_PATTERN = /^\s*javascript:/i;
+const HOOKED_URI_ATTRS = new Set(['href', 'xlink:href', 'src', 'formaction']);
+const UNSAFE_SVG_ATTRS = new Set(['style', 'onbegin', 'onend', 'onrepeat']);
+let hooksInitialized = false;
 
 export function escapeHtml(value: string): string {
   return value
@@ -15,84 +20,41 @@ export function sanitizeArtifactText(raw: string): string {
   return raw.replace(CONTROL_CHAR_PATTERN, '');
 }
 
-function renderInlineMarkdown(line: string): string {
-  return line
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>');
-}
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
 
 function renderMarkdownToHtml(raw: string): string {
-  const lines = raw.split(/\r?\n/);
-  const blocks: string[] = [];
-  let listItems: string[] = [];
-  let inCodeBlock = false;
-  let codeLines: string[] = [];
+  return marked.parse(raw, { async: false }) as string;
+}
 
-  const flushList = () => {
-    if (listItems.length === 0) return;
-    blocks.push(`<ul>${listItems.join('')}</ul>`);
-    listItems = [];
-  };
+function ensureDomPurifyHooks() {
+  if (hooksInitialized) return;
+  hooksInitialized = true;
 
-  const flushCodeBlock = () => {
-    if (codeLines.length === 0) {
-      blocks.push('<pre><code></code></pre>');
-    } else {
-      blocks.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+  DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+    const attrName = String(data.attrName ?? '').toLowerCase();
+    const attrValue = String(data.attrValue ?? '').trim();
+    const isSvgNode = node.namespaceURI === 'http://www.w3.org/2000/svg';
+
+    if (!attrName) return;
+    if (attrName.startsWith('on')) {
+      data.keepAttr = false;
+      return;
     }
-    codeLines = [];
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.trimEnd();
-
-    if (line.trim().startsWith('```')) {
-      if (inCodeBlock) {
-        flushCodeBlock();
-      } else {
-        flushList();
-      }
-      inCodeBlock = !inCodeBlock;
-      continue;
+    if (HOOKED_URI_ATTRS.has(attrName) && BLOCKED_PROTOCOL_PATTERN.test(attrValue)) {
+      data.keepAttr = false;
+      return;
     }
-
-    if (inCodeBlock) {
-      codeLines.push(rawLine);
-      continue;
+    if (isSvgNode && UNSAFE_SVG_ATTRS.has(attrName)) {
+      data.keepAttr = false;
     }
-
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
-      flushList();
-      const level = headingMatch[1].length;
-      blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
-      continue;
-    }
-
-    const listMatch = line.match(/^[-*]\s+(.+)$/);
-    if (listMatch) {
-      listItems.push(`<li>${renderInlineMarkdown(listMatch[1])}</li>`);
-      continue;
-    }
-
-    if (line.trim().length === 0) {
-      flushList();
-      continue;
-    }
-
-    flushList();
-    blocks.push(`<p>${renderInlineMarkdown(line)}</p>`);
-  }
-
-  flushList();
-  if (inCodeBlock) {
-    flushCodeBlock();
-  }
-  return blocks.join('\n');
+  });
 }
 
 export function toSafePreHtml(raw: string): string {
+  ensureDomPurifyHooks();
   const sanitizedText = sanitizeArtifactText(raw);
   const renderedHtml = renderMarkdownToHtml(sanitizedText);
   return DOMPurify.sanitize(renderedHtml, {

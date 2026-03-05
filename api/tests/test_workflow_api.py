@@ -709,6 +709,27 @@ def test_scan_stale_human_gate_alerts_returns_overdue_pending_nodes():
     assert any(item["run_id"] == run_id and item["node_id"] == "review" for item in items)
 
 
+def test_scan_stale_human_gate_alerts_returns_409_when_distributed_lock_is_busy(monkeypatch):
+    class BusyLock:
+        def acquire(self, blocking: bool = False, timeout: float | None = None) -> bool:
+            return False
+
+        def release(self) -> None:
+            return None
+
+        def extend(self, ttl_seconds: int | None = None) -> bool:
+            return False
+
+    class BusyProvider:
+        def get_run_lock(self, _run_id: int) -> BusyLock:
+            return BusyLock()
+
+    monkeypatch.setattr(workflows_api, "stale_scan_lock_provider", BusyProvider())
+    response = client.post("/api/runs/human-gate-alerts/scan?stale_hours=24&limit=10")
+    assert response.status_code == 409
+    assert "lock is busy" in response.json()["detail"]
+
+
 def test_human_gate_approve_is_idempotent_for_same_decider(monkeypatch):
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_token", "secret-approver")
     monkeypatch.setattr(workflows_api.settings, "human_gate_approver_roles", "reviewer,admin")

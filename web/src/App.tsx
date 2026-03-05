@@ -47,6 +47,7 @@ export default function App() {
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMessage, setAuthModalMessage] = useState('reviewer/admin 권한 또는 workspace 접근 권한이 필요합니다.');
+  const [apiDegradedMessage, setApiDegradedMessage] = useState<string | null>(null);
   const viewport = useViewport();
   const isMobilePortrait = viewport.isMobile && viewport.isPortrait;
   const activeRunRef = useRef<WorkflowRun | null>(null);
@@ -54,6 +55,22 @@ export default function App() {
   const toastQueueRef = useRef<ToastItem[]>([]);
   const dedupedToastKeysRef = useRef<Set<string>>(new Set());
   const timezoneOffsetMinutes = useMemo(() => new Date().getTimezoneOffset(), []);
+
+  const resolveErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof ApiError ? `${error.status}: ${error.detail}` : fallback;
+
+  const markApiDegraded = (error: unknown, message: string) => {
+    if (error instanceof ApiError) {
+      if (error.status < 500 && error.status !== 429) return;
+      setApiDegradedMessage(`${message} (${error.status}: ${error.detail})`);
+      return;
+    }
+    setApiDegradedMessage(message);
+  };
+
+  const clearApiDegraded = () => {
+    setApiDegradedMessage(null);
+  };
 
   const commitVisibleToasts = (next: ToastItem[]) => {
     toastsRef.current = next;
@@ -115,8 +132,10 @@ export default function App() {
       if (!activeWorkflow && items.length > 0) {
         setActiveWorkflow(items[0]);
       }
+      clearApiDegraded();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '워크플로우 목록 조회 실패';
+      const message = resolveErrorMessage(error, '워크플로우 목록 조회 실패');
+      markApiDegraded(error, '서버 상태가 불안정합니다');
       enqueueToast('error', `워크플로우 조회 실패 (${message})`);
     }
   };
@@ -250,14 +269,16 @@ export default function App() {
         try {
           const targetRunId = activeRunRef.current?.id ?? event.runs[0]?.id;
           if (!targetRunId) return;
-          const [latestRun, latestConstellation] = await Promise.all([
-            api.getRun(targetRunId),
-            api.getConstellation(targetRunId),
-          ]);
-          setRun(latestRun);
-          setConstellation(latestConstellation);
-        } catch (error) {
-          const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '실시간 상태 동기화 실패';
+        const [latestRun, latestConstellation] = await Promise.all([
+          api.getRun(targetRunId),
+          api.getConstellation(targetRunId),
+        ]);
+        setRun(latestRun);
+        setConstellation(latestConstellation);
+        clearApiDegraded();
+      } catch (error) {
+          const message = resolveErrorMessage(error, '실시간 상태 동기화 실패');
+          markApiDegraded(error, '서버 상태가 불안정합니다');
           enqueueToast('error', `실시간 상태 동기화 실패 (${message})`);
         }
       },
@@ -314,8 +335,10 @@ export default function App() {
       setRun(created);
       const data = await api.getConstellation(created.id);
       setConstellation(data);
+      clearApiDegraded();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '워크플로우 실행 실패';
+      const message = resolveErrorMessage(error, '워크플로우 실행 실패');
+      markApiDegraded(error, '서버 상태가 불안정합니다');
       enqueueToast('error', `워크플로우 실행 실패 (${message})`);
     }
   };
@@ -414,8 +437,10 @@ export default function App() {
       setArtifactContent((current) => (offset === 0 ? chunk.content : `${current}${chunk.content}`));
       setArtifactNextOffset(chunk.next_offset);
       setArtifactHasMore(chunk.has_more);
+      clearApiDegraded();
     } catch (error) {
-      const message = error instanceof ApiError ? `${error.status}: ${error.detail}` : '아티팩트 조회 실패';
+      const message = resolveErrorMessage(error, '아티팩트 조회 실패');
+      markApiDegraded(error, '서버 상태가 불안정합니다');
       enqueueToast('error', `아티팩트 조회 실패 (${message})`);
     } finally {
       setArtifactLoading(false);
@@ -482,6 +507,21 @@ export default function App() {
           </button>
         </div>
       </header>
+      {apiDegradedMessage && (
+        <section className="network-banner network-banner-danger" role="alert">
+          <strong>서버 상태가 불안정합니다</strong>
+          <span className="mono">{apiDegradedMessage}</span>
+          <button
+            type="button"
+            className="btn btn-danger"
+            onClick={() => {
+              void loadWorkflows();
+            }}
+          >
+            다시 시도
+          </button>
+        </section>
+      )}
       {streamState === 'reconnecting' && reconnectMeta && (
         <section className="network-banner" role="status" aria-live="polite">
           <strong>네트워크 복구 중</strong>
@@ -591,6 +631,12 @@ export default function App() {
                 className="log-pane mono artifact-pane safe-artifact-viewer"
                 content={artifactContent}
                 fallback="아티팩트를 선택하면 일부 구간부터 순차 로딩합니다."
+                hasMore={artifactHasMore}
+                isLoading={artifactLoading}
+                onLoadMore={() => {
+                  if (!selectedArtifactNodeId) return;
+                  void handleLoadArtifact(selectedArtifactNodeId, false);
+                }}
               />
               <div className="webhook-actions-row">
                 <button
@@ -603,17 +649,6 @@ export default function App() {
                   }}
                 >
                   다시 로딩
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={!selectedArtifactNodeId || !artifactHasMore || artifactLoading}
-                  onClick={() => {
-                    if (!selectedArtifactNodeId) return;
-                    void handleLoadArtifact(selectedArtifactNodeId, false);
-                  }}
-                >
-                  다음 청크 로딩
                 </button>
               </div>
             </div>

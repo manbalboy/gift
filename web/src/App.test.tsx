@@ -490,4 +490,15 @@ describe('App', () => {
     expect(screen.getByRole('status')).toHaveTextContent('네트워크 복구 중');
     expect(screen.getByText('1.50s 후 2회차 재연결 시도')).toBeInTheDocument();
   });
+
+  test('API 연결 실패 시 Graceful 네트워크 폴백 배너를 노출한다', async () => {
+    (api.listWorkflows as jest.Mock).mockRejectedValue(new TypeError('Failed to fetch'));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('서버 상태가 불안정합니다').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeInTheDocument();
+  });
 });

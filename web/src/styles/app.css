@@ -201,6 +201,12 @@ p {
   line-height: 20px;
 }
 
+.network-banner-danger {
+  border-color: color-mix(in srgb, var(--color-status-failed) 64%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-status-failed) 26%, var(--color-bg-base));
+  top: 128px;
+}
+
 .top-bar h1 {
   font-size: 20px;
   line-height: 28px;
@@ -715,6 +721,28 @@ select {
   font-size: 13px;
 }
 
+.artifact-search-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.artifact-search-toolbar input {
+  flex: 1;
+  min-width: 0;
+}
+
+.artifact-highlight {
+  background: #fef08a;
+  color: #161b28;
+  border-radius: 4px;
+  padding: 0 1px;
+}
+
+.artifact-load-more {
+  align-self: flex-start;
+}
+
 .artifact-pane {
   max-height: 220px;
   overflow: auto;
@@ -746,6 +774,29 @@ select {
   background: #0b1020;
   border: 1px solid var(--color-border-default);
   overflow: auto;
+}
+
+.artifact-virtualized-hint {
+  margin: 0 0 var(--space-8);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--color-text-muted);
+}
+
+.artifact-virtualized-scroll {
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  background: #0b1020;
+  overflow: auto;
+}
+
+.artifact-virtualized-content {
+  margin: 0;
+  padding: var(--space-8);
+  font-size: 13px;
+  line-height: 22px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .audit-summary {
