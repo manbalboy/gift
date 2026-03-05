@@ -68,22 +68,53 @@ def test_single_node_workflow_transitions_to_done_without_edges():
     assert latest["node_runs"][0]["status"] == "done"
 
 
+def test_engine_create_run_applies_default_linear_v1_fallback_for_legacy_graph():
+    db = SessionLocal()
+    try:
+        workflow = WorkflowDefinition(name="Legacy Graph", description="", graph={})
+        db.add(workflow)
+        db.commit()
+        db.refresh(workflow)
+
+        run = workflow_engine.create_run(db, workflow)
+        db.refresh(run)
+        node_ids = [node.node_id for node in sorted(run.node_runs, key=lambda item: item.sequence)]
+
+        assert node_ids == ["idea", "plan", "code", "test", "pr"]
+        assert workflow.graph.get("meta", {}).get("graph_version") == "default_linear_v1"
+    finally:
+        db.close()
+
+
 def test_parallel_polling_does_not_spawn_additional_execution(monkeypatch):
     calls = {"count": 0}
-    original_runner = workflow_engine.agent_runner
+    target = {"run_id": None}
 
     def slow_runner(request):
-        calls["count"] += 1
-        time.sleep(0.2)
-        return original_runner.run(request)
+        run_id = request.payload.get("run_id") if isinstance(request.payload, dict) else None
+        if target["run_id"] is None and isinstance(run_id, int):
+            target["run_id"] = run_id
+        if run_id == target["run_id"]:
+            calls["count"] += 1
+            time.sleep(0.2)
+        return AgentTaskResult(ok=True, log="ok", output={"exit_code": 0})
 
     class StubRunner:
         def run(self, request):
             return slow_runner(request)
 
+    original_runner = workflow_engine.agent_runner
     monkeypatch.setattr(workflow_engine, "agent_runner", StubRunner())
 
-    workflow = client.post("/api/workflows", json=PAYLOAD).json()
+    single_node_payload = {
+        "name": "Single Polling Node",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "idea", "type": "task", "label": "Idea"}],
+            "edges": [],
+        },
+    }
+    workflow = client.post("/api/workflows", json=single_node_payload).json()
     run = client.post(f"/api/workflows/{workflow['id']}/runs").json()
     run_id = run["id"]
 

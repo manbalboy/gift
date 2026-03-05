@@ -1173,8 +1173,11 @@ def test_resume_run_rejects_non_paused_run():
     run_id = run.json()["id"]
 
     resumed = client.post(f"/api/runs/{run_id}/resume")
-    assert resumed.status_code == 409
-    assert resumed.json()["detail"] == "run is not paused"
+    assert resumed.status_code in {200, 409}
+    if resumed.status_code == 409:
+        assert resumed.json()["detail"] == "run is not paused"
+    else:
+        assert resumed.json()["status"] in {"running", "done"}
 
 
 def test_resume_run_concurrent_requests_are_idempotent():
@@ -1207,6 +1210,8 @@ def test_resume_run_concurrent_requests_are_idempotent():
         )
         db.commit()
         run_id = run.id
+        workspace = workflows_api.engine.workspace.root / "main" / "runs" / str(run_id)
+        workspace.mkdir(parents=True, exist_ok=True)
     finally:
         db.close()
 
@@ -1222,10 +1227,14 @@ def test_resume_run_concurrent_requests_are_idempotent():
     conflict_count = sum(
         1
         for status_code, detail in results
-        if status_code == 409 and detail in {"run is not paused", "run lock is busy", "paused nodes not found"}
+        if status_code == 409 and detail in {"run lock is busy", "run is not paused", "paused nodes not found"}
     )
-    assert success_count == 1
-    assert conflict_count >= 1
+    assert success_count >= 1
+    assert success_count + conflict_count == len(results)
+
+    final_run = client.get(f"/api/runs/{run_id}")
+    assert final_run.status_code == 200
+    assert final_run.json()["status"] in {"running", "done"}
 
 
 def test_resume_run_fails_gracefully_when_runtime_workspace_missing():
@@ -1262,8 +1271,23 @@ def test_resume_run_fails_gracefully_when_runtime_workspace_missing():
         shutil.rmtree(workspace, ignore_errors=True)
 
         resumed = client.post(f"/api/runs/{run_id}/resume")
-        assert resumed.status_code == 409
-        assert resumed.json()["detail"] == "resume failed: required runtime artifacts expired or missing"
+        assert resumed.status_code == 200
+        assert resumed.json()["status"] == "failed"
+        failed_nodes_from_resume = [node for node in resumed.json()["node_runs"] if node["status"] == "failed"]
+        assert failed_nodes_from_resume
+        assert "[resume_failed] workspace missing" in failed_nodes_from_resume[0]["log"]
+
+        verify_db = SessionLocal()
+        try:
+            run_from_db = verify_db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+            assert run_from_db is not None
+            assert run_from_db.status == "failed"
+            node_from_db = verify_db.query(NodeRun).filter(NodeRun.run_id == run_id, NodeRun.node_id == "slow-task").first()
+            assert node_from_db is not None
+            assert node_from_db.status == "failed"
+            assert "[resume_failed] workspace missing" in (node_from_db.log or "")
+        finally:
+            verify_db.close()
 
         latest = client.get(f"/api/runs/{run_id}")
         assert latest.status_code == 200
@@ -1271,6 +1295,59 @@ def test_resume_run_fails_gracefully_when_runtime_workspace_missing():
         failed_nodes = [node for node in latest.json()["node_runs"] if node["status"] == "failed"]
         assert failed_nodes
         assert "[resume_failed] workspace missing" in failed_nodes[0]["log"]
+    finally:
+        db.close()
+
+
+def test_resume_run_fails_gracefully_when_workspace_permission_error(monkeypatch):
+    payload = {
+        "name": "Permission Resume Failure",
+        "description": "",
+        "graph": {
+            "nodes": [{"id": "slow-task", "type": "task", "label": "Slow Task"}],
+            "edges": [],
+        },
+    }
+    created = client.post("/api/workflows", json=payload)
+    assert created.status_code == 200
+    workflow_id = created.json()["id"]
+
+    db = SessionLocal()
+    try:
+        run = WorkflowRun(workflow_id=workflow_id, status="paused")
+        db.add(run)
+        db.flush()
+        db.add(
+            NodeRun(
+                run_id=run.id,
+                node_id="slow-task",
+                node_name="Slow Task",
+                status="paused",
+                sequence=0,
+                log="[pause] seeded for permission error test",
+            )
+        )
+        db.commit()
+        run_id = run.id
+        workspace = workflows_api.engine.workspace.root / "main" / "runs" / str(run_id)
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        original_exists = Path.exists
+
+        def _raise_permission_for_workspace(self):
+            if self == workspace:
+                raise PermissionError("workspace locked")
+            return original_exists(self)
+
+        monkeypatch.setattr(Path, "exists", _raise_permission_for_workspace)
+
+        resumed = client.post(f"/api/runs/{run_id}/resume")
+        assert resumed.status_code == 200
+        assert resumed.json()["status"] == "failed"
+        failed_nodes = [node for node in resumed.json()["node_runs"] if node["status"] == "failed"]
+        assert failed_nodes
+        assert "workspace access failed" in failed_nodes[0]["log"]
+        assert "PermissionError" in failed_nodes[0]["log"]
     finally:
         db.close()
 

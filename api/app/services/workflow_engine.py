@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 import threading
 import time
+from typing import Protocol
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ from app.services.workspace import InvalidNodeIdError, WorkspaceService, is_safe
 
 
 DEFAULT_COMPENSATION_TIMEOUT_SECONDS = 120
+DEFAULT_LINEAR_V1_NODE_IDS = ("idea", "plan", "code", "test", "pr")
 logger = logging.getLogger(__name__)
 
 
@@ -91,11 +93,140 @@ def _extract_node_timeout_override(graph: dict | None, node_id: str) -> float | 
     return None
 
 
+def _build_linear_edges(node_ids: list[str]) -> list[dict[str, str]]:
+    edges: list[dict[str, str]] = []
+    for index in range(len(node_ids) - 1):
+        edges.append(
+            {
+                "id": f"default-linear-{index + 1}",
+                "source": node_ids[index],
+                "target": node_ids[index + 1],
+            }
+        )
+    return edges
+
+
+def _default_linear_v1_graph() -> dict[str, object]:
+    node_ids = list(DEFAULT_LINEAR_V1_NODE_IDS)
+    return {
+        "nodes": [
+            {
+                "id": node_id,
+                "type": "task",
+                "label": node_id.upper(),
+            }
+            for node_id in node_ids
+        ],
+        "edges": _build_linear_edges(node_ids),
+        "meta": {"graph_version": "default_linear_v1"},
+    }
+
+
+def _normalize_workflow_graph(raw_graph: dict | None) -> tuple[dict[str, object], bool]:
+    if isinstance(raw_graph, dict):
+        nodes = raw_graph.get("nodes")
+        edges = raw_graph.get("edges")
+        if isinstance(nodes, list) and nodes:
+            normalized_nodes = [node for node in nodes if isinstance(node, dict) and str(node.get("id", "")).strip()]
+            if normalized_nodes:
+                normalized_graph: dict[str, object] = {
+                    "nodes": normalized_nodes,
+                    "edges": [edge for edge in edges if isinstance(edge, dict)] if isinstance(edges, list) else [],
+                }
+                if isinstance(raw_graph.get("meta"), dict):
+                    normalized_graph["meta"] = raw_graph["meta"]
+                return normalized_graph, False
+
+        legacy_sequence = raw_graph.get("sequence")
+        if isinstance(legacy_sequence, list):
+            node_ids = [str(item).strip() for item in legacy_sequence if str(item).strip()]
+            if node_ids:
+                return (
+                    {
+                        "nodes": [
+                            {"id": node_id, "type": "task", "label": node_id.replace("-", " ").title()}
+                            for node_id in node_ids
+                        ],
+                        "edges": _build_linear_edges(node_ids),
+                        "meta": {"graph_version": "default_linear_v1", "fallback_source": "legacy_sequence"},
+                    },
+                    True,
+                )
+
+    return _default_linear_v1_graph(), True
+
+
+class NodeExecutor(Protocol):
+    def stage(
+        self,
+        *,
+        engine: "WorkflowEngine",
+        run_id: int,
+        node: NodeRun,
+        graph: dict | None,
+        execution_targets: list[tuple[str, str, str | None]],
+        approval_events: list[threading.Event],
+    ) -> None: ...
+
+
+class TaskNodeExecutor:
+    def stage(
+        self,
+        *,
+        engine: "WorkflowEngine",
+        run_id: int,
+        node: NodeRun,
+        graph: dict | None,
+        execution_targets: list[tuple[str, str, str | None]],
+        approval_events: list[threading.Event],
+    ) -> None:
+        node.status = "running"
+        node.log = "실행 중"
+        command = _extract_node_command(graph, node.node_id)
+        execution_targets.append((node.node_id, node.node_name, command))
+
+
+class HumanGateNodeExecutor:
+    def stage(
+        self,
+        *,
+        engine: "WorkflowEngine",
+        run_id: int,
+        node: NodeRun,
+        graph: dict | None,
+        execution_targets: list[tuple[str, str, str | None]],
+        approval_events: list[threading.Event],
+    ) -> None:
+        node.status = "approval_pending"
+        node.log = "승인 대기 중"
+        approval_event = engine._get_approval_event(run_id, node.node_id)
+        approval_event.clear()
+        approval_events.append(approval_event)
+
+
+class ExecutorRegistry:
+    def __init__(self) -> None:
+        self._executors: dict[str, NodeExecutor] = {
+            "task": TaskNodeExecutor(),
+            "human_gate": HumanGateNodeExecutor(),
+        }
+
+    def register(self, node_type: str, executor: NodeExecutor) -> None:
+        key = node_type.strip().lower()
+        if key:
+            self._executors[key] = executor
+
+    def resolve(self, node_type: str) -> NodeExecutor:
+        key = node_type.strip().lower()
+        return self._executors.get(key, self._executors["task"])
+
+
 class WorkflowEngine:
     def __init__(self) -> None:
         self.workspace = WorkspaceService()
         self.agent_runner = AgentRunner()
         self.lock_provider = LockProviderFactory.create()
+        self.executor_registry = ExecutorRegistry()
 
         self._engine_guard = threading.Lock()
         self._workers: dict[int, threading.Thread] = {}
@@ -328,7 +459,12 @@ class WorkflowEngine:
             artifact_path = (node.artifact_path or "").strip()
             if not artifact_path:
                 continue
-            if not Path(artifact_path).is_file():
+            try:
+                artifact_exists = Path(artifact_path).is_file()
+            except OSError as exc:
+                missing.append((node.node_id, f"{artifact_path} (os-error: {exc.__class__.__name__})"))
+                continue
+            if not artifact_exists:
                 missing.append((node.node_id, artifact_path))
         return missing
 
@@ -522,7 +658,9 @@ class WorkflowEngine:
                         break
 
                     workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == run.workflow_id).first()
-                    graph = workflow.graph if workflow else {}
+                    graph, used_fallback_graph = _normalize_workflow_graph(workflow.graph if workflow else None)
+                    if workflow and used_fallback_graph:
+                        workflow.graph = graph
                     nodes = self._load_locked_nodes(db, run.id)
                     if not nodes:
                         run.status = "done"
@@ -568,8 +706,7 @@ class WorkflowEngine:
 
                     if runnable:
                         paused_by_budget = False
-                        queued_human_gate: list[NodeRun] = []
-                        queued_tasks: list[NodeRun] = []
+                        approval_events: list[threading.Event] = []
                         for candidate in sorted(runnable, key=lambda item: item.sequence):
                             count, budget = self._record_node_iteration(run.id, candidate.node_id)
                             if count > budget:
@@ -579,32 +716,27 @@ class WorkflowEngine:
                                 run.status = "paused"
                                 paused_by_budget = True
                                 break
-                            if _extract_node_type(graph, candidate.node_id) == "human_gate":
-                                queued_human_gate.append(candidate)
-                            else:
-                                queued_tasks.append(candidate)
+                            node_type = _extract_node_type(graph, candidate.node_id)
+                            executor = self.executor_registry.resolve(node_type)
+                            executor.stage(
+                                engine=self,
+                                run_id=run.id,
+                                node=candidate,
+                                graph=graph,
+                                execution_targets=execution_targets,
+                                approval_events=approval_events,
+                            )
 
                         if paused_by_budget:
                             db.commit()
                             break
 
-                        for gate_node in queued_human_gate:
-                            gate_node.status = "approval_pending"
-                            gate_node.log = "승인 대기 중"
-                            approval_event = self._get_approval_event(run.id, gate_node.node_id)
-                            approval_event.clear()
-                            if wait_for_approval_event is None:
-                                wait_for_approval_event = approval_event
+                        if wait_for_approval_event is None and approval_events:
+                            wait_for_approval_event = approval_events[0]
 
-                        for task_node in queued_tasks:
-                            task_node.status = "running"
-                            task_node.log = "실행 중"
-                            command = _extract_node_command(graph, task_node.node_id)
-                            execution_targets.append((task_node.node_id, task_node.node_name, command))
-
-                        if queued_tasks:
+                        if execution_targets:
                             run.status = "running"
-                        elif queued_human_gate:
+                        elif approval_events:
                             run.status = "waiting"
                         db.commit()
                     else:
@@ -644,8 +776,10 @@ class WorkflowEngine:
             self._clear_run_runtime_state(run_id)
 
     def create_run(self, db: Session, workflow: WorkflowDefinition) -> WorkflowRun:
-        graph = workflow.graph or {}
+        graph, used_fallback_graph = _normalize_workflow_graph(workflow.graph if isinstance(workflow.graph, dict) else None)
         nodes = graph.get("nodes", [])
+        if used_fallback_graph:
+            workflow.graph = graph
 
         run = WorkflowRun(workflow_id=workflow.id, status="queued")
         db.add(run)
@@ -942,8 +1076,13 @@ class WorkflowEngine:
 
             resume_precondition_errors: list[str] = []
             run_workspace_path = self.workspace.root / "main" / "runs" / str(run.id)
-            if not run_workspace_path.exists():
-                resume_precondition_errors.append(f"workspace missing: {run_workspace_path}")
+            try:
+                if not run_workspace_path.exists():
+                    resume_precondition_errors.append(f"workspace missing: {run_workspace_path}")
+            except OSError as exc:
+                resume_precondition_errors.append(
+                    f"workspace access failed: {run_workspace_path} ({exc.__class__.__name__})"
+                )
 
             missing_artifacts = self._collect_missing_resume_artifacts(nodes)
             if missing_artifacts:

@@ -859,7 +859,15 @@ def resume_run(run_id: int, db: Session = Depends(get_db)):
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        detail = str(exc)
+        latest = _load_run_or_404(db, run_id)
+        if detail == "run is not paused" and latest.status == "running":
+            return latest
+        if detail.startswith("resume failed:") and latest.status == "failed":
+            _bump_stream_generation(latest.workflow_id)
+            return latest
+        raise HTTPException(status_code=409, detail=detail) from exc
+    _bump_stream_generation(updated.workflow_id)
     return updated
 
 

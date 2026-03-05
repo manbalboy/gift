@@ -33,6 +33,12 @@ def _parse_ports_csv(value: str) -> set[int]:
     return parsed
 
 
+def _port_range(start: int, end: int) -> set[int]:
+    if start > end:
+        start, end = end, start
+    return {port for port in range(start, end + 1) if 1 <= port <= 65535}
+
+
 class Settings:
     app_name: str = "DevFlow Agent Hub API"
     api_prefix: str = "/api"
@@ -137,7 +143,13 @@ class Settings:
 
     @property
     def spoof_guard_ports(self) -> set[int]:
-        return _parse_ports_csv(self.localhost_spoof_guard_ports)
+        parsed = _parse_ports_csv(self.localhost_spoof_guard_ports)
+        if parsed:
+            return parsed
+        fallback = _port_range(self.preview_protected_port_start, self.preview_protected_port_end)
+        if fallback:
+            return fallback
+        return _port_range(3100, 3199)
 
 
 settings = Settings()

@@ -245,3 +245,11 @@ def test_localhost_spoof_guard_ports_are_configurable(monkeypatch):
         },
     )
     assert allowed.status_code == 200
+
+
+def test_localhost_spoof_guard_ports_fallback_to_preview_range_when_invalid(monkeypatch):
+    monkeypatch.setattr(settings, "localhost_spoof_guard_ports", "invalid,abc-def")
+    monkeypatch.setattr(settings, "preview_protected_port_start", 3104)
+    monkeypatch.setattr(settings, "preview_protected_port_end", 3106)
+
+    assert settings.spoof_guard_ports == {3104, 3105, 3106}
