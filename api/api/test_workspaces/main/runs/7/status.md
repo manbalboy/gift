@@ -1,6 +1,11 @@
 # Human Gate Status Log
 
-## 2026-03-05T02:30:47.192164+00:00 · rejected
+## 2026-03-05T11:30:00+00:00 · approved
 - node_id: review
 - decided_by: reviewer@main
-- payload: {"decision": "rejected", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+- payload: {"workspace_id": "main", "tag": "inside"}
+
+## 2026-03-04T22:30:00+00:00 · approved
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"workspace_id": "main", "tag": "outside"}

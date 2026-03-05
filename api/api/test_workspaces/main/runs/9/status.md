@@ -9,3 +9,13 @@
 - node_id: review
 - decided_by: admin@main
 - payload: {"workspace_id": "main", "memo": "retry"}
+
+## 2026-03-05T03:15:46.126160+00:00 · approved
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"decision": "approved", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+
+## 2026-03-05T03:19:39.652673+00:00 · approved
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"decision": "approved", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
