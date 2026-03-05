@@ -20,3 +20,9 @@ npm run dev
 ```bash
 PYTHONPATH=api .venv/bin/pytest -q api/tests
 ```
+
+포트 충돌(3100 점유) 통합 검증:
+
+```bash
+./scripts/test-port-collision.sh
+```
