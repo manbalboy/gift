@@ -91,8 +91,8 @@ class LoopSimulator:
         self._safe_mode_reason: str | None = None
         resolved_max_loop_count = settings.loop_max_loop_count if max_loop_count is None else max_loop_count
         resolved_budget_limit = settings.loop_budget_limit if budget_limit is None else budget_limit
-        self._max_loop_count = max(1, int(resolved_max_loop_count))
-        self._budget_limit = max(1, int(resolved_budget_limit))
+        self._max_loop_count = int(resolved_max_loop_count)
+        self._budget_limit = int(resolved_budget_limit)
         self._consumed_budget = 0
         self._started_at: datetime | None = None
         self._updated_at = datetime.now(timezone.utc)
@@ -120,6 +120,40 @@ class LoopSimulator:
 
             if self._thread and self._thread.is_alive() and self._mode == "paused":
                 return self._resume_locked()
+
+            if self._max_loop_count <= 0:
+                self._mode = "stopped"
+                self._current_stage = None
+                self._stop_event.set()
+                self._pause_event.set()
+                self._handle_pending_instructions_on_stop_locked(dropped_reason="invalid_max_loop_count")
+                self._emit_lifecycle_alert_locked(
+                    code="LOOP_START_REJECTED_MAX_LOOP_COUNT",
+                    message=(
+                        f"max_loop_count({self._max_loop_count})가 유효하지 않아 "
+                        "Loop Engine 시작을 거부하고 안전 정지합니다."
+                    ),
+                    level="error",
+                )
+                self._release_execution_lock_locked()
+                return self._snapshot_locked().to_payload()
+
+            if self._budget_limit <= 0:
+                self._mode = "stopped"
+                self._current_stage = None
+                self._stop_event.set()
+                self._pause_event.set()
+                self._handle_pending_instructions_on_stop_locked(dropped_reason="invalid_budget_limit")
+                self._emit_lifecycle_alert_locked(
+                    code="LOOP_START_REJECTED_BUDGET_LIMIT",
+                    message=(
+                        f"budget_limit({self._budget_limit})가 유효하지 않아 "
+                        "Loop Engine 시작을 거부하고 안전 정지합니다."
+                    ),
+                    level="error",
+                )
+                self._release_execution_lock_locked()
+                return self._snapshot_locked().to_payload()
 
             self._stop_event = Event()
             self._pause_event = Event()
@@ -332,6 +366,7 @@ class LoopSimulator:
                 self._current_stage = None
                 self._stop_event.set()
                 self._pause_event.set()
+                self._handle_pending_instructions_on_stop_locked(dropped_reason="max_loop_count_reached")
                 self._emit_lifecycle_alert_locked(
                     code="LOOP_MAX_LOOP_COUNT_REACHED",
                     message=(
@@ -346,6 +381,7 @@ class LoopSimulator:
                 self._current_stage = None
                 self._stop_event.set()
                 self._pause_event.set()
+                self._handle_pending_instructions_on_stop_locked(dropped_reason="budget_limit_reached")
                 self._emit_lifecycle_alert_locked(
                     code="LOOP_BUDGET_LIMIT_REACHED",
                     message=(
@@ -356,6 +392,28 @@ class LoopSimulator:
                 )
                 return False
             return True
+
+    def _handle_pending_instructions_on_stop_locked(self, *, dropped_reason: str) -> None:
+        if not self._pending_instructions:
+            return
+        dropped_at = datetime.now(timezone.utc)
+        while self._pending_instructions:
+            instruction_id, instruction = self._pending_instructions.popleft()
+            tracked = self._instruction_statuses.get(instruction_id)
+            if tracked is None:
+                tracked = InstructionStatus(
+                    id=instruction_id,
+                    instruction=instruction,
+                    status="queued",
+                    queued_at=dropped_at,
+                    updated_at=dropped_at,
+                )
+            tracked.status = "dropped"
+            tracked.updated_at = dropped_at
+            tracked.dropped_reason = dropped_reason
+            self._instruction_statuses[instruction_id] = tracked
+            self._instruction_statuses.move_to_end(instruction_id)
+        self._trim_instruction_statuses_locked()
 
     def _is_paused(self) -> bool:
         with self._lock:

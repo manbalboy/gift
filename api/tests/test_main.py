@@ -12,15 +12,12 @@ from .conftest import client
         "http://localhost",
         "https://localhost",
         "http://localhost:3109",
-        "http://localhost:7000",
         "http://127.0.0.1",
         "https://127.0.0.1:3101",
         "https://127.0.0.1:3199",
-        "https://127.0.0.1:7099",
         "https://manbalboy.com",
         "http://manbalboy.com:3102",
         "http://ssh.manbalboy.com:3105",
-        "http://ssh.manbalboy.com:7008",
     ],
 )
 def test_cors_allows_expected_origins(origin: str):

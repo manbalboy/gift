@@ -1673,6 +1673,21 @@ select {
   padding: var(--space-24);
 }
 
+.error-log-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+}
+
+.error-log-export-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: wrap;
+}
+
 .error-log-detail {
   margin: 0;
   max-height: 260px;
@@ -1892,6 +1907,15 @@ select {
 
   .error-log-pagination .btn {
     height: 44px;
+  }
+
+  .error-log-export-actions {
+    width: 100%;
+  }
+
+  .error-log-export-actions .btn {
+    flex: 1;
+    min-height: 44px;
   }
 }
 

@@ -3,7 +3,9 @@ import { useEffect, useMemo, useState } from 'react';
 const MAX_VISIBLE_LOG_CHARS = 5000;
 const EXPANDED_LOG_PAGE_CHARS = 12000;
 const EMPTY_LOG_FALLBACK = 'No logs available';
-const GRAPHEME_FALLBACK_PATTERN = /\p{Extended_Pictographic}(?:\u200D\p{Extended_Pictographic})*|\P{Mark}\p{Mark}*|./gu;
+const DOWNLOAD_CHUNK_CHARS = 64 * 1024;
+const GRAPHEME_FALLBACK_PATTERN =
+  /(?:\p{Regional_Indicator}{2})|(?:[#*0-9]\uFE0F?\u20E3)|(?:\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\p{Emoji_Modifier})?)*)|(?:\P{Mark}\p{Mark}*)|(?:\p{Mark}+)|./gu;
 
 type Props = {
   title: string;
@@ -22,6 +24,73 @@ async function copyToClipboard(value: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function chunkText(value: string, chunkSize = DOWNLOAD_CHUNK_CHARS): string[] {
+  if (!value) return [''];
+  const chunks: string[] = [];
+  for (let index = 0; index < value.length; index += chunkSize) {
+    chunks.push(value.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+async function writeViaFileSystemApi(filename: string, mimeType: string, extension: string, parts: string[]): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  const picker = (
+    window as Window & {
+      showSaveFilePicker?: (options: {
+        suggestedName: string;
+        types: Array<{ description: string; accept: Record<string, string[]> }>;
+      }) => Promise<{ createWritable: () => Promise<{ write: (chunk: string) => Promise<void>; close: () => Promise<void> }> }>;
+    }
+  ).showSaveFilePicker;
+  if (!picker) return false;
+  try {
+    const handle = await picker({
+      suggestedName: filename,
+      types: [
+        {
+          description: extension.toUpperCase(),
+          accept: { [mimeType]: [`.${extension}`] },
+        },
+      ],
+    });
+    const writable = await handle.createWritable();
+    for (const part of parts) {
+      await writable.write(part);
+    }
+    await writable.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function downloadLog(payload: string, format: 'txt' | 'json') {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || typeof URL === 'undefined') return;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filename = `error-log-${timestamp}.${format}`;
+  const mimeType = format === 'txt' ? 'text/plain;charset=utf-8' : 'application/json;charset=utf-8';
+  const parts =
+    format === 'txt'
+      ? chunkText(payload)
+      : [
+          '{\n  "exported_at": ',
+          JSON.stringify(new Date().toISOString()),
+          ',\n  "content": ',
+          JSON.stringify(payload),
+          '\n}\n',
+        ];
+  const saved = await writeViaFileSystemApi(filename, mimeType, format, parts);
+  if (saved) return;
+  const blob = new Blob(parts, { type: mimeType });
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(objectUrl);
 }
 
 function splitGraphemes(value: string): string[] {
@@ -105,7 +174,17 @@ export default function ErrorLogModal({
         aria-label={title}
         onClick={(event) => event.stopPropagation()}
       >
-        <h2>{title}</h2>
+        <div className="error-log-header">
+          <h2>{title}</h2>
+          <div className="error-log-export-actions" aria-label="log-export-actions">
+            <button type="button" className="btn btn-ghost" onClick={() => void downloadLog(payload, 'txt')}>
+              TXT 다운로드
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => void downloadLog(payload, 'json')}>
+              JSON 다운로드
+            </button>
+          </div>
+        </div>
         <p>{summary}</p>
         <pre className="mono error-log-detail">{expanded && isTruncated ? visiblePayload : collapsedPreview}</pre>
         {isTruncated && (

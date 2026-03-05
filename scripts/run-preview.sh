@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PREVIEW_PORT="${PREVIEW_PORT:-7000}"
-API_PORT="${API_PORT:-7001}"
+PREVIEW_PORT="${PREVIEW_PORT:-3100}"
+API_PORT="${API_PORT:-3101}"
 
 validate_port() {
   local port="$1"
@@ -10,8 +10,8 @@ validate_port() {
     echo "[run-preview] invalid port: $port" >&2
     exit 1
   fi
-  if (( port < 7000 || port > 7099 )); then
-    echo "[run-preview] port must be in 7000-7099: $port" >&2
+  if (( port < 3100 || port > 3199 )); then
+    echo "[run-preview] port must be in 3100-3199: $port" >&2
     exit 1
   fi
 }
@@ -26,8 +26,8 @@ fi
 
 echo "[run-preview] API on :$API_PORT, Web on :$PREVIEW_PORT"
 
-export DEVFLOW_PREVIEW_PROTECTED_PORT_START=7000
-export DEVFLOW_PREVIEW_PROTECTED_PORT_END=7099
+export DEVFLOW_PREVIEW_PROTECTED_PORT_START=3100
+export DEVFLOW_PREVIEW_PROTECTED_PORT_END=3199
 
 cd /app/api
 uvicorn app.main:app --host 0.0.0.0 --port "$API_PORT" &
