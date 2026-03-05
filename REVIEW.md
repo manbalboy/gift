@@ -24,8 +24,8 @@
 
 ## TODO
 
-- [ ] 프론트엔드 Artifact 뷰어에서 대용량 텍스트 데이터를 한 번에 메모리에 로드하지 않고 청크 단위로 가져오는(Chunked Loading) 로직을 구현하여 브라우저 메모리 최적화하기.
-- [ ] SSE Reconnect 시 429 에러 방지를 위해 프론트엔드 연결 재시도 로직에 Exponential Backoff(지수 백오프) 적용 검토하기.
-- [ ] `web/src/utils/sanitize.ts`의 `DOMPurify` 옵션에 `javascript:` 링크 차단 및 안전하지 않은 SVG 속성 필터링을 위한 Hook 추가하기.
-- [ ] 다중 워크스페이스 환경을 모의하여 인가(Authorization)되지 않은 사용자의 휴먼 게이트 조작 시도를 방어하는 API 보안 통합 테스트 추가하기.
-- [ ] 로컬 구동 환경에서 3108 포트 등 3100번대 네트워크 지연 또는 타임아웃 발생 시, 프론트엔드에서 Graceful하게 상태를 복구하거나 안내하는 UI 화면 렌더링 보완하기.
+- [x] 프론트엔드 Artifact 뷰어에서 대용량 텍스트 데이터를 한 번에 메모리에 로드하지 않고 청크 단위로 가져오는(Chunked Loading) 로직을 구현하여 브라우저 메모리 최적화하기.
+- [x] SSE Reconnect 시 429 에러 방지를 위해 프론트엔드 연결 재시도 로직에 Exponential Backoff(지수 백오프) 적용 검토하기.
+- [x] `web/src/utils/sanitize.ts`의 `DOMPurify` 옵션에 `javascript:` 링크 차단 및 안전하지 않은 SVG 속성 필터링을 위한 Hook 추가하기.
+- [x] 다중 워크스페이스 환경을 모의하여 인가(Authorization)되지 않은 사용자의 휴먼 게이트 조작 시도를 방어하는 API 보안 통합 테스트 추가하기.
+- [x] 로컬 구동 환경에서 3108 포트 등 3100번대 네트워크 지연 또는 타임아웃 발생 시, 프론트엔드에서 Graceful하게 상태를 복구하거나 안내하는 UI 화면 렌더링 보완하기.
