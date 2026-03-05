@@ -14,9 +14,9 @@
 - **Paused 상태 대기 스레드의 비효율적 리소스 점유:** Loop Engine이 일시정지(`paused` 또는 `safe_mode`) 상태일 때 백그라운드 스레드가 `time.sleep(0.12)`을 반복 호출하며 바쁜 대기(Busy Wait) 형태로 동작합니다. 엔진이 장기간 멈춰있을 경우 CPU의 컨텍스트 스위칭을 불필요하게 낭비하므로, `threading.Event`의 `wait()`을 활용한 블로킹 대기 방식으로 최적화해야 하는 엣지 케이스가 존재합니다.
 
 ## TODO
-- [ ] `api/app/services/loop_simulator.py` 내 `_pending_instructions` 큐에 적절한 최대 길이(`maxlen`)를 지정하여 주입된 명령어 누적에 의한 메모리 누수 방어.
-- [ ] `web/src/utils/security.ts`의 `sanitizeAlertText` 내부에 DOMPurify 등을 적용하여 XSS 페이로드(HTML/Script 태그) 완전 제거 로직 병합.
-- [ ] `web/src/utils/security.test.ts`를 수정하여 악의적인 XSS 스크립트 태그가 정상적으로 살균 및 삭제되는지 확인하는 테스트 케이스로 변경.
-- [ ] 다중 노드 무결성을 위해 Redis 락 획득 실패 시 Local Lock으로 Fallback 하지 않고, 엔진 실행을 안전하게 차단(Fail-fast)하도록 Lock Provider 분기 로직 수정.
-- [ ] API 서버(localhost:3100)를 타겟팅하여 Loop Engine 전체 생명주기를 시뮬레이션하는 `web/tests/e2e/loop-engine.spec.ts` 테스트 스크립트 신규 작성.
-- [ ] Loop Simulator의 일시정지 대기 로직을 단순 `time.sleep(0.12)` 방식에서 `threading.Event` 기반 이벤트 대기로 변경하여 불필요한 루프 최적화.
+- [x] `api/app/services/loop_simulator.py` 내 `_pending_instructions` 큐에 적절한 최대 길이(`maxlen`)를 지정하여 주입된 명령어 누적에 의한 메모리 누수 방어.
+- [x] `web/src/utils/security.ts`의 `sanitizeAlertText` 내부에 DOMPurify 등을 적용하여 XSS 페이로드(HTML/Script 태그) 완전 제거 로직 병합.
+- [x] `web/src/utils/security.test.ts`를 수정하여 악의적인 XSS 스크립트 태그가 정상적으로 살균 및 삭제되는지 확인하는 테스트 케이스로 변경.
+- [x] 다중 노드 무결성을 위해 Redis 락 획득 실패 시 Local Lock으로 Fallback 하지 않고, 엔진 실행을 안전하게 차단(Fail-fast)하도록 Lock Provider 분기 로직 수정.
+- [x] API 서버(localhost:3100)를 타겟팅하여 Loop Engine 전체 생명주기를 시뮬레이션하는 `web/tests/e2e/loop-engine.spec.ts` 테스트 스크립트 신규 작성.
+- [x] Loop Simulator의 일시정지 대기 로직을 단순 `time.sleep(0.12)` 방식에서 `threading.Event` 기반 이벤트 대기로 변경하여 불필요한 루프 최적화.
