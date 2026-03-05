@@ -3,19 +3,12 @@
 - Job: `cdb309bd-b398-4bcc-9af6-18ee6cdf0832`
 - Issue: `#71`
 - Stage: `summarize_code_changes`
-- Generated at: `2026-03-05T13:38:27.613794+00:00`
+- Generated at: `2026-03-05T14:10:56.433497+00:00`
 
 ## Changed Files
 | Status | Path | Added | Deleted |
 |---|---|---:|---:|
-| `M` | `COMMIT_MESSAGE_COMMIT_FIX.txt` | `1` | `1` |
-| `M` | `api/app/services/loop_simulator.py` | `60` | `2` |
-| `M` | `api/tests/test_loop_simulator.py` | `38` | `0` |
 | `M` | `ex-code/main` | `0` | `0` |
-| `M` | `web/src/components/ErrorLogModal.test.tsx` | `39` | `0` |
-| `M` | `web/src/components/ErrorLogModal.tsx` | `35` | `1` |
-| `M` | `web/src/styles/app.css` | `24` | `0` |
-| `??` | `scripts/run-api-31xx.sh` | `-` | `-` |
 
 ## Notes
 - 본 문서는 구현 직후 변경 파일을 빠르게 검토하기 위한 자동 요약입니다.
