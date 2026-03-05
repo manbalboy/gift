@@ -1,23 +1,26 @@
+```markdown
 # REVIEW
 
 ## Functional bugs
-- `PLAN.md`의 [P3] 고도화 플랜에 명시된 "로그 목록 가상화(Virtualization) 도입"이 현재 `SystemAlertWidget.tsx` 컴포넌트 내에 구현되어 있지 않습니다. 수천 건 이상의 로그 누적 시 DOM 노드 급증으로 인한 브라우저 렌더링 부하를 구조적으로 해결하기 위해 윈도잉(Windowing) 기법 적용이 필요합니다.
-- [P3] 고도화 플랜에 명시된 "주요 키워드(문서 URL, 티켓 번호) 하이라이팅 파서" 기능이 누락되었습니다. 단순 XSS 살균과 시크릿 마스킹은 정상 작동하지만, 대응 가이드 문서 등의 `http/https` 링크를 클릭 가능한 안전한 외부 앵커(`<a>`) 태그로 변환하는 기능이 반영되어야 합니다.
+- **가상화 리스트 높이 계산 오류 가능성:** `SystemAlertWidget.tsx` 내에서 아이템의 높이를 `ESTIMATED_ALERT_ROW_HEIGHT`(116px)로 고정하여 스크롤 위치(`startIndex`, `visibleCount` 등)를 계산하고 있습니다. 긴 로그 메시지가 Word-wrap 되어 개별 아이템 높이가 116px를 초과하는 가변 높이 환경(특히 모바일 환경)에서는, 실제 스크롤된 거리와 인덱스 계산이 어긋나 화면에 아이템이 보이지 않거나 빈 공간(`spacer`)의 높이가 과도하게 잡히는 렌더링 버그가 발생할 수 있습니다.
 
 ## Security concerns
-- 악성 스크립트를 방어하기 위한 텍스트 살균(Sanitization) 및 시크릿 토큰 치환 처리(`MASKED_TOKEN`)는 목표한 바와 같이 안전하게 동작합니다.
-- 단, 현재 `SystemAlertWidget.tsx` 내부에 강하게 결합된 살균 및 마스킹 정규식 로직을 프로젝트 공통 보안 유틸리티 모듈로 분리하여 관리하면, 향후 다른 대시보드 위젯에서의 재사용성과 보안 정책 일관성을 유지하는 데 도움이 됩니다.
+- **XSS 및 링크 파서 우회 우려:** `alertHighlighter.ts`의 `toSafeExternalUrl` 함수를 통해 `http:`와 `https:` 외의 프로토콜(`javascript:`, `data:` 등)을 효과적으로 방어하고 있으며, React의 특성 상 기본적인 텍스트 이스케이프 처리가 적용되어 비교적 안전합니다. 
+- 하지만 기존 `security.ts`의 `MASKED_TOKEN` 치환 로직 이후에 하이라이터가 동작하는 구조상, 특수 제어 문자와 이스케이프 문자가 기형적으로 결합된 복합 페이로드를 삽입했을 때 정규식을 우회하여 잘못된 외부 링크를 생성할 여지가 있는지에 대한 심층적인(Defense-in-depth) 검토가 필요합니다.
 
 ## Missing tests / weak test coverage
-- 포트 3100 격리 환경에서 진행되는 XSS 방어 단언, `useMemo` 필터 성능 테스트, 백그라운드 탭 동기화 테스트 등 MVP에서 요구한 단위/E2E 테스트 시나리오는 훌륭하게 달성되었습니다.
-- 추가적인 보완점으로는, OS(Windows/Mac) 간 마우스 휠 가속도 설정이나 스크롤바 레이아웃 영역 차이에 따른 Throttle 오작동 위험을 완벽히 커버하기 위한 크로스 환경 모사 E2E 테스트(예: Playwright에서 마우스 휠 이벤트를 다양한 가속도로 시뮬레이션)가 일부 미흡합니다.
+- **복합 악성 데이터 검증 누락:** `PLAN.md`의 테스트 전략(Test Strategy)에 명시된 "XSS 페이로드 및 시크릿 키 복합 데이터 주입"에 대한 단위 테스트가 현재 `security.test.ts` 및 `alertHighlighter.test.ts`에 포함되어 있지 않습니다.
+- **가변 높이 윈도잉 렌더링 테스트 부족:** Playwright 기반 E2E 테스트(`system-alert.spec.ts`)에서 긴 문자열이 가로로 이탈하지 않는지(레이아웃 붕괴)는 확인하고 있으나, 대량(수만 건)의 로그 중 "높이가 각기 다른" 알림 아이템들이 섞여 있을 때 가상화 스크롤이 끊기거나(Scroll Jumping) 스크롤 위치가 튀는 현상에 대한 E2E 시나리오가 부재합니다.
 
 ## Edge cases
-- 아주 짧은 시간(밀리초 단위)에 대량의 시스템 알림이 폭포수처럼 생성될 경우, 설정된 Throttle 주기(80ms)와 겹쳐 찰나의 차이로 `isAutoScrollPaused` 상태가 오판되거나 스크롤이 하단에 즉시 달라붙지 못하는 엣지 케이스가 존재할 수 있습니다.
-- 브라우저 디스플레이 비율을 극단적으로 확대(예: 300% 이상)할 경우, 브라우저 엔진에 따라 계산 오차가 커져 현재 고정된 `bottomThreshold`(16px) 범위를 간헐적으로 초과할 가능성이 있습니다. 확대 비율을 감안한 유동적 여유값 산정 검토가 필요합니다.
+- **`visualViewport` 미지원 환경 예외 처리:** 브라우저의 렌더링 오차를 잡기 위해 `window.visualViewport?.scale`을 참조해 동적으로 여유값(`bottomThreshold`)을 조절하는 로직은 훌륭합니다. 하지만 `visualViewport` API를 완벽하게 지원하지 않는 일부 특수 환경(WebView 내장 브라우저 등)에서는 기본값 `16px`로 고정되므로, 디바이스 자체의 텍스트 배율을 극단적으로 키웠을 때(300% 이상) 스크롤 하단 자동 고정 감지(PAUSED 전환)가 너무 민감하게 반응할 수 있습니다.
+- **복잡한 구두점과 괄호가 포함된 URL 파싱:** 로그 메시지 내에 괄호로 둘러싸인 외부 링크(예: `(참고: https://example.com/guide/12)` ) 혹은 URL 쿼리 파라미터 끝에 마침표나 쉼표가 여러 개 붙은 경우, `stripTrailingPunctuation` 정규식이 실제 링크의 일부(예: `?version=1.2`)를 구두점으로 잘못 판단하여 링크를 자를 수 있는 엣지 케이스가 존재합니다.
 
-## TODO
-- [ ] 대규모 데이터 렌더링 프레임 드랍 방지를 위해 로그 목록 리스트 컨테이너에 가상화(Virtualization/Windowing) 도입.
-- [ ] 로그 내 `http/https` 링크 및 정의된 티켓 패턴 등을 제한적이고 안전한 클릭 가능한 외부 앵커(`<a>`)로 렌더링하는 하이라이팅 파서 추가.
-- [ ] 연속적인 대량 알림 수신 상황 및 극단적인 브라우저 배율 환경에서도 안정적인 최하단 스크롤 인식을 보장하기 위해 `bottomThreshold` 수치 및 Throttle 로직 튜닝.
-- [ ] `SystemAlertWidget` 내부의 텍스트 살균 로직(`sanitizeAlertText`)을 프로젝트 공통 유틸리티(utils) 영역으로 리팩토링 및 분리.
+---
+
+## TODO checklist
+- [ ] `web/src/utils/security.test.ts` 내에 XSS 공격 페이로드와 시스템 시크릿 키가 혼합된 텍스트에 대한 방어 검증 테스트를 추가할 것.
+- [ ] `web/src/utils/alertHighlighter.test.ts` 내에 URL 뒷부분에 다중 구두점 및 괄호가 섞인 엣지 케이스(`http://test.com/api?v=1.0.` 등) 파싱 테스트를 추가할 것.
+- [ ] `SystemAlertWidget.tsx`의 가상화 로직(Virtualization)이 가변 높이(Dynamic Item Height)를 안전하게 지원할 수 있도록 `ResizeObserver`를 활용한 캐시된 아이템 높이 매핑 방식을 도입하거나, 검증된 가상화 렌더링 라이브러리 연동을 재검토할 것.
+- [ ] 개발 서버 실행 시 3100 포트 환경(`PORT=3100 npm run dev` 등)에서 대량의 더미 로그를 주입한 뒤, 동적 높이 아이템들이 연속으로 스크롤될 때 브라우저 프레임 드랍이 없는지 실제 테스트를 거칠 것.
+```
