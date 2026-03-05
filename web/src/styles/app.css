@@ -873,6 +873,9 @@ select {
 .system-alert-list {
   display: grid;
   gap: var(--space-8);
+  max-height: min(44vh, 320px);
+  overflow-y: auto;
+  padding-right: var(--space-4);
 }
 
 .system-alert-item {
@@ -1194,6 +1197,10 @@ select {
 }
 
 @media (max-width: 767px) {
+  .system-alert-list {
+    max-height: min(52vh, 360px);
+  }
+
   .toast {
     grid-template-columns: 4px minmax(0, 1fr) auto;
   }
