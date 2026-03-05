@@ -8,8 +8,12 @@
 - Health URL: http://127.0.0.1:7002/
 
 ## Screenshot Artifacts
-- PC: `artifacts/ux/pc.png` (captured) - Desktop Chrome capture completed
-- Mobile: `artifacts/ux/mobile.png` (captured) - iPhone 13 capture completed
+- PC: `artifacts/ux/pc.png` (failed) - ux screenshot capture (pc) failed with exit code 1. Next action: run the logged command manually in the same repository directory and verify CLI login/state. stderr preview: Error: net::ERR_SOCKET_NOT_CONNECTED at http://127.0.0.1:7002/
+Call log:
+  - navigating to "http://127.0.0.1:7002/", waiting until "load"
+- Mobile: `artifacts/ux/mobile.png` (failed) - ux screenshot capture (mobile) failed with exit code 1. Next action: run the logged command manually in the same repository directory and verify CLI login/state. stderr preview: Error: Error receiving data: Connection reset by peer
+Call log:
+  - navigating to "http://127.0.0.1:7002/", waiting until "load"
 
 ## Intent Checklist (from SPEC)
 - Repository: manbalboy/agent-hub
