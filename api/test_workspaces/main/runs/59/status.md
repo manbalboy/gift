@@ -469,3 +469,13 @@
 - node_id: review
 - decided_by: reviewer@main
 - payload: {"approval_id": 125, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+
+## 2026-03-05T08:39:03.752761+00:00 · cancelled
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"approval_id": 125, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+
+## 2026-03-05T08:39:03.851613+00:00 · cancelled
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"approval_id": 125, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
