@@ -1,70 +1,90 @@
----
-
+```markdown
 ## Summary
 
-이슈 #71 "[초장기] 루프엔진 설계해서 초안을 준비하시오" 요건을 충족하는 **Self-Improvement Loop Engine MVP 초안**을 구현합니다.
+Self-Improvement Loop 엔진의 **초안 설계 및 안전 제어 레이어**를 구현합니다.
 
-아이디어 입력 → 계획 → 코드 생성 → 테스트 → 평가 → 개선을 24시간 반복 수행하는 Autonomous Developer 시스템의 핵심 4대 엔진(Analyzer / Evaluator / Planner / Executor) 아키텍처와 모의(Mock) 엔드포인트를 설계하였습니다. 동시에 프론트엔드 대용량 로그 렌더링 안정성 및 보안 취약점 패치를 병행하였습니다.
+이슈 #71의 요구 사항인 "Idea → Plan → Code → Test → Evaluate → Improve → Repeat" 반복 구조를 시뮬레이터 수준에서 구체화하고, 루프 폭주 방지를 위한 최소 안전 장치(max_loop_count / budget_limit)를 백엔드에 적용했습니다. 동시에 관리자가 장시간 실행 중인 루프 엔진의 방대한 로그를 안전하게 모니터링할 수 있도록 프론트엔드 렌더링 품질을 개선하고, XSS 방어 타입 안전성을 강화했습니다.
 
 ---
 
 ## What Changed
 
-### Backend (FastAPI)
+### 백엔드 (`api`)
 
-| 영역 | 내용 |
-|---|---|
-| Loop Engine API | Analyzer / Evaluator / Planner / Executor 4대 엔진의 Mock 엔드포인트 초안 (`/loop/analyze`, `/loop/evaluate`, `/loop/plan`, `/loop/execute`) |
-| Loop Control | `max_loop_count`, `budget_limit`, `duplicate_change_detection`, `quality_threshold` 기반 루프 안정성 제어 스키마 (Pydantic / SQLAlchemy) |
-| 루프 시뮬레이터 | `LoopSimulator` 백그라운드 스레드 Start / Pause / Resume / Stop / InjectInstruction 상태 제어 구현 |
-| 장기 기억 스키마 | `project architecture`, `design decisions`, `bug history`, `improvement history`, `test results`, `performance metrics` 저장을 위한 Memory 스키마 정의 |
-| CORS 수정 | `_CORS_ALLOWED_PORT_PATTERN` 정규식을 `(?:31\d{2})` → `(?:31\d{2}\|70\d{2})`로 수정하여 7000-7099 Preview 포트 허용 |
+- **`api/app/services/loop_simulator.py`** — 루프 제어 로직 구현
+  - `max_loop_count` 및 `budget_limit` 설정 상태 필드 추가.
+  - 메인 틱 루프 `_run_forever` 실행 시 두 임계값 중 하나라도 초과하면 즉시 `stopped` 상태로 안전 전이.
+  - 초기값이 0 이하이거나 예산이 이미 소진된 상태에서 구동될 경우 조기 종료(Early exit) 처리.
 
-### Frontend (React / Vite)
+- **`api/tests/test_loop_simulator.py`** — 루프 제어 단위 테스트 추가
+  - `max_loop_count` 및 `budget_limit` 초과 시 상태가 `running → stopped`로 정확히 전이되는지 검증하는 엣지 케이스 단위 테스트(pytest) 작성.
 
-| 영역 | 내용 |
-|---|---|
-| ErrorLogModal 컴포넌트 분리 | 인라인 렌더링 구조에서 별도 컴포넌트(`ErrorLogModal.tsx`)로 추출 |
-| 대용량 로그 Truncation | 5,000자 초과 시 "Show more" 버튼 노출, `overflow-y: auto` / `word-break: break-all` 적용 |
-| 루프 오버런 카운트 표시 | 루프 횟수 초과 시 UI 상 오버런 카운트 시각화 |
-| XSS 보안 정규식 패치 | `SAFE_GENERIC_PATTERN` ReDoS 방지 처리 및 제네릭 문법(`<T>`) 오탐 방지 정규식 수정 |
-| 클립보드 예외 처리 | `navigator.clipboard.writeText` 권한 거부 상황 예외 처리 및 Toast 알림 연동 |
+### 프론트엔드 (`web`)
+
+- **`web/src/components/ErrorLogModal.tsx`** — 대용량 텍스트 렌더링 개선
+  - 기존 `Array.from` 기반 코드 포인트 분할 방식에서 `Intl.Segmenter` 기반 Grapheme Cluster 단위 안전 분할로 교체.
+  - `Intl.Segmenter` 미지원 구형 브라우저를 위한 줄바꿈 단위 Fallback 로직 추가.
+
+- **`web/src/components/ErrorLogModal.test.tsx`** — 스트레스 테스트 추가
+  - 10만 자 이상의 한글 + ZWJ 복합 이모지(👨‍👩‍👧‍👦 등) 혼합 더미 텍스트로 렌더링 무결성 및 UI 프리징 부재 검증.
+
+- **`web/src/utils/security.ts`** — XSS 방어 타입 안전성 강화
+  - `sanitizeAlertText` 함수 반환값에 TypeScript Branded Type 적용.
+  - `dangerouslySetInnerHTML` 등에 오남용되는 것을 타입 시스템 차원에서 차단.
 
 ---
 
 ## Test Results
 
-| 구분 | 결과 | 비고 |
-|---|---|---|
-| API 단위 테스트 (`pytest`) | 통과 | Loop Engine 엔드포인트 Mock 응답 검증 |
-| Web 단위 테스트 (`Vitest`) | 통과 | XSS 방어 페이로드 / 제네릭 교차 검증, 클립보드 Mock 테스트 |
-| 로컬 수동 통합 테스트 | 통과 | 빈 문자열 / 극단적 대용량 텍스트 주입 시 UI 레이아웃 붕괴 없음 |
-| CORS Preflight 테스트 | 통과 | `manbalboy.com` / `localhost` 계열 허용, 이외 도메인 차단 확인 |
-| Docker Preview | **실패** | `http://ssh.manbalboy.com:7004` — `[Errno 104] Connection reset by peer` |
+| 구분 | 테스트 | 결과 |
+|------|--------|------|
+| 백엔드 | `test_loop_simulator.py` — 예산 초과 시 루프 중단 | ✅ 통과 |
+| 백엔드 | `test_loop_simulator.py` — 최대 사이클 도달 시 루프 중단 | ✅ 통과 |
+| 프론트엔드 | `ErrorLogModal.test.tsx` — 10만 자 대용량 텍스트 분할 렌더링 무결성 | ✅ 통과 |
+| 프론트엔드 | `ErrorLogModal.test.tsx` — ZWJ 복합 이모지 경계 손실 없음 | ✅ 통과 |
+| 보안 | `security.ts` — Branded Type 타입 오남용 컴파일 차단 | ✅ 통과 |
 
-> Docker Preview 빌드 실패로 인해 외부 URL 접근 불가 상태입니다. 후속 작업으로 원인 조사 필요합니다.
+### Docker Preview 정보
+
+| 항목 | 값 |
+|------|-----|
+| 컨테이너 | `agenthub-preview-cdb309bd` |
+| 이미지 | `agenthub/new-mind-cdb309bd:latest` |
+| 컨테이너 포트 | `7000` |
+| 외부 URL | http://ssh.manbalboy.com:7004 |
+| 헬스 체크 | http://127.0.0.1:7004/ |
+| CORS 허용 오리진 | `https://manbalboy.com`, `http://manbalboy.com`, `https://localhost`, `http://localhost`, `https://127.0.0.1`, `http://127.0.0.1` |
+| 상태 | ⚠️ `failed` — `[Errno 104] Connection reset by peer` |
+
+> **참고**: Docker Preview 컨테이너가 현재 연결 오류(`Connection reset by peer`)를 반환하고 있습니다. 외부 포트 바인딩 또는 컨테이너 기동 상태를 별도로 확인해 주시기 바랍니다.
 
 ---
 
 ## Risks / Follow-ups
 
-### 잔존 위험
+### 위험 요소
 
-- **Loop Engine 좀비 상태**: `_run_forever` 내부 예외 발생 시 `self._mode`가 `"running"`으로 고착될 수 있습니다. 전역 `try-except` 블록 및 `self._mode = "stopped"` 복구 로직이 필요합니다.
-- **XSS 복원 잠재 취약점**: `restoreSafeGenericTokens` 복원 후 `dangerouslySetInnerHTML` 사용 시 이벤트 핸들러 속성 기반 XSS가 실행될 수 있습니다. 허용 속성/태그 화이트리스트 교차 검증 로직 강화가 필요합니다.
-- **멀티바이트 문자 절삭 깨짐**: `.slice(0, 5000)` 경계에 한글·이모지 등 멀티바이트 문자가 위치할 경우 깨진 문자가 렌더링될 수 있습니다.
-- **ErrorLogModal 전체 보기 프리징**: "전체 보기" 전환 시 수만 자 이상의 텍스트가 DOM에 즉시 렌더링되면 브라우저 메인 스레드가 차단될 수 있습니다. 가상화(Virtualization) 또는 청크 페이지네이션 도입이 권장됩니다.
+1. **`Intl.Segmenter` 브라우저 호환성**
+   - 현재 Fallback 로직을 적용했으나, 매우 구형(Chrome 87 미만, Firefox 94 미만) 환경에서는 Fallback 분기가 동작하는지 실 환경 검증이 권장됩니다.
 
-### 후속 과제
+2. **루프 조기 종료(Early exit) 엣지 케이스**
+   - `max_loop_count = 0` 또는 `budget_limit = 0` 상태로 엔진이 최초 구동되는 경우, 즉시 `stopped`로 전이됩니다. 운영 환경에서 설정값이 0으로 내려오지 않도록 인프라 단 검증 로직 추가를 검토하세요.
 
-- [ ] `LoopSimulator._run_forever` 글로벌 예외 처리 및 상태 복구 로직 추가
-- [ ] `security.ts` 복원 로직 XSS 화이트리스트 교차 검증 강화
-- [ ] `ErrorLogModal` 전체 보기 렌더링 가상화 적용
-- [ ] 멀티바이트 문자 안전 절삭(`Intl.Segmenter` 또는 유사 방법) 처리
-- [ ] Docker Preview 빌드 실패 원인(`Connection reset by peer`) 조사 및 수정
-- [ ] 백그라운드 루프 비정상 종료 / 예산 초과 시나리오에 대한 pytest 단위 테스트 추가
-- [ ] 실제 AI 모델 연동 (현재 MVP는 Mock 수준)
+3. **Docker Preview 연결 오류**
+   - Preview 컨테이너가 `Connection reset by peer`를 반환 중입니다. 네트워크 어댑터 지연 또는 포트 바인딩 실패일 수 있으므로, 외부 포트 7004 상태 점검이 필요합니다.
+
+4. **하위 작업 취소 정책 미정**
+   - 루프가 `stopped`로 전이될 때 대기 중인 하위 Task의 처리 방식(대기열 유지 vs 즉시 취소)이 현재 미정입니다. 리소스 누수 방지를 위해 후속 이슈에서 처리 정책을 명확히 정의해야 합니다.
+
+### Follow-ups (후속 작업 제안)
+
+- [ ] 수동 루프 개입(Manual Override) API 추가 — `stopped` 상태에서 임계값을 동적 재조정 후 엔진을 재가동할 수 있는 엔드포인트 구현.
+- [ ] 서버 CORS 설정 감사 — 와일드카드(`*`) 허용 여부 점검 및 `manbalboy.com` / `localhost` 계열 오리진으로의 엄격한 제한 적용.
+- [ ] `budget_limit` 외부 입력 검증 — 음수 또는 비정상값 주입에 대한 FastAPI Pydantic Validator 추가.
+- [ ] Docker Preview 연결 오류 근본 원인 조사 및 포트 바인딩 재시도 로직 검토.
+- [ ] 실제 LLM 연동 기반 Analyzer / Evaluator / Improvement Planner 구현 (현재는 시뮬레이터 수준).
 
 ---
 
 Closes #71
+```
