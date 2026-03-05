@@ -9,3 +9,8 @@
 - node_id: review
 - decided_by: reviewer@main
 - payload: {"workspace_id": "main", "tag": "outside"}
+
+## 2026-03-05T07:53:40.404577+00:00 · cancelled
+- node_id: review
+- decided_by: reviewer@main
+- payload: {"approval_id": 17, "decision": "cancelled", "node_id": "review", "role": "reviewer", "workspace_id": "main"}

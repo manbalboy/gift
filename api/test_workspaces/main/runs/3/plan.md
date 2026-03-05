@@ -1,5 +1,5 @@
 # Artifact
 
 - run_id: 3
-- node: Plan
+- node: PLAN
 - result: success
