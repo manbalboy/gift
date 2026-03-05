@@ -1,26 +1,11 @@
 # Human Gate Status Log
 
-## 2026-03-05T01:18:04.221556+00:00 · approved
+## 2026-03-01T10:20:30+00:00 · approved
 - node_id: review
 - decided_by: reviewer@main
-- payload: {"decision": "approved", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+- payload: {"workspace_id": "main", "memo": "ok"}
 
-## 2026-03-05T01:18:28.140834+00:00 · approved
+## 2026-03-05T12:00:00+00:00 · rejected
 - node_id: review
-- decided_by: reviewer@main
-- payload: {"decision": "approved", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:18:51.337629+00:00 · approved
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"decision": "approved", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:21:19.509629+00:00 · approved
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"decision": "approved", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
-
-## 2026-03-05T01:28:22.060995+00:00 · approved
-- node_id: review
-- decided_by: reviewer@main
-- payload: {"decision": "approved", "node_id": "review", "role": "reviewer", "workspace_id": "main"}
+- decided_by: admin@main
+- payload: {"workspace_id": "main", "memo": "retry"}
