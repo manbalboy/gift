@@ -3,7 +3,7 @@
 ## Summary
 - Stage: `ux_e2e_review`
 - Verdict: `NEEDS_FIX`
-- Test status: `PASS`
+- Test status: `FAIL`
 - Preview URL: 
 - Health URL: 
 
