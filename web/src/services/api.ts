@@ -3,8 +3,8 @@ import type {
   ConstellationData,
   HumanGateAuditDecision,
   HumanGateStaleAlert,
+  SystemAlertPageResponse,
   StatusArtifactAuditListResponse,
-  SystemAlertEntry,
   WebhookBlockedEvent,
   Workflow,
   WorkflowGraphValidationResult,
@@ -188,6 +188,13 @@ export const api = {
     return request<HumanGateStaleAlert[]>(`/runs/human-gate-alerts/scan?${params.toString()}`, { method: 'POST' });
   },
   cancelApproval: (approvalId: number) => requestHumanGateAction(`/approvals/${approvalId}/cancel`),
-  listSystemAlerts: (limit = 50) =>
-    request<SystemAlertEntry[]>(`/logs/system-alerts?limit=${Math.max(1, Math.min(limit, 50))}`),
+  listSystemAlerts: (limit = 50, cursor?: string | null) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(Math.max(1, Math.min(limit, 50))));
+    if (cursor) {
+      params.set('cursor', cursor);
+    }
+    return request<SystemAlertPageResponse>(`/logs/system-alerts?${params.toString()}`);
+  },
+  clearSystemAlerts: () => request<{ cleared_count: number }>('/logs/system-alerts', { method: 'DELETE' }),
 };

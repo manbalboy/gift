@@ -240,7 +240,7 @@ def test_engine_blocks_run_when_node_iteration_budget_exceeded(monkeypatch):
     alerts = client.get("/api/logs/system-alerts?limit=20")
     assert alerts.status_code == 200
     budget_alert = next(
-        (item for item in alerts.json() if item["code"] == "workflow_node_iteration_budget_blocked"),
+        (item for item in alerts.json()["items"] if item["code"] == "workflow_node_iteration_budget_blocked"),
         None,
     )
     assert budget_alert is not None

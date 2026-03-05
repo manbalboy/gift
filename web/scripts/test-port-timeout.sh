@@ -46,10 +46,11 @@ HOLDER_PID=$!
 
 sleep 1
 
-echo "[3/4] 동시 경합 상황에서 check-port.mjs 다중 실행 (타임아웃 실패 기대)"
+echo "[3/4] 동시 경합 상황에서 check-port.mjs 10개 프로세스 동시 실행 (타임아웃 실패 기대)"
 START_TS=$(date +%s)
 PIDS=()
-for IDX in 1 2 3; do
+WORKER_COUNT=10
+for IDX in $(seq 1 "${WORKER_COUNT}"); do
   (
     set +e
     node "$ROOT_DIR/scripts/check-port.mjs" >"${TMP_DIR}/worker-${IDX}.out" 2>&1
@@ -66,7 +67,7 @@ END_TS=$(date +%s)
 ELAPSED=$((END_TS - START_TS))
 
 FAILED_WORKERS=0
-for IDX in 1 2 3; do
+for IDX in $(seq 1 "${WORKER_COUNT}"); do
   CODE="$(cat "${TMP_DIR}/worker-${IDX}.code")"
   echo "[worker-${IDX}] exit=${CODE}"
   cat "${TMP_DIR}/worker-${IDX}.out"
@@ -75,8 +76,8 @@ for IDX in 1 2 3; do
   fi
 done
 
-if [[ $FAILED_WORKERS -ne 3 ]]; then
-  echo "[4/4] 실패: 포트가 모두 점유됐는데 일부 워커가 성공했습니다. failed=${FAILED_WORKERS}"
+if [[ $FAILED_WORKERS -ne ${WORKER_COUNT} ]]; then
+  echo "[4/4] 실패: 포트가 모두 점유됐는데 일부 워커가 성공했습니다. failed=${FAILED_WORKERS}/${WORKER_COUNT}"
   exit 1
 fi
 

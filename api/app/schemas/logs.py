@@ -13,3 +13,12 @@ class SystemAlertOut(BaseModel):
     source: str
     context: dict[str, Any]
     risk_score: int | None = None
+
+
+class SystemAlertPageOut(BaseModel):
+    items: list[SystemAlertOut]
+    next_cursor: str | None = None
+
+
+class SystemAlertClearOut(BaseModel):
+    cleared_count: int

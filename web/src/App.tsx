@@ -54,6 +54,8 @@ export default function App() {
   const [staleHumanGateAlerts, setStaleHumanGateAlerts] = useState<HumanGateStaleAlert[]>([]);
   const [systemAlerts, setSystemAlerts] = useState<SystemAlertEntry[]>([]);
   const [systemAlertsLoading, setSystemAlertsLoading] = useState(false);
+  const [systemAlertsNextCursor, setSystemAlertsNextCursor] = useState<string | null>(null);
+  const [systemAlertsActionLoading, setSystemAlertsActionLoading] = useState(false);
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectTargetNodeId, setRejectTargetNodeId] = useState<string | null>(null);
@@ -190,13 +192,15 @@ export default function App() {
         setSystemAlertsLoading(true);
       }
       try {
-        const items = await api.listSystemAlerts(50);
+        const page = await api.listSystemAlerts(50, null);
         if (!cancelled) {
-          setSystemAlerts(items);
+          setSystemAlerts(page.items);
+          setSystemAlertsNextCursor(page.next_cursor);
         }
       } catch {
         if (!cancelled) {
           setSystemAlerts([]);
+          setSystemAlertsNextCursor(null);
         }
       } finally {
         if (!cancelled) {
@@ -341,7 +345,7 @@ export default function App() {
           return;
         }
         if (state === 'failed') {
-          setApiDegradedMessage('실시간 스트림 재연결 한도를 초과했습니다. 네트워크 또는 API 서버(3108) 상태를 확인하세요.');
+          setApiDegradedMessage('실시간 스트림 재연결 한도를 초과했습니다. 네트워크 또는 API 서버(3101) 상태를 확인하세요.');
         }
       },
       onReconnectSchedule: (payload) => {
@@ -614,6 +618,53 @@ export default function App() {
     }
   };
 
+  const handleLoadMoreSystemAlerts = async () => {
+    if (!systemAlertsNextCursor || systemAlertsActionLoading) return;
+    setSystemAlertsActionLoading(true);
+    try {
+      const page = await api.listSystemAlerts(50, systemAlertsNextCursor);
+      setSystemAlerts((current) => [...current, ...page.items]);
+      setSystemAlertsNextCursor(page.next_cursor);
+    } finally {
+      setSystemAlertsActionLoading(false);
+    }
+  };
+
+  const handleClearAllSystemAlerts = async () => {
+    if (systemAlertsActionLoading) return;
+    setSystemAlertsActionLoading(true);
+    try {
+      await api.clearSystemAlerts();
+      setSystemAlerts([]);
+      setSystemAlertsNextCursor(null);
+      enqueueToast('warning', '시스템 알림을 모두 비웠습니다.');
+    } catch (error) {
+      const message = resolveErrorMessage(error, '시스템 알림 초기화 실패');
+      enqueueToast('error', `시스템 알림 초기화 실패 (${message})`);
+    } finally {
+      setSystemAlertsActionLoading(false);
+    }
+  };
+
+  const handleExportSystemAlerts = () => {
+    if (systemAlerts.length === 0) return;
+    const payload = {
+      exported_at: new Date().toISOString(),
+      count: systemAlerts.length,
+      items: systemAlerts,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `system-alerts-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    enqueueToast('warning', `시스템 알림 ${systemAlerts.length}건을 내보냈습니다.`);
+  };
+
   return (
     <div className="app-shell">
       <div className="toast-stack" data-testid="toast-stack" style={{ zIndex: LAYER_Z_INDEX.toast }} aria-label="시스템 알림">
@@ -665,7 +716,7 @@ export default function App() {
       {streamState === 'failed' && (
         <section className="network-banner network-banner-danger" role="alert" aria-live="assertive">
           <strong>서버 통신 실패</strong>
-          <span className="mono">SSE 재연결 5회 초과로 자동 재시도를 중단했습니다. 네트워크 또는 API 서버(3108)를 확인하세요.</span>
+          <span className="mono">SSE 재연결 5회 초과로 자동 재시도를 중단했습니다. 네트워크 또는 API 서버(3101)를 확인하세요.</span>
           <button
             type="button"
             className="btn btn-danger"
@@ -700,7 +751,19 @@ export default function App() {
 
         <main className="main-workspace">
           <LiveRunConstellation data={constellation} />
-          <SystemAlertWidget alerts={systemAlerts} loading={systemAlertsLoading} />
+          <SystemAlertWidget
+            alerts={systemAlerts}
+            loading={systemAlertsLoading}
+            hasMore={!!systemAlertsNextCursor}
+            processingAction={systemAlertsActionLoading}
+            onLoadMore={() => {
+              void handleLoadMoreSystemAlerts();
+            }}
+            onClearAll={() => {
+              void handleClearAllSystemAlerts();
+            }}
+            onExport={handleExportSystemAlerts}
+          />
           <Dashboard
             run={run}
             blockedEvents={blockedWebhookEvents}

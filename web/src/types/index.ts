@@ -139,3 +139,8 @@ export type SystemAlertEntry = {
   context: Record<string, unknown>;
   risk_score?: number | null;
 };
+
+export type SystemAlertPageResponse = {
+  items: SystemAlertEntry[];
+  next_cursor: string | null;
+};

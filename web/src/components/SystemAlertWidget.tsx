@@ -47,9 +47,19 @@ function renderMessageWithMaskedHighlight(message: string) {
 export default function SystemAlertWidget({
   alerts,
   loading,
+  hasMore,
+  processingAction,
+  onLoadMore,
+  onClearAll,
+  onExport,
 }: {
   alerts: SystemAlertEntry[];
   loading?: boolean;
+  hasMore?: boolean;
+  processingAction?: boolean;
+  onLoadMore?: () => void;
+  onClearAll?: () => void;
+  onExport?: () => void;
 }) {
   const levelMeta = (level: string) => {
     if (level === 'error') {
@@ -61,8 +71,34 @@ export default function SystemAlertWidget({
   return (
     <section className="card system-alert-widget" aria-label="system-alert-widget">
       <div className="card-header">
-        <h2>System Alerts</h2>
-        <p>Lock 경합, 환경 변수 Fallback, 시스템 경고를 최대 50건 확인합니다.</p>
+        <div className="system-alert-toolbar">
+          <div>
+            <h2>System Alerts</h2>
+            <p>Lock 경합, 환경 변수 Fallback, 시스템 경고를 커서 기반으로 확인합니다.</p>
+          </div>
+          <div className="system-alert-toolbar-actions">
+            <button
+              type="button"
+              className="btn btn-danger system-alert-action-btn"
+              onClick={onClearAll}
+              disabled={processingAction || alerts.length === 0}
+              aria-label="시스템 알림 전체 삭제"
+            >
+              <span className="system-alert-action-desktop">Clear All</span>
+              <span className="system-alert-action-mobile mono">CLR</span>
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost system-alert-action-btn"
+              onClick={onExport}
+              disabled={alerts.length === 0}
+              aria-label="시스템 알림 JSON 내보내기"
+            >
+              <span className="system-alert-action-desktop">Export</span>
+              <span className="system-alert-action-mobile mono">EXP</span>
+            </button>
+          </div>
+        </div>
       </div>
       {loading && alerts.length === 0 ? (
         <p className="empty">시스템 경고를 불러오는 중입니다.</p>
@@ -103,6 +139,13 @@ export default function SystemAlertWidget({
           })}
         </div>
       )}
+      {hasMore ? (
+        <div className="system-alert-footer">
+          <button type="button" className="btn btn-ghost" onClick={onLoadMore} disabled={processingAction || loading}>
+            더 보기
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
