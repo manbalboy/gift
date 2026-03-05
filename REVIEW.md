@@ -25,16 +25,16 @@
 - 워크플로우 그래프 내에 엣지가 하나도 없는 단일 노드만 정의된 극단적인 구성에서도 DAG 순회 로직이 예외 없이 해당 노드를 큐에 적재하도록 처리되어야 합니다.
 
 ## TODO
-- [ ] `api/app/api/webhooks.py`: 잘못된 `workflow_id` 및 페이로드 수신 시 HTTP 422 상태 코드를 반환하는 예외 처리 로직 추가
-- [ ] `api/app/services/workflow_engine.py`: 워크플로우 강제 취소 시 `asyncio.CancelledError` 캣치 및 SSE 제너레이터의 안전한 종료(자원 해제) 로직 구현
-- [ ] `api/app/services/workflow_engine.py`: 이전 노드와의 연결이 없는 독립/단일 노드가 정상적으로 실행 큐에 진입하도록 DAG 순회 로직 보완
-- [ ] `api/app/api/workflows.py`: 휴먼 게이트 API 엔드포인트에 Role 기반 인가 시스템(RBAC) 도입 및 권한 부족 시 403 에러 반환 로직 적용
-- [ ] `api/app/models/` 및 데이터베이스 스키마: 휴먼 게이트 의사결정 추적용 Audit Log 테이블 신설 (주체, 시간, 페이로드 저장) 및 연동
-- [ ] 데이터베이스/API: 휴먼 게이트 동시 조작 방지를 위해 DB 트랜잭션 Lock 적용 (승인/반려 동시성 제어)
-- [ ] 프론트엔드(web): 포트 `3100` 및 API 통신 포트 `3101` 명시적 설정
-- [ ] 프론트엔드(web): SSE 커넥션 단절 시 Jitter를 포함한 지수적 백오프(Exponential Backoff) 기반 자동 재연결 로직 구현
-- [ ] 프론트엔드(web): 지수적 백오프로 재연결 시도 시 상단 배너/인디케이터를 통해 사용자에게 현재 네트워크 연결 상태 노출
-- [ ] 프론트엔드(web): 403 접근 권한 에러 수신 시 적절한 안내를 제공하는 Fallback 모달 컴포넌트 추가
-- [ ] 프론트엔드(web): 휴먼 게이트 과거 결정 이력(Audit Log)을 확인할 수 있는 Read-Only 뷰어 모달 컴포넌트 구현
-- [ ] 백엔드(api): 워크플로우 강제 취소 시 자원 반환 확인, 422 유효성 검사 예외, 403 인가 에러 검증용 단위/통합 테스트 코드(Pytest) 작성
-- [ ] 프론트엔드(web): Playwright를 활용해 `http://localhost:3100`에서 승인/반려 로직 및 에러 핸들링 UI 과정을 자동 검증하는 E2E 테스트 작성
+- [x] `api/app/api/webhooks.py`: 잘못된 `workflow_id` 및 페이로드 수신 시 HTTP 422 상태 코드를 반환하는 예외 처리 로직 추가
+- [x] `api/app/services/workflow_engine.py`: 워크플로우 강제 취소 시 `asyncio.CancelledError` 캣치 및 SSE 제너레이터의 안전한 종료(자원 해제) 로직 구현
+- [x] `api/app/services/workflow_engine.py`: 이전 노드와의 연결이 없는 독립/단일 노드가 정상적으로 실행 큐에 진입하도록 DAG 순회 로직 보완
+- [x] `api/app/api/workflows.py`: 휴먼 게이트 API 엔드포인트에 Role 기반 인가 시스템(RBAC) 도입 및 권한 부족 시 403 에러 반환 로직 적용
+- [x] `api/app/models/` 및 데이터베이스 스키마: 휴먼 게이트 의사결정 추적용 Audit Log 테이블 신설 (주체, 시간, 페이로드 저장) 및 연동
+- [x] 데이터베이스/API: 휴먼 게이트 동시 조작 방지를 위해 DB 트랜잭션 Lock 적용 (승인/반려 동시성 제어)
+- [x] 프론트엔드(web): 포트 `3100` 및 API 통신 포트 `3101` 명시적 설정
+- [x] 프론트엔드(web): SSE 커넥션 단절 시 Jitter를 포함한 지수적 백오프(Exponential Backoff) 기반 자동 재연결 로직 구현
+- [x] 프론트엔드(web): 지수적 백오프로 재연결 시도 시 상단 배너/인디케이터를 통해 사용자에게 현재 네트워크 연결 상태 노출
+- [x] 프론트엔드(web): 403 접근 권한 에러 수신 시 적절한 안내를 제공하는 Fallback 모달 컴포넌트 추가
+- [x] 프론트엔드(web): 휴먼 게이트 과거 결정 이력(Audit Log)을 확인할 수 있는 Read-Only 뷰어 모달 컴포넌트 구현
+- [x] 백엔드(api): 워크플로우 강제 취소 시 자원 반환 확인, 422 유효성 검사 예외, 403 인가 에러 검증용 단위/통합 테스트 코드(Pytest) 작성
+- [x] 프론트엔드(web): Playwright를 활용해 `http://localhost:3100`에서 승인/반려 로직 및 에러 핸들링 UI 과정을 자동 검증하는 E2E 테스트 작성
