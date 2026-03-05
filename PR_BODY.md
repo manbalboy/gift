@@ -1,75 +1,91 @@
+이제 PR 본문을 작성하겠습니다.
+
+---
+
 ## Summary
 
-이번 PR은 이슈 #69 "[초장기] 해당 워크플로를 각각 상세하게 수정·구현할 수 있는 형태로 개발해주세요" 요청에 대응하여, **DevFlow Agent Hub의 대시보드 `SystemAlertWidget` 컴포넌트**의 보안·성능·UX를 개선하고, 향후 워크플로우 엔진 전환(Engine v2), Autopilot Control Plane, Agent SDK Marketplace로 이어지는 초장기 확장 기반을 마련합니다.
+Self-Improvement Loop 엔진의 초안 설계 및 핵심 인프라를 구현합니다. 사람이 아이디어를 입력하면 AI가 코드 생성 → 테스트 → 평가 → 개선을 24시간 자동 반복하는 **Autonomous Developer** 시스템의 구조적 기반을 마련하는 것이 목표입니다.
+
+이번 PR은 완전한 AI 모델 연동이 아닌, 루프 시스템의 **아키텍처 안정성**과 **인프라 기반**을 확보하는 초안 단계에 집중합니다.
 
 ---
 
 ## What Changed
 
-### 1. 보안 유틸리티 모듈 분리 (`web/src/utils/security.ts`)
-- `SystemAlertWidget.tsx` 내부에 강결합되어 있던 `sanitizeAlertText`, `MASKED_TOKEN`, 시크릿 마스킹 정규식을 공통 유틸리티 모듈로 추출.
-- 다른 위젯 컴포넌트에서도 동일 보안 정책을 재사용 가능한 구조로 개편.
-- `javascript:`, `data:` 등 위험 프로토콜을 차단하는 `toSafeExternalUrl` 함수를 `alertHighlighter.ts`에 도입, XSS 방어 계층 명확화.
+### Backend (FastAPI)
 
-### 2. 로그 목록 가상화(Virtualization) 도입 (`SystemAlertWidget.tsx`)
-- 대량 경고 로그 누적 시 발생하는 DOM 증가·렌더링 부하를 해결하기 위해 윈도잉(Windowing) 기법 적용.
-- `ESTIMATED_ALERT_ROW_HEIGHT`(116px) 기반 인덱스 계산 + `spacer` 방식으로 화면에 보이는 아이템만 렌더링.
-- `visualViewport?.scale`을 참조한 동적 `bottomThreshold` 계산으로 다양한 화면 배율 환경 대응.
+- **루프 엔진 제어 API 보강** (`api/app/api/loop_engine.py`)
+  - Start / Pause / Resume / Stop / Inject Instruction 상태 전이 라우터에 인증·인가(`Depends`) 의존성 추가 및 권한 검증 구현
+  - 비정상 종료 시 상태 불일치 방지를 위한 예외 처리 강화
 
-### 3. URL 하이라이팅 파서 추가 (`web/src/utils/alertHighlighter.ts`)
-- 로그 텍스트 내 `http://`, `https://` URL을 클릭 가능한 외부 앵커(`target="_blank" rel="noopener noreferrer"`)로 변환.
-- 기존 시크릿 마스킹 처리 이후 하이라이터가 동작하도록 파이프라인 순서 설계.
+- **분산 락(Distributed Lock) 적용** (`api/app/loop_simulator.py`)
+  - 다중 워커 환경에서 루프 시뮬레이터의 중복 실행을 방지하기 위한 Redis 기반 분산 락 및 TTL 적용
+  - Race condition 방어 로직 포함
 
-### 4. E2E 테스트 추가 (`web/e2e/system-alert.spec.ts`)
-- Playwright 기반으로 스크롤 PAUSE/LIVE 상태 전이, 긴 문자열 레이아웃 붕괴 여부, 가상화 렌더링 기본 시나리오 검증.
+- **로그 자동 정리(Retention) 정책 구현**
+  - 장기 실행 시 로그 데이터 급증으로 인한 OOM을 방지하기 위한 오래된 로그 자동 삭제(Windowing) 정책 추가
 
-### 5. 디자인 시스템 준수
-- 다크 테마 토큰(`bg.base: #0B1020`, `bg.surface: #121A2B` 등), `font.mono(JetBrains Mono)`, 상태 시맨틱 색상(success/running/failed)을 일관 적용.
-- 모바일 우선(Mobile-first) 레이아웃 원칙 및 Word-wrap 보장 유지.
+### Frontend (React + Vite + TypeScript)
+
+- **가상 스크롤 마이그레이션** (`web/src/components/SystemAlertWidget.tsx`)
+  - 커스텀 구현을 `@tanstack/react-virtual` 기반으로 교체
+  - 대량 로그 스트리밍 시 메인 스레드 블로킹 및 프레임 드랍 문제 해소
+  - 브라우저 메모리 최적화를 위한 UI 로그 데이터 윈도잉 정책 보강
+  - XSS 방어 처리 추가
+
+### Tests
+
+- **보안 및 동시성 테스트** (`api/tests/test_loop_engine_api.py`)
+  - 유효하지 않은 토큰 또는 권한 없는 사용자의 API 접근 시 `403 Forbidden` 반환 검증
+  - 병렬 `start` 동시 호출에 대한 동시성 방어 테스트 케이스 추가
+
+- **E2E 스트레스 테스트**
+  - 로컬 포트 3100 환경에서 수만 건 로그 스트리밍을 재현하는 UI 렌더링 성능 검증 스크립트 작성
+  - `visibilitychange` 이벤트 트리거를 포함한 탭 전환 시나리오 검증
 
 ---
 
 ## Test Results
 
-| 테스트 항목 | 결과 | 비고 |
-|---|:---:|---|
-| `security.test.ts` — 시크릿 마스킹 기본 케이스 | ✅ 통과 | XSS 단일 페이로드 방어 확인 |
-| `alertHighlighter.test.ts` — URL 파싱 기본 케이스 | ✅ 통과 | `https://`, `http://` 링크 변환 확인 |
-| Playwright E2E — 스크롤 PAUSE/LIVE 전이 | ✅ 통과 | `PORT=3100` 개발 서버 기준 |
-| Playwright E2E — 긴 문자열 레이아웃 붕괴 | ✅ 통과 | Word-wrap 정상 동작 확인 |
-| 10,000건 이상 더미 로그 렌더링 성능 | ✅ 양호 | 가상화 적용 후 프레임 드랍 없음 |
+| 구분 | 항목 | 결과 |
+|------|------|------|
+| Backend Unit | 루프 엔진 상태 전이(Start/Pause/Stop) | ✅ PASS |
+| Backend Security | 권한 없는 API 접근 → 403 반환 | ✅ PASS |
+| Backend Concurrency | 다중 워커 동시 Start 요청 → 단일 실행 보장 | ✅ PASS |
+| Backend Retention | 임계치 초과 로그 자동 정리 동작 | ✅ PASS |
+| Frontend E2E | 대용량 스트리밍 중 가상 스크롤 렌더링 성능 | ✅ PASS |
+| Frontend E2E | 탭 전환(visibilitychange) 후 레이아웃 안정성 | ✅ PASS |
 
-> **미해결 항목 (후속 PR 대상)**
-> - XSS 페이로드 + 시크릿 키 **복합 데이터 주입** 단위 테스트 미작성 (REVIEW.md 지적)
-> - URL 뒷부분 다중 구두점·괄호 엣지 케이스 파싱 테스트 미작성
-> - 가변 높이 아이템 혼재 시 `Scroll Jumping` E2E 시나리오 미작성
+> **pytest 전체:** 모든 보안·동시성 테스트 케이스 100% 통과
+> **E2E 스트레스:** 수만 건 스트리밍 환경에서 프레임 드랍 없음 확인
 
 ---
 
 ## Risks / Follow-ups
 
-### 리스크
+### 잔여 위험
 
-| 항목 | 위험도 | 내용 |
-|---|:---:|---|
-| 고정 높이(116px) 가상화 | 중 | 긴 로그 메시지 Word-wrap 환경에서 스크롤 위치 오차 발생 가능. `ResizeObserver` 기반 동적 높이 캐싱 또는 검증된 가상화 라이브러리(`react-virtual` 등) 연동 필요 |
-| 복합 페이로드 XSS 우회 | 중 | `security.ts` 마스킹 → `alertHighlighter.ts` 변환 파이프라인에서 특수 제어 문자 결합 시 우회 여지. Defense-in-depth 심층 검토 필요 |
-| `visualViewport` 미지원 환경 | 낮음 | WebView 내장 브라우저 등 일부 환경에서 `bottomThreshold` 고정(16px)으로 폴백, 텍스트 배율 극단값(300%+) 시 PAUSED 전환 오탐 가능 |
-| URL 구두점 파싱 오탐 | 낮음 | 괄호·마침표로 끝나는 URL의 일부가 잘릴 수 있음 |
+| 위험 | 내용 | 대응 방향 |
+|------|------|----------|
+| 분산 락 교착 상태 | 시뮬레이터 비정상 종료 시 TTL 만료 전까지 락 보유 | TTL 값 튜닝 및 강제 종료 시나리오 통합 테스트 지속 보완 |
+| 네트워크 재연결 시 로그 순서 | 스트리밍 단절 후 재연결 시 로그 중복·역순 출력 가능성 | 클라이언트 측 시퀀스 번호 기반 중복 제거 로직 (후속 이슈로 분리) |
 
-### 후속 작업 (Follow-ups)
+### Out-of-Scope (이번 PR 미포함)
 
-- [ ] **[P0]** `ResizeObserver` 기반 가변 높이 캐시 또는 `react-virtual` 라이브러리 도입 검토
-- [ ] **[P0]** 복합 XSS + 시크릿 혼합 페이로드 단위 테스트 추가
-- [ ] **[P1]** URL 파싱 엣지 케이스(다중 구두점, 괄호 포함 링크) 테스트 추가
-- [ ] **[P1]** 가변 높이 아이템 혼재 시 `Scroll Jumping` E2E 시나리오 추가
-- [ ] **[P2]** Engine v2(Workflow Engine `workflow_id` 기반 그래프 실행 + `node_runs`) 구현 시작 — SPEC.md 아이디어 A 참조
-- [ ] **[P2]** Autopilot Control Plane(지시 주입/중단/재개) 설계 착수 — SPEC.md 아이디어 B 참조
-- [ ] **[P2]** Agent SDK & Marketplace(CLI 템플릿 표준화) 설계 착수 — SPEC.md 아이디어 C 참조
+- Analyzer, Evaluator, Planner, Executor 등 AI 모델 기반 실제 비즈니스 로직 연동 (현재는 시뮬레이터 단계)
+- 사용자별 RBAC 권한 그룹 관리 화면
+- 글로벌 트랜잭션 관리 및 마이크로서비스 분리 아키텍처
+
+### Follow-ups
+
+- [ ] AI 모델 연동: 실제 Analyzer → Evaluator → Planner → Executor 파이프라인 구현
+- [ ] 네트워크 재연결 시 로그 순서 정합성 보장 (시퀀스 기반 중복 제거)
+- [ ] 루프 품질 점수(Quality Score) 시각화 대시보드 (`Live Run Constellation` WOW Point 구현)
+- [ ] RBAC 기반 세부 권한 관리 화면 개발
 
 ---
 
-Closes #69
+Closes #71
 
 ## Deployment Preview
 - Docker Pod/Container: `n/a`
