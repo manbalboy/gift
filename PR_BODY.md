@@ -1,81 +1,72 @@
 ## Summary
 
-이 PR은 이슈 #67 "[초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략"에 대응하여, `ex-code` 레퍼런스 구현 분석을 바탕으로 **DevFlow Agent Hub**를 n8n 대비 차별화된 **개발 워크플로우 중심 AI Development Platform**으로 고도화한 결과물입니다.
+이 PR은 이슈 #67 "[초장기] 초고도화 방안 및 지속적인 확장가능성을 가진 프로그램으로 개발하는 목표 전략"에 대응하여, **DevFlow Agent Hub**를 n8n과 차별화된 AI 개발 자동화 플랫폼으로 고도화하기 위한 핵심 기반을 구축합니다.
 
-핵심 목표는 다음 세 가지입니다:
-
-- **실행 안정성**: Race Condition 방어 및 SSE 재연결 지원으로 고가용성 파이프라인 확보
-- **보안 강화**: XSS/ReDoS 위협을 제거하는 `sanitize` 유틸리티 개선
-- **감사 가능성**: Human Gate의 승인·수정·거절 이력을 감사 로그로 영구 보존
+이번 변경은 6가지 확장 아이디어(Workflow Engine v2, Human Gate, Visual Builder, Artifact-first Workspace, Agent Marketplace, Dev Integrations) 중 **보안·안정성·성능** 측면에서 즉시 적용 가능한 P0/P1 항목을 먼저 구현합니다. CLI 기반 AI 실행을 기본으로 유지하며, API 방식은 보조 수단으로 설정하는 원칙을 지킵니다.
 
 ---
 
 ## What Changed
 
-### API (FastAPI)
+### [P0] 보안 강화 — XSS 방어 및 워크스페이스 권한 격리
 
-| 영역 | 변경 내용 |
-|---|---|
-| **SSE 이벤트 스트리밍** | `last-event-id` 헤더 기반 재연결 지원 및 15초 주기 Heartbeat 추가. Nginx `proxy_read_timeout` 설정과 호환되는 인터벌로 정렬 |
-| **Human Gate 동시성 제어** | `api/app/api/workflows.py` — 휴먼 게이트 승인/수정/거절 엔드포인트에 SQLAlchemy `with_for_update()` 트랜잭션 락 적용. 다중 동시 요청 시 단 1건만 처리되도록 보장 |
-| **Human Gate 감사 로그** | 승인·거절 결정 시 `decided_by`, `decided_at`, `decision` 컬럼을 `approval_requests` 테이블에 기록 |
-| **스케줄러 분산 락** | 타임아웃된 Human Gate 노드 스캔 시, 다중 워커 환경에서 중복 처리되지 않도록 분산 락 가드 추가 |
+- **`web/src/utils/sanitize.ts`**: `DOMPurify` 훅을 추가하여 `javascript:` 프로토콜 링크 및 악의적인 `<svg>` 속성을 렌더링 전 완전 차단. 마크다운/아티팩트 뷰어 전 구간에 적용.
+- **`api/tests/test_workspace_security.py`**: 다중 워크스페이스 환경에서 인가되지 않은 타 워크스페이스 사용자가 Human Gate(승인/거절) API를 조작하는 시나리오를 검증하는 통합 테스트 추가. 일관된 `403 Forbidden` 반환 확인.
 
-### Web (React / Vite)
+### [P0] 클라이언트 복원력 — SSE 재연결 및 Graceful Fallback
 
-| 영역 | 변경 내용 |
-|---|---|
-| **`sanitize.ts` 보안 개선** | 커스텀 정규식 기반 마크다운 파서를 `marked` 라이브러리로 교체 후, 출력물을 `DOMPurify`로 최종 살균 처리. ReDoS 공격 벡터 제거 |
-| **SSE 클라이언트 재연결** | `EventSource` 래퍼에 지수 백오프(Exponential Backoff) 재연결 로직 추가. 일시적 네트워크 장애 시 로그 누락 방지 |
-| **아티팩트 뷰어 안전 렌더링** | 대용량 로그 아티팩트(수십 MB) 렌더링 시 브라우저 탭 크래시 방지를 위해 가상 스크롤(Virtualization) 적용 |
+- **SSE 지수 백오프(Exponential Backoff)**: Nginx 180s 타임아웃 강제 종료 후 재연결 시 429 에러를 방지하기 위해, 재시도 대기 시간을 1초 → 2초 → 4초 → 8초 순으로 점진 증가하는 로직 적용. 최대 시도 횟수 초과 시 '연결 실패' 최종 에러 UI로 전환.
+- **Graceful Fallback UI**: 로컬 3100번대 포트(3108 프록시, 3101 백엔드) 연결 실패(502/타임아웃) 시 무한 로딩·화면 깨짐 없이 "서버 상태가 불안정합니다" 안내 UI 즉시 렌더링.
 
-### 디자인 시스템 적용
+### [P1] 성능 최적화 — Artifact 뷰어 Chunked Loading
 
-- `DESIGN_SYSTEM.md`의 시맨틱 상태 색상 토큰(`color.status.*`) 및 다크 테마 토큰을 Tailwind config에 반영
-- Human Gate Approval Inbox UI: 카드형 레이아웃, 모바일에서 Bottom Sheet로 폴백
-- Run Timeline: `node_run` 단위 상태를 `Live Run Constellation` 컨셉에 맞춰 상태 배지 + 아이콘 + 텍스트 동시 표기
+- **`web/src/components/` Artifact 뷰어**: 50MB 이상 대용량 텍스트 산출물의 브라우저 힙 OOM 방지를 위해 스크롤 기반 청크 단위 로딩/해제 구조로 리팩토링. 뷰어 내부 텍스트 검색(하이라이팅 툴바) 동시 지원.
+
+### [P2] 리뷰 경험 고도화
+
+- **휴먼 게이트 거절 사유 프리셋**: 권한이 검증된 리뷰어가 거절 시 "UX 가이드 위반", "보안 취약점", "사양 불일치" 등 3~4종의 고정 프리셋 버튼으로 빠른 입력 지원.
+- **디자인 시스템 정합**: 에러/거절 액션은 `color.status.failed(#EF4444)`, 검색 하이라이팅은 Yellow 강조색 적용. Pretendard(UI) + JetBrains Mono(로그/코드) 이중 타이포 체계 준수. 모바일 우선 반응형(breakpoint: sm/md/lg) 적용.
 
 ---
 
 ## Test Results
 
-| 구분 | 항목 | 결과 |
-|---|---|---|
-| **백엔드 단위/통합** | 전체 테스트 슈트 (122건) | ✅ 전원 통과 |
-| **동시성 테스트** | Human Gate 승인 엔드포인트에 `asyncio.gather` 10건 병렬 요청 | ✅ 1건만 처리, 나머지 409 Conflict 반환 확인 |
-| **시간 조작 테스트** | `freezegun`으로 24시간 경과 시뮬레이션 → 스케줄러 타임아웃 감지 | ✅ 정확히 감지 및 상태 전환 처리 |
-| **SSE 스트리밍** | Nginx 프록시 경유 15초+ 공백 후 재연결 시나리오 | ✅ Heartbeat 유지, `last-event-id` 재연결 정상 동작 |
-| **XSS 방어** | `<script>alert(1)</script>`, `onerror` 속성 주입 페이로드 렌더링 | ✅ DOMPurify 살균 후 무력화 확인 |
-| **마크다운 렌더링** | 중첩 리스트, 코드 블록, 인용구 복합 케이스 | ✅ `marked` 교체 후 깨짐 없음 |
-
-### Docker Preview 정보
-
-```
-컨테이너: devflow-agent-hub
-포트 매핑: 7000:3000 (Web), 7001:8000 (API)
-접속 URL: http://ssh.manbalboy.com:7000
-```
+| 테스트 항목 | 결과 | 비고 |
+|---|:---:|---|
+| `sanitize.test.ts` — `javascript:alert(1)` 및 `<svg>` 페이로드 XSS 차단 | **PASS** | 정상 콘텐츠(Mermaid 다이어그램 등) 보존 확인 |
+| `test_workspace_security.py` — 타 워크스페이스 Human Gate 조작 시 403 반환 | **PASS** | `asyncio.gather` 다중 트랜잭션 포함 |
+| SSE 재연결 — 서버 강제 단절 후 지수 백오프 동작 | **PASS** | 네트워크 탭에서 1s → 2s → 4s → 8s 대기 확인 |
+| 3108 포트 강제 종료 시 Graceful Fallback UI 전환 | **PASS** | 안내 메시지 즉시 렌더링 확인 |
+| Artifact 뷰어 — 대용량 텍스트 Heap 급증 미발생 | **PASS** | Chrome DevTools 메모리 탭 확인 (육안 프로파일링) |
+| 뷰어 내부 검색 — 하이라이팅 정상 동작 | **PASS** | |
+| 거절 프리셋 버튼 클릭 시 폼 즉시 입력 | **PASS** | |
+| 대용량 OOM E2E 자동화 프로파일링 테스트 | **미작성** | Follow-up 필요 |
+| 3100번대 포트 강제 차단 Playwright E2E 네트워크 결함 테스트 | **미작성** | Follow-up 필요 |
 
 ---
 
 ## Risks / Follow-ups
 
-### 잔존 리스크
+### 잔존 버그 및 엣지 케이스
 
-| 우선순위 | 항목 | 내용 |
-|---|---|---|
-| **높음** | 데드락 시나리오 | Human Gate에서 연관 노드들이 동시 상태 전환 시 `with_for_update()` 락 획득 순서 꼬임 → 데드락 가능. 현재는 단순 재시도 정책으로 방어 중이나, 향후 노드 실행 순서 직렬화 강제 필요 |
-| **중간** | 분산 워커 확장 시 검증 부재 | 분산 락 로직은 구현했으나, 실제 멀티 워커(K8s 파드 3개 이상) 환경의 통합 테스트 미수행 |
-| **낮음** | `marked` 라이브러리 보안 업데이트 추적 | `marked` 의존 추가로 인해 CVE 모니터링 대상 추가됨. Dependabot 또는 주기적 `npm audit` 체계 필요 |
+- **Chunked Loading + 검색 하이라이팅 깜빡임(Flickering)**: 스크롤로 청크가 교체될 때 하이라이팅이 일시 해제 후 재적용되는 현상. 렌더링 안정화 추가 작업 필요.
+- **검색 결과 스크롤 좌표 오차**: 아직 로드되지 않은 청크 하단 영역에 위치한 검색 결과로 이동 시 스크롤 좌표 오차로 화면 튀는 현상 발생 가능.
+- **거절 프리셋 덮어쓰기**: 사용자가 직접 작성한 내용이 있는 상태에서 프리셋 버튼 클릭 시 기존 입력이 덮어씌워지는 UX 이슈. Append 또는 경고 방식으로 개선 필요.
 
 ### 후속 작업 (Follow-ups)
 
-- [ ] **Phase 2**: Agent SDK v1 — Agent Spec/버전/폴백 + CLI 어댑터 표준화 (`PLAN.md` P0 하위 항목)
-- [ ] **Phase 3**: SQLite → Postgres 마이그레이션 스크립트 및 `node_runs` / `artifacts` 테이블 정식 이관
-- [ ] **Phase 4**: Visual Workflow Builder — ReactFlow 캔버스 편집·검증·저장·프리뷰 런 UI
-- [ ] `api/tests/test_human_gate.py` — 데드락 유발 시나리오 테스트 케이스 추가
-- [ ] `web/tests/` — `sanitize.ts` 단위 테스트 및 악성 페이로드 자동화 검증 추가
-- [ ] SSE E2E 통합 테스트 — `http://localhost:3108` 프록시 경유 15초 공백 재연결 시나리오 보완
+- [ ] 50MB 이상 더미 데이터로 OOM 및 GC 추이를 검증하는 E2E 성능 자동화 테스트 작성
+- [ ] Playwright 기반 로컬 포트 강제 차단 시 Graceful Fallback + 지수 백오프 검증 네트워크 결함 E2E 테스트 보완
+- [ ] Chunked Loading 뷰어의 검색 하이라이팅 깜빡임 및 스크롤 좌표 오차 해결
+- [ ] **Phase 1(Workflow Engine v2)**: `workflow_id` 기반 정의 실행 + `node_runs` 저장 + `ExecutorRegistry` + fallback 구현 (3~6주 예상)
+- [ ] **Phase 2(Agent SDK v1)**: CLI 어댑터 표준화 + 테스트 하네스 (Phase 1 후반과 병렬)
+- [ ] **Phase 4(Human Gate UI)**: Approval Inbox + Resume 흐름 (Phase 1 완료 후 순차)
+- [ ] **Visual Workflow Builder(ReactFlow)**, **Artifact-first Workspace**, **Dev Integrations 이벤트 버스**는 Phase 3~6 순차 진행
+
+### 주의 사항
+
+- `DOMPurify` 정책이 과도하게 엄격해질 경우 Mermaid 다이어그램 등 정상 시각 데이터까지 차단될 수 있으므로, 허용 목록(allowlist) 정책 지속 모니터링 필요.
+- 외부 의존성(gh auth, npm 설치, 외부 네트워크) 실패 시 타임아웃/재시도/재처리 시나리오 Runbook 문서화 예정.
 
 ---
 
