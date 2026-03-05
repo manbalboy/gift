@@ -1,31 +1,30 @@
 # REVIEW
 
 ## Functional bugs
-- 현재 구현된 `LoopMonitorWidget` 컴포넌트에서는 루프 횟수가 최대치를 초과했을 때 `loopOverrunCount`를 계산하여 붉은색 경고 스타일(class `loop-monitor-value-overrun`)과 함께 초과 횟수(`+N`)를 정확하게 화면에 렌더링하고 있어 기존 시각적 버그가 해결되었습니다.
-- 백엔드(3100 포트)에서 유입되는 잦은 SSE 이벤트 갱신에 대응하기 위해 프론트엔드 `App.tsx`에 `RUN_SYNC_THROTTLE_MS` (180ms) 주기로 쓰로틀링(Throttling)이 적용되어 브라우저 렌더링 병목을 성공적으로 방어하고 있습니다.
-- 엔진 제어 버튼(시작/일시정지/재개/중지) 조작 시 `loopEngineActionLoading` 상태를 활용하여 버튼이 즉각적으로 비활성화(Disabled)되며, 인라인 로딩 스피너(`loop-engine-spinner`)가 표시되어 중복 실행 조작 방지 요구사항을 충족합니다.
-- **[개선 제안]** 시스템 큐 오버플로우나 엔진 예외를 보여주는 에러 로그 모달(`Error Log Modal`)에서 수만 자 이상의 긴 로그 텍스트가 유입될 경우, `pre` 영역의 스크롤 처리 및 렌더링 지연을 완화할 수 있는 방어 로직 추가 검토가 필요합니다.
+- **에러 로그 텍스트 Truncation 렌더링 병목**: 대용량의 에러 로그(수만 자 이상)가 한 번에 렌더링될 경우 브라우저 멈춤 현상이나 성능 저하가 발생할 수 있습니다. 5000자 기준으로 텍스트를 자르고 'Show more' 버튼을 통해 확장하는 기능이 정상적으로 동작하는지 확인이 필요합니다.
+- **클립보드 복사 피드백 누락**: 사용자가 로그 복사 버튼을 클릭했을 때 명확한 시각적 피드백이 없으면 동작 성공 여부를 파악하기 어렵습니다. 복사 성공 및 실패 상태에 따른 Toast 알림 처리가 구현되어야 합니다.
+- **클립보드 API 예외 처리**: 브라우저 환경이나 비동기 권한 문제로 인해 `navigator.clipboard.writeText` API 호출이 실패할 경우, 앱이 크래시되지 않고 적절한 에러 상태를 렌더링하도록 예외 처리가 보장되어야 합니다.
 
 ## Security concerns
-- `web/src/utils/security.ts`에서 정규식(`SAFE_GENERIC_PATTERN`)을 통해 `<T>`, `<User>` 등 정상적인 제네릭 텍스트를 식별해 임시 토큰으로 보존하고, `UNSAFE_GENERIC_KEYWORDS`를 활용하여 `SCRIPT`, `IFRAME` 등의 악성 태그 키워드는 필터링하는 로직이 적용되었습니다. 
-- 이후 `DOMPurify`를 2차로 통과시키며 XSS 방어 수준을 높게 유지하고 있어, 화면 유실 및 보안 위협을 동시에 해결했습니다.
-- 토큰(token)이나 비밀번호(password), Bearer 인증 정보 등 민감한 키-값 데이터가 화면에 출력되지 않도록 `MASKED_TOKEN`으로 안전하게 치환하는 마스킹 로직이 올바르게 동작합니다.
-- **[주의 사항]** 악의적 사용자가 DOMPurify의 예외 규칙을 우회하기 위해 다중 인코딩된 문자열이나 복잡한 구조의 중첩 태그(예: `<svg><script>`)를 주입하는 특수한 엣지 케이스 공격이 있을 수 있으므로, 주기적인 라이브러리 및 정규식 패턴 업데이트가 요구됩니다.
+- **비정형 XSS 페이로드 필터링 우회**: 에러 로그 데이터에 중첩되거나 쪼개진 비정형 XSS 페이로드(예: `<scr<script>ipt>`)가 포함되어 있을 때, 필터링을 우회하여 스크립트가 실행될 위험이 있습니다.
+- **정상 텍스트 오탐(False Positive) 위험**: XSS 방어를 위해 적용된 정규식이 에러 로그에 포함된 정상적인 코드 패턴(예: 제네릭 타입 문법 `<T>`)을 악성 코드로 오인하여 내용이 훼손될 가능성을 점검해야 합니다.
+- **CORS 및 접근 제어 검증**: SPEC에 명시된 기준(manbalboy.com 계열, localhost 등)을 벗어난 출처에서의 접근이 철저히 차단되는지 보안 설정 확인이 필요합니다.
 
 ## Missing tests / weak test coverage
-- `LoopMonitorWidget.test.tsx` 내에 루프 제한 횟수를 초과(`overrun`)했을 때 값이 어떻게 표기되고 스타일(클래스명)이 어떻게 적용되는지에 대한 컴포넌트 렌더링 단위 테스트가 포함되어 있으며 성공적으로 통과합니다.
-- `App.test.tsx` 통합 테스트에 `dropped` 및 `queue_overflow` 상태 수신 시 경고 토스트와 상세 에러 모달이 순차적으로 노출되는 동작 검증이 반영되어 있습니다.
-- `security.test.ts`를 통해 기본적인 XSS 공격 페이로드 방어와 정상적인 제네릭 문장(`<T>`) 보존에 대한 엣지 케이스 단위 테스트가 확보되었습니다.
-- **[보완 필요]** 고도화 기능으로 추가된 `ErrorLogModal` 컴포넌트 내부의 **클립보드 복사 기능**(`navigator.clipboard.writeText`)에 대한 테스트 코드(Mocking 테스트)가 누락되어 있습니다. 복사 성공 및 실패에 따른 사용자 피드백 텍스트의 렌더링 단언(Assertion) 테스트 보강이 권장됩니다.
+- **클립보드 Mocking 단위 테스트 부족**: `web/src/components/ErrorLogModal.test.tsx` 내에 `navigator.clipboard.writeText`를 활용한 복사 성공/실패 시나리오에 대한 Mocking 테스트 커버리지가 확보되어야 합니다.
+- **XSS 심화 엣지 케이스 테스트 부재**: `web/src/utils/security.test.ts`에 비정형 XSS 공격 패턴을 주입하여 우회 여부를 검증하는 심화 테스트 케이스가 부족합니다.
+- **대용량 로그 렌더링 CSS 테스트 부재**: 텍스트 길이가 매우 긴 에러 로그를 주입했을 때, `overflow-y: auto` 및 `word-break: break-all` 속성이 작동하여 모달 레이아웃이 붕괴되지 않는지 확인하는 렌더링 테스트가 필요합니다.
 
 ## Edge cases
-- 장기 실행(Long-Running)이라는 Self-Improvement Loop 엔진의 특성을 반영하여, 네트워크 단절 상황 시 화면 상단에 재연결 상태 및 다음 재시도 지연 시간(`reconnectMeta`)을 안내하는 네트워크 뱃지 UI가 추가되었습니다. 재연결을 5회 초과 시 완전한 통신 실패 상태로 전환되어 수동 재시도를 유도하는 안전한 예외 흐름이 돋보입니다.
-- 과도한 쓰로틀링으로 인해 사용자가 느끼는 답답함을 방지하기 위해 180ms라는 적절한 갱신 주기를 설정하였고, 상태 갱신 지연 도중 사용자가 'Pause' 등의 액션을 취할 때 발생할 수 있는 Race condition은 개별 액션 버튼의 `disabled` 제어를 통해 회피했습니다.
-- 브라우저 클립보드 API가 지원되지 않는 환경이거나 권한 거부 상황(`navigator.clipboard` 미존재 혹은 Promise 에러 발생)에 대한 예외 처리가 `try-catch`로 방어되어 있으며, 조용히 "복사에 실패했습니다." 메시지로 상태를 변경해 애플리케이션의 크래시를 방지합니다.
+- **에러 로그가 비어있거나 불완전한 경우**: 로그 데이터가 `null`이거나 빈 문자열일 때 모달 UI가 깨지지 않고 "No logs available"과 같은 대체 텍스트를 안전하게 렌더링해야 합니다.
+- **연속적인 복사 버튼 클릭**: 짧은 시간 내에 클립보드 복사 버튼을 여러 번 클릭할 경우 Toast 알림이 무한정 쌓이지 않도록 디바운싱(Debouncing) 또는 알림 중복 제거 처리가 필요합니다.
+- **로컬 테스트 포트 충돌**: 로컬 환경에서 테스트 및 개발 서버 구동 시 포트 충돌이 발생할 수 있으므로, 3100번 포트를 점유하여 실행(예: `http://localhost:3100` 접속)할 때 다른 프로세스와 간섭이 없는지 점검해야 합니다.
 
----
-
-## TODO (for Coder)
-- [ ] `web/src/components/ErrorLogModal.test.tsx` 테스트 파일에 `navigator.clipboard.writeText` Mocking을 추가하여 클립보드 복사 버튼 클릭에 대한 성공/실패 동작 단위 테스트 작성.
-- [ ] 에러 로그 모달 내부 `<pre className="mono error-log-detail">` 요소에 방대한 데이터가 렌더링될 때 레이아웃이 깨지지 않도록 CSS 상에서 오버플로우 스크롤(`overflow-y: auto`, `word-break: break-all`)이 충분히 안전하게 적용되어 있는지 점검.
-- [ ] `web/src/utils/security.test.ts`에 다중 인코딩이나 비정형 XSS 페이로드(예: `<scr<script>ipt>`)를 주입하여 필터링 우회 여부를 확인하는 심화 엣지 케이스 1~2개 추가.
+## TODO
+- [ ] `web/src/components/ErrorLogModal.test.tsx`에 `navigator.clipboard.writeText` 성공 및 실패 상황을 검증하는 Mock 테스트 작성.
+- [ ] `ErrorLogModal` 내 로그 출력 영역(`<pre>` 태그 등)에 `overflow-y: auto` 및 `word-break: break-all` 속성 적용 및 레이아웃 안정성 점검.
+- [ ] 5000자를 초과하는 에러 로그 유입 시 텍스트를 Truncation 하고 'Show more' 버튼으로 확장하는 기능 구현.
+- [ ] 클립보드 복사 성공/실패 시 사용자에게 결과를 알려주는 전역 Toast 알림 기능 추가.
+- [ ] `web/src/utils/security.test.ts`에 `<scr<script>ipt>` 와 같은 비정형 XSS 페이로드를 차단하는 심화 테스트 케이스 1~2개 추가.
+- [ ] XSS 방어 로직이 제네릭 타입 문법(`<T>` 등)을 정상 텍스트로 인식하도록 정규식 예외 처리 및 교차 검증 테스트 진행.
+- [ ] 로컬 실행 환경(3100 포트 등)에서 테스트 스크립트를 구동하여 전체 테스트의 100% 통과 여부 확인.
