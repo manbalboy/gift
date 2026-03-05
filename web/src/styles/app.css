@@ -902,6 +902,54 @@ select {
   gap: var(--space-8);
 }
 
+.system-alert-head-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.system-alert-level {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: 12px;
+  line-height: 18px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  padding: 0 var(--space-8);
+}
+
+.system-alert-level-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 10px;
+  color: var(--color-bg-base);
+}
+
+.system-alert-level-error {
+  color: color-mix(in srgb, var(--color-status-failed) 78%, var(--color-text-primary));
+  border-color: color-mix(in srgb, var(--color-status-failed) 55%, var(--color-border-default));
+}
+
+.system-alert-level-error .system-alert-level-icon {
+  background: var(--color-status-failed);
+}
+
+.system-alert-level-warning {
+  color: color-mix(in srgb, var(--color-status-warning) 75%, var(--color-text-primary));
+  border-color: color-mix(in srgb, var(--color-status-warning) 58%, var(--color-border-default));
+}
+
+.system-alert-level-warning .system-alert-level-icon {
+  background: var(--color-status-warning);
+}
+
 .system-alert-message {
   margin: 0;
   font-size: 13px;

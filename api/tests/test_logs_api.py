@@ -1,7 +1,9 @@
 from app.services.system_alerts import record_system_alert
 from app.db.session import engine
+from app.db.system_alert_model import SystemAlertLog
 
 from sqlalchemy import inspect, text
+from sqlalchemy.orm import Session
 
 from .conftest import client
 
@@ -69,3 +71,16 @@ def test_system_alerts_endpoint_masks_sensitive_tokens_and_paths():
     assert "/home/docker/" not in payload["message"]
     assert payload["context"]["path"] == "***[MASKED]***"
     assert payload["context"]["details"][0] == "***[MASKED]***"
+
+    with Session(engine) as session:
+        stored = (
+            session.query(SystemAlertLog)
+            .filter(SystemAlertLog.code == "sensitive-test")
+            .order_by(SystemAlertLog.created_at.desc(), SystemAlertLog.id.desc())
+            .first()
+        )
+        assert stored is not None
+        assert "***[MASKED]***" in stored.message
+        assert "Bearer" not in stored.message
+        assert "/home/docker/" not in stored.message
+        assert stored.context.get("path") == "***[MASKED]***"

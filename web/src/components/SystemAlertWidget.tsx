@@ -13,6 +13,13 @@ export default function SystemAlertWidget({
   alerts: SystemAlertEntry[];
   loading?: boolean;
 }) {
+  const levelMeta = (level: string) => {
+    if (level === 'error') {
+      return { label: 'Error', className: 'system-alert-level-error' };
+    }
+    return { label: 'Warning', className: 'system-alert-level-warning' };
+  };
+
   return (
     <section className="card system-alert-widget" aria-label="system-alert-widget">
       <div className="card-header">
@@ -25,19 +32,30 @@ export default function SystemAlertWidget({
         <p className="empty">최근 시스템 경고가 없습니다.</p>
       ) : (
         <div className="system-alert-list">
-          {alerts.map((alert) => (
-            <article key={alert.id} className={`system-alert-item system-alert-${alert.level}`}>
-              <div className="system-alert-head">
-                <strong className="mono">{alert.code}</strong>
-                <span className="mono">{formatTime(alert.created_at)}</span>
-              </div>
-              <p className="system-alert-message mono">{alert.message}</p>
-              <p className="system-alert-meta mono">
-                {alert.source}
-                {alert.context.path ? ` · ${String(alert.context.path)}` : ''}
-              </p>
-            </article>
-          ))}
+          {alerts.map((alert) => {
+            const level = levelMeta(alert.level);
+            return (
+              <article key={alert.id} className={`system-alert-item system-alert-${alert.level}`}>
+                <div className="system-alert-head">
+                  <div className="system-alert-head-main">
+                    <strong className="mono">{alert.code}</strong>
+                    <span className={`system-alert-level mono ${level.className}`}>
+                      <span aria-hidden className="system-alert-level-icon">
+                        !
+                      </span>
+                      {level.label}
+                    </span>
+                  </div>
+                  <span className="mono">{formatTime(alert.created_at)}</span>
+                </div>
+                <p className="system-alert-message mono">{alert.message}</p>
+                <p className="system-alert-meta mono">
+                  {alert.source}
+                  {alert.context.path ? ` · ${String(alert.context.path)}` : ''}
+                </p>
+              </article>
+            );
+          })}
         </div>
       )}
     </section>

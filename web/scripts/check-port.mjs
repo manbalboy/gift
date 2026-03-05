@@ -9,6 +9,7 @@ const HOST = '0.0.0.0';
 const RETRY_ATTEMPTS = 6;
 const RETRY_SLEEP_MS = 1200;
 const PORT_HOLD_MS = 200;
+const LOCK_RESERVATION_MS = 6000;
 const LOCK_STALE_MS = 45_000;
 const LOCK_DIR = path.join(os.tmpdir(), 'devflow-port-locks');
 
@@ -52,6 +53,10 @@ async function canRecycleLock(port) {
   try {
     const payload = await fs.readFile(file, 'utf8');
     const parsed = JSON.parse(payload);
+    const reservedUntil = Number(parsed?.reservedUntil ?? 0);
+    if (Number.isFinite(reservedUntil) && reservedUntil > Date.now()) {
+      return false;
+    }
     const pid = Number(parsed?.pid);
     if (Number.isInteger(pid) && pid > 0) {
       return !isPidAlive(pid);
@@ -66,7 +71,14 @@ async function acquirePortLock(port) {
   const file = lockPath(port);
   try {
     const handle = await fs.open(file, 'wx');
-    await handle.writeFile(JSON.stringify({ pid: process.pid, port, createdAt: new Date().toISOString() }));
+    await handle.writeFile(
+      JSON.stringify({
+        pid: process.pid,
+        port,
+        createdAt: new Date().toISOString(),
+        reservedUntil: Date.now() + LOCK_RESERVATION_MS,
+      }),
+    );
     await handle.close();
     return true;
   } catch (error) {

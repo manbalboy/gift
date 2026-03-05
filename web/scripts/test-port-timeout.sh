@@ -30,15 +30,23 @@ HOLDER_PID=$!
 sleep 1
 
 echo "[2/3] check-port.mjs 실행 (타임아웃 실패 기대)"
+START_TS=$(date +%s)
 set +e
 OUTPUT=$(node "$ROOT_DIR/scripts/check-port.mjs" 2>&1)
 EXIT_CODE=$?
 set -e
+END_TS=$(date +%s)
+ELAPSED=$((END_TS - START_TS))
 
 echo "$OUTPUT"
 
 if [[ $EXIT_CODE -eq 0 ]]; then
   echo "[3/3] 실패: 포트가 모두 점유됐는데도 스크립트가 성공했습니다."
+  exit 1
+fi
+
+if [[ $ELAPSED -lt 5 ]]; then
+  echo "[3/3] 실패: 타임아웃 재시도 없이 너무 빠르게 종료되었습니다. elapsed=${ELAPSED}s"
   exit 1
 fi
 
