@@ -1,10 +1,10 @@
 # PREVIEW
 
-- Status: `skipped`
-- Docker Pod/Container: ``
-- Image: ``
-- Container Port: `n/a`
-- External URL: 
-- Health URL: 
+- Status: `failed`
+- Docker Pod/Container: `agenthub-preview-cdb309bd`
+- Image: `agenthub/new-mind-cdb309bd:latest`
+- Container Port: `7000`
+- External URL: http://ssh.manbalboy.com:7004
+- Health URL: http://127.0.0.1:7004/
 - CORS: `https://manbalboy.com,http://manbalboy.com,https://localhost,http://localhost,https://127.0.0.1,http://127.0.0.1`
-- Note: Dockerfile not found in repository root.
+- Note: Docker preview failed: [Errno 104] Connection reset by peer
