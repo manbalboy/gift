@@ -159,6 +159,207 @@ test('모바일(320px)에서 SystemAlertWidget이 긴 텍스트에도 레이아�
   expect(layout?.bodyHasHorizontalOverflow).toBeFalsy();
 });
 
+test('모바일(320px)에서 필터 칩과 액션 버튼이 함께 동작하고 레이아웃이 유지된다', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 760 });
+
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 1,
+          name: 'Alert Filter Mobile',
+          description: 'alert filter mobile test',
+          graph: { nodes: [{ id: 'idea', type: 'task', label: 'Idea' }], edges: [] },
+        },
+      ]),
+    });
+  });
+
+  await page.route('**/api/logs/system-alerts**', async (route) => {
+    const payload = Array.from({ length: 12 }).map((_, idx) => ({
+      id: `filter-mobile-${idx}`,
+      created_at: `2026-03-05T00:10:${String(idx).padStart(2, '0')}Z`,
+      level: idx % 3 === 0 ? 'error' : idx % 3 === 1 ? 'warning' : 'info',
+      code: `FILTER_${idx}`,
+      message: `filter-message-${idx}-${longToken}`,
+      source: 'filter-tester',
+      context: { path: '/tmp/devflow-port-locks', risk_score: idx % 3 === 0 ? 90 : 65 },
+      risk_score: idx % 3 === 0 ? 90 : 65,
+    }));
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: payload, next_cursor: null }),
+    });
+  });
+
+  await page.route('**/api/webhooks/blocked-events**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'System Alerts' })).toBeVisible();
+  await expect(page.locator('.system-alert-item').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Error' }).click();
+  await expect(page.locator('.system-alert-item')).toHaveCount(4);
+  await expect(page.locator('.system-alert-error')).toHaveCount(4);
+
+  await page.getByRole('button', { name: 'Warning' }).click();
+  await expect(page.locator('.system-alert-item')).toHaveCount(4);
+  await expect(page.locator('.system-alert-warning')).toHaveCount(4);
+
+  await page.getByRole('button', { name: 'All' }).click();
+  await expect(page.locator('.system-alert-item')).toHaveCount(12);
+
+  const layout = await page.evaluate(() => {
+    const viewportWidth = window.innerWidth;
+    const toolbar = document.querySelector('.system-alert-toolbar') as HTMLElement | null;
+    const chips = document.querySelector('.system-alert-filter-row') as HTMLElement | null;
+    const actions = document.querySelector('.system-alert-toolbar-actions') as HTMLElement | null;
+    if (!toolbar || !chips || !actions) return null;
+
+    const toolbarRect = toolbar.getBoundingClientRect();
+    const chipsRect = chips.getBoundingClientRect();
+    const actionsRect = actions.getBoundingClientRect();
+
+    return {
+      toolbarWithinWidth: toolbarRect.left >= 0 && toolbarRect.right <= viewportWidth + 0.5,
+      chipsWithinWidth: chipsRect.left >= 0 && chipsRect.right <= viewportWidth + 0.5,
+      actionsWithinWidth: actionsRect.left >= 0 && actionsRect.right <= viewportWidth + 0.5,
+      bodyHasHorizontalOverflow: document.documentElement.scrollWidth > viewportWidth + 0.5,
+    };
+  });
+
+  expect(layout).not.toBeNull();
+  expect(layout?.toolbarWithinWidth).toBeTruthy();
+  expect(layout?.chipsWithinWidth).toBeTruthy();
+  expect(layout?.actionsWithinWidth).toBeTruthy();
+  expect(layout?.bodyHasHorizontalOverflow).toBeFalsy();
+});
+
+test('스크롤을 위로 올리면 auto-scroll이 멈추고 최하단 복귀 시 재개된다', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.route('**/api/workflows', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 1,
+          name: 'Alert Scroll',
+          description: 'scroll pause resume test',
+          graph: { nodes: [{ id: 'idea', type: 'task', label: 'Idea' }], edges: [] },
+        },
+      ]),
+    });
+  });
+
+  await page.route('**/api/logs/system-alerts**', async (route) => {
+    const requestUrl = new URL(route.request().url());
+    const cursor = requestUrl.searchParams.get('cursor');
+    const createItems = (start: number, size: number) =>
+      Array.from({ length: size }).map((_, idx) => {
+        const id = start + idx;
+        return {
+          id: `scroll-${id}`,
+          created_at: `2026-03-05T00:${String(Math.floor(id / 60)).padStart(2, '0')}:${String(id % 60).padStart(2, '0')}Z`,
+          level: id % 2 === 0 ? 'error' : 'warning',
+          code: `SCROLL_${id}`,
+          message: `${longToken}scroll-message-${id}`,
+          source: 'scroll-tester',
+          context: { path: '/tmp/devflow-port-locks', risk_score: 81 },
+          risk_score: 81,
+        };
+      });
+
+    if (!cursor) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: createItems(0, 45), next_cursor: 'page-2' }),
+      });
+      return;
+    }
+    if (cursor === 'page-2') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: createItems(45, 20), next_cursor: 'page-3' }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: createItems(65, 10), next_cursor: null }),
+    });
+  });
+
+  await page.route('**/api/webhooks/blocked-events**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  await page.goto('/');
+  await expect(page.locator('.system-alert-item').first()).toBeVisible();
+
+  await page.evaluate(() => {
+    const list = document.querySelector('.system-alert-list') as HTMLElement | null;
+    if (!list) return;
+    list.scrollTop = 0;
+    list.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+
+  await expect(page.locator('.system-alert-scroll-state.paused')).toHaveText('PAUSED');
+  const beforeLoadMore = await page.evaluate(() => (document.querySelector('.system-alert-list') as HTMLElement).scrollTop);
+
+  await page.locator('.system-alert-footer .btn').click();
+  await expect(page.locator('.system-alert-item')).toHaveCount(65);
+
+  const pausedState = await page.evaluate(() => {
+    const list = document.querySelector('.system-alert-list') as HTMLElement | null;
+    if (!list) return null;
+    return {
+      scrollTop: list.scrollTop,
+      distanceFromBottom: list.scrollHeight - list.scrollTop - list.clientHeight,
+    };
+  });
+
+  expect(pausedState).not.toBeNull();
+  expect(Math.abs((pausedState?.scrollTop ?? 0) - beforeLoadMore)).toBeLessThan(2);
+  expect((pausedState?.distanceFromBottom ?? 0) > 16).toBeTruthy();
+
+  await page.evaluate(() => {
+    const list = document.querySelector('.system-alert-list') as HTMLElement | null;
+    if (!list) return;
+    list.scrollTop = list.scrollHeight;
+    list.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+
+  await expect(page.locator('.system-alert-scroll-state.live')).toHaveText('LIVE');
+  await page.locator('.system-alert-footer .btn').click();
+  await expect(page.locator('.system-alert-item')).toHaveCount(75);
+
+  const resumedState = await page.evaluate(() => {
+    const list = document.querySelector('.system-alert-list') as HTMLElement | null;
+    if (!list) return null;
+    return list.scrollHeight - list.scrollTop - list.clientHeight;
+  });
+  expect(resumedState).not.toBeNull();
+  expect((resumedState ?? 999) <= 4).toBeTruthy();
+});
+
 test('모바일에서 오류 툴팁이 긴 로그에도 뷰포트 밖으로 이탈하지 않는다', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
 
