@@ -21,11 +21,11 @@
 
 # TODO
 
-- [ ] `api/app/services/system_alerts.py`의 `_sanitize_string` 함수에 정규표현식 실행 전 문자열 길이를 10,000자로 선제적 제한(Truncate)하는 방어 로직 추가.
-- [ ] `web/src/components/SystemAlertWidget.tsx` 컨테이너 및 연관 CSS에 `word-break: break-all` 및 `overflow-wrap: break-word` 속성 적용.
-- [ ] `api/scripts/migrations/20260305_add_system_alert_created_at_desc_index.sql` 스크립트 적용 및 `api/app/api/logs.py` 페이징 로직을 Cursor 기반(복합 인덱스 활용)으로 전환.
-- [ ] 프론트엔드 대시보드 위젯에 시스템 알림 일괄 초기화(Clear All) UI 버튼 추가 및 백엔드 숨김/삭제 API 연동.
-- [ ] 클라이언트 사이드에 로드된 시스템 알림 데이터를 즉시 JSON 파일로 다운로드할 수 있는 내보내기(Export Logs) 유틸리티 버튼 구현.
-- [ ] `api/tests/test_workflow_engine.py`에 무한 루프 예방용 예산(Budget) 한계 경계값 테스트 케이스 작성.
-- [ ] `web/tests/e2e/system-alert.spec.ts`에 모바일 해상도(320px) 기준 장문 텍스트 인입 시 레이아웃 붕괴 여부를 확인하는 프로그래매틱 검증 로직 추가.
-- [ ] `web/scripts/test-port-timeout.sh` 내 다중 백그라운드 프로세스 실행에 따른 락 경합 시나리오(포트 3100 할당 기준) 및 트랩 해제 테스트 코드 보강.
+- [x] `api/app/services/system_alerts.py`의 `_sanitize_string` 함수에 정규표현식 실행 전 문자열 길이를 10,000자로 선제적 제한(Truncate)하는 방어 로직 추가.
+- [x] `web/src/components/SystemAlertWidget.tsx` 컨테이너 및 연관 CSS에 `word-break: break-all` 및 `overflow-wrap: break-word` 속성 적용.
+- [x] `api/scripts/migrations/20260305_add_system_alert_created_at_desc_index.sql` 스크립트 적용 및 `api/app/api/logs.py` 페이징 로직을 Cursor 기반(복합 인덱스 활용)으로 전환.
+- [x] 프론트엔드 대시보드 위젯에 시스템 알림 일괄 초기화(Clear All) UI 버튼 추가 및 백엔드 숨김/삭제 API 연동.
+- [x] 클라이언트 사이드에 로드된 시스템 알림 데이터를 즉시 JSON 파일로 다운로드할 수 있는 내보내기(Export Logs) 유틸리티 버튼 구현.
+- [x] `api/tests/test_workflow_engine.py`에 무한 루프 예방용 예산(Budget) 한계 경계값 테스트 케이스 작성.
+- [x] `web/tests/e2e/system-alert.spec.ts`에 모바일 해상도(320px) 기준 장문 텍스트 인입 시 레이아웃 붕괴 여부를 확인하는 프로그래매틱 검증 로직 추가.
+- [x] `web/scripts/test-port-timeout.sh` 내 다중 백그라운드 프로세스 실행에 따른 락 경합 시나리오(포트 3100 할당 기준) 및 트랩 해제 테스트 코드 보강.
