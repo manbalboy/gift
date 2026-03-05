@@ -198,9 +198,22 @@ describe('ErrorLogModal', () => {
   });
 
   test('빈 로그 입력 시 No logs available 대체 텍스트를 렌더링한다', () => {
-    render(<ErrorLogModal title="빈 로그" summary="요약" detailLines={[]} onClose={jest.fn()} />);
+    const { container } = render(<ErrorLogModal title="빈 로그" summary="요약" detailLines={[]} onClose={jest.fn()} />);
 
     expect(screen.getByText('No logs available')).toBeInTheDocument();
-    expect(screen.getByText('No logs available')).toHaveClass('error-log-detail');
+    expect(container.querySelector('.error-log-detail')?.textContent).toContain('No logs available');
+  });
+
+  test('10만 자 이상 로그를 1초 내에 초기 렌더링한다', () => {
+    const source = `LOCK_RACE_CONDITION_${'👨‍👩‍👧‍👦'}_${'A'.repeat(24)}\n`;
+    const largeText = source.repeat(4200);
+    expect(largeText.length).toBeGreaterThan(100000);
+
+    const startedAt = Date.now();
+    render(<ErrorLogModal title="렌더 성능" summary="요약" detailLines={[largeText]} onClose={jest.fn()} />);
+    const elapsed = Date.now() - startedAt;
+
+    expect(screen.getByRole('button', { name: '전체 보기' })).toBeInTheDocument();
+    expect(elapsed).toBeLessThan(1000);
   });
 });

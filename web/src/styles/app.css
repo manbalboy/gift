@@ -1705,6 +1705,16 @@ select {
   overflow-wrap: anywhere;
 }
 
+.error-log-plain {
+  margin: 0;
+  font: inherit;
+  white-space: inherit;
+}
+
+.error-log-row {
+  min-height: 20px;
+}
+
 .error-log-truncation-meta {
   margin-top: var(--space-8);
   display: flex;

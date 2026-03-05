@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Dashboard from './components/Dashboard';
 import ErrorLogModal from './components/ErrorLogModal';
 import LiveRunConstellation from './components/LiveRunConstellation';
@@ -8,6 +8,7 @@ import StatusBadge from './components/StatusBadge';
 import SystemAlertWidget from './components/SystemAlertWidget';
 import Toast, { type ToastItem } from './components/Toast';
 import WorkflowBuilder from './components/WorkflowBuilder';
+import { useLoopStatus } from './hooks/useLoopStatus';
 import { useViewport } from './hooks/useViewport';
 import { LAYER_Z_INDEX } from './constants/layers';
 import { ApiError, api } from './services/api';
@@ -257,32 +258,16 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const syncLoopStatus = async () => {
-      try {
-        const status = await api.getLoopEngineStatus();
-        if (!cancelled) {
-          setLoopEngineStatus(status);
-        }
-      } catch {
-        if (!cancelled) {
-          setLoopEngineStatus(null);
-        }
-      }
-    };
-
-    void syncLoopStatus();
-    const timer = window.setInterval(() => {
-      void syncLoopStatus();
-    }, 1500);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+  const handleLoopStatus = useCallback((status: LoopEngineStatus | null) => {
+    setLoopEngineStatus(status);
   }, []);
+
+  useLoopStatus({
+    onStatus: handleLoopStatus,
+    minRequestGapMs: 900,
+    runningIntervalMs: 1500,
+    idleIntervalMs: 4000,
+  });
 
   useEffect(() => {
     let cancelled = false;

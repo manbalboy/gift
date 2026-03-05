@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
+import errno
+import os
 import re
+import socket
 import subprocess
 import time
 
@@ -174,3 +177,45 @@ app.include_router(webhooks_router, prefix=settings.api_prefix, dependencies=[De
 app.include_router(preview_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
 app.include_router(logs_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
 app.include_router(loop_engine_router, prefix=settings.api_prefix, dependencies=[Depends(require_viewer_token)])
+
+
+def _find_open_port(host: str, start_port: int, end_port: int) -> int | None:
+    for port in range(start_port, end_port + 1):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+            except OSError:
+                continue
+            return port
+    return None
+
+
+def run_with_port_retry() -> int:
+    import uvicorn
+
+    host = os.getenv("HOST", "0.0.0.0")
+    start_port = int(os.getenv("START_PORT", "3100"))
+    range_start = int(os.getenv("PORT_RANGE_START", "3100"))
+    range_end = int(os.getenv("PORT_RANGE_END", "3199"))
+    max_retry = max(1, int(os.getenv("MAX_RETRY", "3")))
+
+    selected_port = start_port
+    for attempt in range(1, max_retry + 1):
+        try:
+            uvicorn.run("app.main:app", host=host, port=selected_port, log_level="info")
+            return 0
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+            fallback = _find_open_port(host, range_start, range_end)
+            if fallback is None:
+                print("[main] 포트 충돌(Address already in use)로 종료합니다. 사용 가능한 3100번대 포트가 없습니다.")
+                return 1
+            selected_port = fallback
+            print(f"[main] 포트 충돌(Address already in use)을 감지했습니다. {selected_port} 포트로 재시도합니다. ({attempt}/{max_retry})")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_with_port_retry())

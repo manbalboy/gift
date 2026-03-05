@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 const MAX_VISIBLE_LOG_CHARS = 5000;
 const EXPANDED_LOG_PAGE_CHARS = 12000;
 const EMPTY_LOG_FALLBACK = 'No logs available';
 const DOWNLOAD_CHUNK_CHARS = 64 * 1024;
+const VIRTUAL_ROW_ESTIMATE_PX = 24;
+const VIRTUALIZE_MIN_ROWS = 160;
 const GRAPHEME_FALLBACK_PATTERN =
   /(?:\p{Regional_Indicator}{2})|(?:[#*0-9]\uFE0F?\u20E3)|(?:\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\p{Emoji_Modifier})?)*)|(?:\P{Mark}\p{Mark}*)|(?:\p{Mark}+)|./gu;
 
@@ -93,7 +96,10 @@ async function downloadLog(payload: string, format: 'txt' | 'json') {
   URL.revokeObjectURL(objectUrl);
 }
 
-function splitGraphemes(value: string): string[] {
+function splitGraphemeChunks(value: string, chunkSize: number): string[] {
+  if (!value) return [''];
+  const clampedChunkSize = Math.max(256, chunkSize);
+  const chunks: string[] = [];
   const segmenterCtor = (globalThis as {
     Intl?: {
       Segmenter?: new (
@@ -104,9 +110,67 @@ function splitGraphemes(value: string): string[] {
   }).Intl?.Segmenter;
   if (segmenterCtor) {
     const segmenter = new segmenterCtor('ko', { granularity: 'grapheme' });
-    return Array.from(segmenter.segment(value), (part) => part.segment);
+    let bucket = '';
+    let size = 0;
+    for (const part of segmenter.segment(value)) {
+      bucket += part.segment;
+      size += 1;
+      if (size >= clampedChunkSize) {
+        chunks.push(bucket);
+        bucket = '';
+        size = 0;
+      }
+    }
+    if (bucket || chunks.length === 0) {
+      chunks.push(bucket);
+    }
+    return chunks;
   }
-  return value.match(GRAPHEME_FALLBACK_PATTERN) ?? [];
+
+  if (value.length > 20000) {
+    for (let index = 0; index < value.length; index += clampedChunkSize) {
+      chunks.push(value.slice(index, index + clampedChunkSize));
+    }
+    return chunks.length > 0 ? chunks : [''];
+  }
+
+  const graphemes = value.match(GRAPHEME_FALLBACK_PATTERN) ?? [];
+  for (let index = 0; index < graphemes.length; index += clampedChunkSize) {
+    chunks.push(graphemes.slice(index, index + clampedChunkSize).join(''));
+  }
+  return chunks.length > 0 ? chunks : [''];
+}
+
+function truncateByGrapheme(value: string, limit: number): string {
+  if (!value) return value;
+  const maxSize = Math.max(1, limit);
+  const segmenterCtor = (globalThis as {
+    Intl?: {
+      Segmenter?: new (
+        locales?: string | string[],
+        options?: { granularity?: 'grapheme' | 'word' | 'sentence' },
+      ) => { segment: (input: string) => Iterable<{ segment: string }> };
+    };
+  }).Intl?.Segmenter;
+
+  if (segmenterCtor) {
+    const segmenter = new segmenterCtor('ko', { granularity: 'grapheme' });
+    let out = '';
+    let count = 0;
+    for (const part of segmenter.segment(value)) {
+      out += part.segment;
+      count += 1;
+      if (count >= maxSize) break;
+    }
+    return out;
+  }
+
+  if (value.length > 20000) {
+    return value.slice(0, maxSize);
+  }
+
+  const graphemes = value.match(GRAPHEME_FALLBACK_PATTERN) ?? [];
+  return graphemes.slice(0, maxSize).join('');
 }
 
 export default function ErrorLogModal({
@@ -120,6 +184,7 @@ export default function ErrorLogModal({
   const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'failed'>('idle');
   const [expanded, setExpanded] = useState(false);
   const [expandedPage, setExpandedPage] = useState(0);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const payload = useMemo(() => {
     const merged = detailLines
       .map((line) => (typeof line === 'string' ? line : ''))
@@ -127,22 +192,45 @@ export default function ErrorLogModal({
       .trim();
     return merged.length > 0 ? merged : EMPTY_LOG_FALLBACK;
   }, [detailLines]);
-  const payloadGraphemes = useMemo(() => splitGraphemes(payload), [payload]);
-  const payloadLength = payloadGraphemes.length;
+  const payloadLength = payload.length;
   const isTruncated = payloadLength > MAX_VISIBLE_LOG_CHARS;
-  const expandedTotalPages = Math.max(1, Math.ceil(payloadLength / EXPANDED_LOG_PAGE_CHARS));
+  const expandedPages = useMemo(
+    () => (isTruncated && expanded ? splitGraphemeChunks(payload, EXPANDED_LOG_PAGE_CHARS) : [payload]),
+    [expanded, isTruncated, payload],
+  );
+  const expandedTotalPages = Math.max(1, expandedPages.length);
   const safeExpandedPage = Math.min(expandedPage, expandedTotalPages - 1);
-  const { text: visiblePayload, length: visiblePayloadLength } = useMemo(() => {
+  const visiblePayload = useMemo(() => {
     if (!isTruncated || !expanded) return { text: payload, length: payloadLength };
-    const start = safeExpandedPage * EXPANDED_LOG_PAGE_CHARS;
-    const end = start + EXPANDED_LOG_PAGE_CHARS;
-    const page = payloadGraphemes.slice(start, end);
-    return { text: page.join(''), length: page.length };
-  }, [expanded, isTruncated, payload, payloadGraphemes, payloadLength, safeExpandedPage]);
+    const pageText = expandedPages[safeExpandedPage] ?? '';
+    return { text: pageText, length: pageText.length };
+  }, [expanded, expandedPages, isTruncated, payload, payloadLength, safeExpandedPage]);
   const collapsedPreview = useMemo(() => {
     if (!isTruncated) return payload;
-    return `${payloadGraphemes.slice(0, MAX_VISIBLE_LOG_CHARS).join('')}\n\n... (생략됨)`;
-  }, [isTruncated, payload, payloadGraphemes]);
+    const preview =
+      payload.length > 50000 ? payload.slice(0, MAX_VISIBLE_LOG_CHARS) : truncateByGrapheme(payload, MAX_VISIBLE_LOG_CHARS);
+    return `${preview}\n\n... (생략됨)`;
+  }, [isTruncated, payload]);
+  const renderedPayload = expanded && isTruncated ? visiblePayload.text : collapsedPreview;
+  const renderedRows = useMemo(() => {
+    const lines = renderedPayload.split('\n');
+    if (lines.length <= 1) return [renderedPayload];
+    return lines.map((line, idx) => (idx < lines.length - 1 ? `${line}\n` : line));
+  }, [renderedPayload]);
+  const isJsdomRuntime =
+    typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string' && navigator.userAgent.toLowerCase().includes('jsdom');
+  const shouldVirtualize =
+    renderedRows.length >= VIRTUALIZE_MIN_ROWS &&
+    !isJsdomRuntime &&
+    typeof window !== 'undefined' &&
+    typeof (window as Window & { ResizeObserver?: unknown }).ResizeObserver !== 'undefined';
+  const virtualizer = useVirtualizer({
+    count: shouldVirtualize ? renderedRows.length : 0,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => VIRTUAL_ROW_ESTIMATE_PX,
+    overscan: 14,
+  });
+  const virtualRows = shouldVirtualize ? virtualizer.getVirtualItems() : [];
 
   useEffect(() => {
     setExpanded(false);
@@ -186,12 +274,42 @@ export default function ErrorLogModal({
           </div>
         </div>
         <p>{summary}</p>
-        <pre className="mono error-log-detail">{expanded && isTruncated ? visiblePayload : collapsedPreview}</pre>
+        <div className="mono error-log-detail" ref={scrollContainerRef}>
+          {shouldVirtualize ? (
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                width: '100%',
+                position: 'relative',
+              }}
+            >
+              {virtualRows.map((virtualRow) => (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  className="error-log-row"
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  {renderedRows[virtualRow.index]}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <pre className="error-log-plain">{renderedPayload}</pre>
+          )}
+        </div>
         {isTruncated && (
           <div className="error-log-truncation-meta">
             <p className="mono">
               {expanded
-                ? `페이지 ${safeExpandedPage + 1}/${expandedTotalPages} · 표시 ${visiblePayloadLength.toLocaleString()} chars · 전체 ${payloadLength.toLocaleString()} chars`
+                ? `페이지 ${safeExpandedPage + 1}/${expandedTotalPages} · 표시 ${visiblePayload.length.toLocaleString()} chars · 전체 ${payloadLength.toLocaleString()} chars`
                 : `표시 ${MAX_VISIBLE_LOG_CHARS.toLocaleString()} / 전체 ${payloadLength.toLocaleString()} chars`}
             </p>
             <button type="button" className="btn btn-ghost" onClick={() => setExpanded((prev) => !prev)}>
