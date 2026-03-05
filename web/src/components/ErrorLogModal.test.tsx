@@ -70,4 +70,11 @@ describe('ErrorLogModal', () => {
     expect(screen.getByText('표시 6,000 / 전체 6,000 chars')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '접기' })).toBeInTheDocument();
   });
+
+  test('빈 로그 입력 시 No logs available 대체 텍스트를 렌더링한다', () => {
+    render(<ErrorLogModal title="빈 로그" summary="요약" detailLines={[]} onClose={jest.fn()} />);
+
+    expect(screen.getByText('No logs available')).toBeInTheDocument();
+    expect(screen.getByText('No logs available')).toHaveClass('error-log-detail');
+  });
 });

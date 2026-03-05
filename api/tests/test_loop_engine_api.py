@@ -293,3 +293,84 @@ def test_loop_engine_handles_rapid_pause_resume_stop_signals_without_deadlock():
     stopped = client.post('/api/loop/stop')
     assert stopped.status_code == 200
     assert stopped.json()['mode'] in {'idle', 'stopped'}
+
+
+def test_loop_component_mock_routes_return_expected_stage_payloads():
+    analyzer = client.post(
+        '/api/loop/analyzer/mock',
+        json={
+            'summary': 'lint 에러와 flaky 테스트를 분석합니다.',
+            'context': 'run=12',
+            'max_loop_count': 120,
+            'budget_remaining': 3200,
+        },
+    )
+    assert analyzer.status_code == 200
+    analyzer_payload = analyzer.json()
+    assert analyzer_payload['component'] == 'analyzer'
+    assert analyzer_payload['next_component'] == 'evaluator'
+    assert analyzer_payload['accepted'] is True
+
+    evaluator = client.post(
+        '/api/loop/evaluator/mock',
+        json={
+            'summary': '품질 점수 재평가',
+            'max_loop_count': 2,
+            'budget_remaining': 1200,
+            'previous_score': 44,
+        },
+    )
+    assert evaluator.status_code == 200
+    evaluator_payload = evaluator.json()
+    assert evaluator_payload['component'] == 'evaluator'
+    assert evaluator_payload['status'] == 'needs_review'
+    assert evaluator_payload['next_component'] is None
+
+    planner = client.post(
+        '/api/loop/planner/mock',
+        json={
+            'summary': '리팩터링 단계 계획',
+            'max_loop_count': 80,
+            'budget_remaining': 2400,
+        },
+    )
+    assert planner.status_code == 200
+    assert planner.json()['component'] == 'planner'
+    assert planner.json()['next_component'] == 'executor'
+
+    executor = client.post(
+        '/api/loop/executor/mock',
+        json={
+            'summary': '실행 budget 소진',
+            'max_loop_count': 80,
+            'budget_remaining': 0,
+        },
+    )
+    assert executor.status_code == 200
+    executor_payload = executor.json()
+    assert executor_payload['component'] == 'executor'
+    assert executor_payload['status'] == 'halted'
+    assert executor_payload['accepted'] is False
+    assert executor_payload['next_component'] is None
+
+
+def test_loop_component_mock_routes_validate_required_fields():
+    missing_summary = client.post(
+        '/api/loop/analyzer/mock',
+        json={
+            'summary': '',
+            'max_loop_count': 100,
+            'budget_remaining': 1000,
+        },
+    )
+    assert missing_summary.status_code == 422
+
+    invalid_policy = client.post(
+        '/api/loop/evaluator/mock',
+        json={
+            'summary': 'invalid max_loop_count',
+            'max_loop_count': 0,
+            'budget_remaining': 1000,
+        },
+    )
+    assert invalid_policy.status_code == 422

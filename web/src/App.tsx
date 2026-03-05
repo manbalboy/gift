@@ -88,6 +88,7 @@ export default function App() {
   const dedupedToastKeysRef = useRef<Set<string>>(new Set());
   const trackedLoopInstructionIdsRef = useRef<string[]>([]);
   const notifiedDroppedInstructionIdsRef = useRef<Set<string>>(new Set());
+  const errorLogCopyToastDebounceRef = useRef<{ status: 'done' | 'failed' | null; at: number }>({ status: null, at: 0 });
   const pendingRunSyncIdRef = useRef<number | null>(null);
   const runSyncTimerRef = useRef<number | null>(null);
   const runSyncInFlightRef = useRef(false);
@@ -160,6 +161,21 @@ export default function App() {
     commitToastQueue([]);
     dedupedToastKeysRef.current.clear();
     commitVisibleToasts([]);
+  };
+
+  const handleErrorLogCopyResult = (status: 'done' | 'failed') => {
+    const now = Date.now();
+    const previous = errorLogCopyToastDebounceRef.current;
+    if (previous.status === status && now - previous.at < 1000) {
+      return;
+    }
+    errorLogCopyToastDebounceRef.current = { status, at: now };
+
+    enqueueToast(
+      status === 'done' ? 'info' : 'error',
+      status === 'done' ? '에러 로그를 클립보드에 복사했습니다.' : '에러 로그 복사에 실패했습니다.',
+      { dedupeKey: `error-log-copy-${status}` },
+    );
   };
 
   const flushRunSync = async () => {
@@ -1289,12 +1305,7 @@ export default function App() {
             `updated_at: ${queueOverflowDetail.updatedAt}`,
           ]}
           isMobileSheet={isMobilePortrait}
-          onCopyResult={(status) =>
-            enqueueToast(
-              status === 'done' ? 'warning' : 'error',
-              status === 'done' ? '에러 로그를 클립보드에 복사했습니다.' : '에러 로그 복사에 실패했습니다.',
-            )
-          }
+          onCopyResult={handleErrorLogCopyResult}
           onClose={() => setQueueOverflowDetail(null)}
         />
       )}

@@ -31,12 +31,17 @@ describe('Toast', () => {
     jest.clearAllMocks();
   });
 
-  test('warning/error 타입에 맞는 타이틀을 렌더링한다', () => {
+  test('info/warning/error 타입에 맞는 타이틀을 렌더링한다', () => {
+    const info: ToastItem = { id: 'toast-0', level: 'info', message: '안내 메시지' };
     const warning: ToastItem = { id: 'toast-1', level: 'warning', message: '경고 메시지' };
     const error: ToastItem = { id: 'toast-2', level: 'error', message: '오류 메시지' };
     const onClose = jest.fn();
 
-    const { rerender } = render(<Toast item={warning} onClose={onClose} />);
+    const { rerender } = render(<Toast item={info} onClose={onClose} />);
+    expect(screen.getByText('안내')).toBeInTheDocument();
+    expect(screen.getByText('안내 메시지')).toBeInTheDocument();
+
+    rerender(<Toast item={warning} onClose={onClose} />);
     expect(screen.getByText('경고')).toBeInTheDocument();
     expect(screen.getByText('경고 메시지')).toBeInTheDocument();
 

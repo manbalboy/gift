@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import re
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -116,3 +116,29 @@ class HumanGateDecisionAudit(Base):
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
 
     workflow_run: Mapped[WorkflowRun] = relationship(back_populates="decision_audits")
+
+
+class LoopControlPolicy(Base):
+    __tablename__ = "loop_control_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    workflow_id: Mapped[int | None] = mapped_column(ForeignKey("workflow_definitions.id"), nullable=True, index=True)
+    max_loop_count: Mapped[int] = mapped_column(Integer, default=120)
+    max_iteration_budget: Mapped[int] = mapped_column(Integer, default=8000)
+    duplicate_change_threshold: Mapped[int] = mapped_column(Integer, default=3)
+    safe_mode_min_quality: Mapped[int] = mapped_column(Integer, default=35)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class LoopMemoryEntry(Base):
+    __tablename__ = "loop_memory_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("workflow_runs.id"), nullable=True, index=True)
+    stage: Mapped[str] = mapped_column(String(32), default="analyzer", index=True)
+    memory_key: Mapped[str] = mapped_column(String(120), index=True)
+    memory_value: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)

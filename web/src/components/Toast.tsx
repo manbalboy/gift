@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useViewport } from '../hooks/useViewport';
 
-export type ToastLevel = 'warning' | 'error';
+export type ToastLevel = 'info' | 'warning' | 'error';
 
 export type ToastItem = {
   id: string;
@@ -255,7 +255,12 @@ export default function Toast({
   }, [isMobile]);
 
   const role = item.level === 'error' ? 'alert' : 'status';
-  const title = item.level === 'error' ? '오류' : '경고';
+  const titleMap: Record<ToastLevel, string> = {
+    info: '안내',
+    warning: '경고',
+    error: '오류',
+  };
+  const title = titleMap[item.level];
   const shouldShowAction = Boolean(item.action) && !isMobile;
   const canToggleExpand = isMobile && isExpandableMessage;
   const messageId = `toast-message-${item.id}`;

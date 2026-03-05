@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 const MAX_VISIBLE_LOG_CHARS = 5000;
+const EMPTY_LOG_FALLBACK = 'No logs available';
 
 type Props = {
   title: string;
@@ -31,7 +32,13 @@ export default function ErrorLogModal({
 }: Props) {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'done' | 'failed'>('idle');
   const [expanded, setExpanded] = useState(false);
-  const payload = useMemo(() => detailLines.join('\n'), [detailLines]);
+  const payload = useMemo(() => {
+    const merged = detailLines
+      .map((line) => (typeof line === 'string' ? line : ''))
+      .join('\n')
+      .trim();
+    return merged.length > 0 ? merged : EMPTY_LOG_FALLBACK;
+  }, [detailLines]);
   const isTruncated = payload.length > MAX_VISIBLE_LOG_CHARS;
   const visiblePayload = isTruncated && !expanded ? `${payload.slice(0, MAX_VISIBLE_LOG_CHARS)}\n\n... (생략됨)` : payload;
 

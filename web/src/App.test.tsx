@@ -458,6 +458,11 @@ describe('App', () => {
 
   test('queue_overflow dropped 상태 수신 시 경고 토스트와 상세 모달을 노출한다', async () => {
     jest.useFakeTimers();
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
     (api.getLoopInstructionStatus as jest.Mock).mockResolvedValue({
       id: 'instr-001',
       instruction: '테스트',
@@ -486,6 +491,13 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '상세 보기' }));
     expect(screen.getByRole('dialog', { name: '큐 오버플로우 상세' })).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes('instruction_id: instr-001'))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '로그 복사' }));
+    fireEvent.click(screen.getByRole('button', { name: '로그 복사' }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText('에러 로그를 클립보드에 복사했습니다.')).toHaveLength(1);
+      expect(writeText).toHaveBeenCalledTimes(2);
+    });
 
     jest.useRealTimers();
   });

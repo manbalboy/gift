@@ -68,6 +68,10 @@ p {
   border-radius: 999px;
 }
 
+.toast-info .toast-accent {
+  background: var(--color-status-running);
+}
+
 .toast-warning .toast-accent {
   background: var(--color-status-warning);
 }
@@ -1666,6 +1670,7 @@ select {
 .error-log-modal {
   max-height: min(78vh, 520px);
   overflow: auto;
+  padding: var(--space-24);
 }
 
 .error-log-detail {
