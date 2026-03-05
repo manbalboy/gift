@@ -1,20 +1,27 @@
 # REVIEW
 
+본 리뷰는 요구사항(SPEC) 및 개발 계획(PLAN)을 기반으로 현재 코드베이스 상태를 점검한 결과입니다.
+
 ## Functional bugs
-- **OS Lock 예외 로깅 및 방어 로직 누락**: `PLAN.md`에 명시된 `api/app/services/workspace.py` 내 파일 읽기/쓰기 시 OS Lock 획득 경합에 대비한 방어 로직 및 예외 발생 시의 구조화된 에러 로깅(`logging.error`) 기능이 구현되어 있지 않습니다. 이로 인해 동시성 제어 중 발생하는 시스템 레벨의 파일 경합이나 권한 이슈를 감사(Audit)하거나 추적하는 데 제약이 있습니다.
+- **ReactFlow 에러 스니펫 UI 오버플로우 결함**: 워크플로우 캔버스(ReactFlow)에서 노드 실행 실패 시 매우 긴 에러 메시지가 툴팁에 표시될 때, 텍스트 줄바꿈이 정상적으로 처리되지 않아 UI 캔버스 영역 밖으로 텍스트가 튀어나가는(오버플로우) 시각적 결함이 존재합니다.
+- **동적 포트 점유 스크립트 결함 (`web/scripts/check-port.mjs`)**: 사용할 수 있는 동적 포트가 모두 고갈되었을 때 대기 로직 없이 즉시 스크립트가 실패로 종료됩니다. 
+  - *실행/재현 예시*: 로컬 환경에서 더미 서버를 구동해 3100부터 3199번까지의 3100번대 포트를 모두 점유 상태로 만든 뒤 `check-port.mjs`를 실행하면, 대기 및 재시도 없이 곧바로 스크립트가 실패 및 종료됩니다.
 
 ## Security concerns
-- **환경 변수 파싱 Fallback 로깅**: `api/app/core/config.py`에 적용된 환경 변수(예: `DEVFLOW_LOCALHOST_SPOOF_GUARD_PORTS`) 파싱 방어 로직과 안전한 기본값 반환(Fallback) 기능은 훌륭하게 적용되었습니다. 다만, 의도적으로 악의적이거나 기형적인 설정값이 주입되어 Fallback이 발동했을 경우, 이를 인지할 수 있는 시스템 레벨의 경고 로그가 없어 보안 감사 측면에서 보완이 필요합니다.
+- **환경 변수 파싱 Fallback 알림 부재 (`api/app/core/config.py`)**: 애플리케이션 구동 시 기형적인 환경 변수가 주입되어 파싱에 실패할 경우 시스템이 자동으로 기본값(Fallback)을 반영합니다. 그러나 이 과정에서 관리자에게 알림을 주는 시스템 레벨 경고(warning/error) 로깅이 누락되어 있어, 비정상적인 설정 주입 상황을 조기에 인지하기 어렵습니다.
+- **파일 I/O OS Lock 경합 예외 처리 미흡 (`api/app/services/workspace.py`)**: 다수의 워커가 실행되는 환경에서 파일 I/O 시스템의 권한 에러나 OS Lock 획득 실패 시, 구조화된 방어 로직과 예외 로깅 처리가 부족하여 애플리케이션 장애 및 보안 가시성이 저하됩니다.
 
 ## Missing tests / weak test coverage
-- **모듈 레벨 OS Lock 경합 단위 테스트 부족**: `api/tests/test_workflow_api.py` 내 통합/E2E 테스트(`test_resume_run_fails_gracefully_when_workspace_permission_error`)를 통해 워크플로우 엔진이 권한 에러 시 프로세스를 죽이지 않고 `failed` 상태로 안전하게 기록하는 것은 검증되었습니다. 그러나 `workspace.py` 내부의 구체적인 파일 핸들링 모듈 자체에서 OS Lock 획득 경합 시나리오를 Mocking하여 방어하는 모듈 단위의 테스트가 부족합니다.
+- **OS Lock 경합 방어 모의 단위 테스트 부재 (`api/tests/test_workspace_security.py`)**: `workspace.py` 내 파일 핸들링 구문에서 발생할 수 있는 잠재적인 OS Lock 경합 타이밍 이슈를 모사(Mocking)하여 검증하는 단위 테스트가 누락되어 있습니다. 안정적인 동시성 처리를 보장하기 위한 테스트 커버리지 확충이 필요합니다.
 
 ## Edge cases
-- **포트 3100번대 전면 고갈 시 실패 처리**: 프리뷰 포트 동적 할당을 위해 작성된 `web/scripts/check-port.mjs` 스크립트는 3100~3199 대역이 모두 사용 중일 경우 대기 로직 없이 즉시 에러(`process.exit(1)`)를 뱉고 종료됩니다. 다중 테스트가 병렬로 심하게 돌아가는 로컬/CI 환경에서는 일시적인 포트 고갈 엣지 케이스로 인해 파이프라인 전체가 바로 멈추는 불안정성을 야기할 수 있습니다. 짧은 간격의 재시도(Retry) 기법 도입이 권장됩니다.
-- **노드 재시도 시 짧은 로그 툴팁 길이 제한**: ReactFlow 컴포넌트에 노출되는 `error_snippet` 툴팁이 매우 긴 한 줄의 에러 문자열로 반환될 경우 UI 캔버스를 뚫고 나가는 시각적 엣지 케이스가 존재할 수 있습니다. 
+- **초장기 워크플로우 다중 작업 동시 I/O 경합**: 다수의 에이전트 작업이 동시에 하나의 워크스페이스 내 동일 파일을 수정하거나 읽으려 할 때, 순간적인 OS Lock 충돌로 인해 애플리케이션 크래시가 유발될 수 있는 엣지 케이스가 존재합니다.
+- **순간적인 3100번대 포트 전체 고갈 상황**: 단기간에 다수의 프리뷰 컨테이너가 배포되는 등 할당 가능한 동적 포트(3100~3199)가 일시적으로 완전 소진되는 엣지 케이스가 있습니다. 네트워크 트래픽이나 점유가 해소될 때까지 정해진 횟수만큼 지연 대기 후 재평가하는 동작이 반드시 필요합니다.
+- **비정상적으로 긴 에러 문자열 렌더링**: 공백이 전혀 없는 매우 긴 텍스트 문자열이 에러 로그 페이로드로 프론트엔드에 전달되었을 때, 툴팁 UI가 이를 감당하지 못하고 브라우저 화면의 레이아웃을 망가뜨리는 엣지 케이스가 존재합니다.
 
 ## TODO
-- [ ] `api/app/services/workspace.py` 내부의 파일 I/O 및 핸들링 구문에 OS Lock 경합 예외 처리와 `logging.error`를 활용한 구조화된 로깅 추가.
-- [ ] `api/tests/test_workspace_security.py` 파일 내에 `workspace.py`의 OS Lock 획득 경합 상황을 Mocking하여 검증하는 구체적인 단위 테스트 추가.
-- [ ] `web/scripts/check-port.mjs`에서 3100번대 포트 점유 여부 확인 시, 모두 고갈되었을 때 즉시 종료하지 않고 약간의 지연(Sleep) 후 재시도하는 로직 보완.
-- [ ] `api/app/core/config.py`의 파싱 실패 및 Fallback 발동 구간에 시스템 경고 로깅 연동 고려.
+- [ ] `api/app/services/workspace.py`: 파일 I/O 시 OS Lock 획득 실패(권한 에러 등)에 대한 예외 처리 및 `logging.error` 기반의 구조화된 로깅 로직 추가
+- [ ] `api/tests/test_workspace_security.py`: `workspace.py`의 파일 오픈 과정에서 Lock 경합이 발생하는 상황을 모킹(Mocking)하여 검증하는 단위 테스트 작성
+- [ ] `api/app/core/config.py`: 환경 변수 파싱 실패 및 Fallback 작동 구간에 `logging.warning` 또는 `logging.error`를 활용한 시스템 경고 로그 연동 추가
+- [ ] `web/scripts/check-port.mjs`: 3100번대(3100~3199) 포트 고갈 시 즉시 종료하지 않고, 약간의 지연(Sleep) 후 재시도하는 방어 로직 보완 구현
+- [ ] `web/src/` (ReactFlow 캔버스 내 에러 툴팁 컴포넌트): 긴 에러 메시지 노출 시 UI가 뚫고 나가는 것을 방지하기 위해 텍스트 줄바꿈(`word-break`, `white-space`) 속성 및 최대 너비(`max-width`) CSS 스타일링 적용
