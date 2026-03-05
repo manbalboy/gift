@@ -1001,3 +1001,47 @@ def test_redis_lock_provider_fail_fast_on_connection_error():
     assert lock.acquire(blocking=False) is False
     assert lock.extend() is False
     lock.release()
+
+
+def test_resume_api_propagates_fail_fast_lock_error_to_client():
+    workflow = client.post("/api/workflows", json=PAYLOAD).json()
+    run = client.post(f"/api/workflows/{workflow['id']}/runs")
+    assert run.status_code == 200
+    run_id = run.json()["id"]
+
+    db = SessionLocal()
+    try:
+        target_run = db.query(WorkflowRun).filter(WorkflowRun.id == run_id).first()
+        assert target_run is not None
+        target_run.status = "paused"
+        db.commit()
+    finally:
+        db.close()
+
+    class BusyRunLock:
+        def acquire(self, blocking=False, timeout=None):
+            return False
+
+        def release(self):
+            return None
+
+        def extend(self, ttl_seconds=None):
+            return False
+
+    class BusyLockProvider:
+        def get_run_lock(self, _run_id):
+            return BusyRunLock()
+
+    original_provider = workflow_engine.lock_provider
+    workflow_engine.lock_provider = BusyLockProvider()
+    try:
+        response = client.post(f"/api/runs/{run_id}/resume")
+    finally:
+        workflow_engine.lock_provider = original_provider
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "run lock is busy"
+
+    latest = client.get(f"/api/runs/{run_id}")
+    assert latest.status_code == 200
+    assert latest.json()["status"] == "paused"

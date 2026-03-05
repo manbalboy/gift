@@ -267,3 +267,29 @@ def test_loop_engine_enters_safe_mode_on_quality_score_freefall(monkeypatch):
     assert resumed.status_code == 200
     assert resumed.json()['mode'] == 'running'
     client.post('/api/loop/stop')
+
+
+def test_loop_engine_handles_rapid_pause_resume_stop_signals_without_deadlock():
+    started = client.post('/api/loop/start')
+    assert started.status_code == 200
+    assert started.json()['mode'] == 'running'
+
+    control_sequence = ['pause', 'resume', 'pause', 'resume', 'stop', 'start', 'pause', 'resume', 'stop']
+
+    def issue_control(action: str) -> int:
+        response = client.post(f'/api/loop/{action}')
+        return response.status_code
+
+    with ThreadPoolExecutor(max_workers=9) as executor:
+        statuses = list(executor.map(issue_control, control_sequence * 3))
+
+    assert statuses
+    assert all(status == 200 for status in statuses)
+
+    status_response = client.get('/api/loop/status')
+    assert status_response.status_code == 200
+    assert status_response.json()['mode'] in {'idle', 'running', 'paused', 'stopped', 'safe_mode'}
+
+    stopped = client.post('/api/loop/stop')
+    assert stopped.status_code == 200
+    assert stopped.json()['mode'] in {'idle', 'stopped'}

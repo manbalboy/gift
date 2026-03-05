@@ -51,11 +51,10 @@ describe('SystemAlertWidget', () => {
       />,
     );
 
-    expect(screen.getByText(/<img src=x onerror=alert\(1\)>/)).toBeInTheDocument();
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
-    expect(screen.getByText((_, element) => element?.classList.contains('system-alert-message') ?? false)).toHaveTextContent(
-      'Bearer ***[MASKED]***',
-    );
+    const messageNode = screen.getByText((_, element) => element?.classList.contains('system-alert-message') ?? false);
+    expect(messageNode).toHaveTextContent('Bearer ***[MASKED]***');
+    expect(messageNode).not.toHaveTextContent('<img');
   });
 
   test('http/https 링크와 티켓 패턴을 안전한 외부 링크로 렌더링한다', () => {

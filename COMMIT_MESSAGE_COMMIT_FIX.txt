@@ -1,1 +1,1 @@
-SSE 중복 렌더링, XSS 취약점, CORS 정책, 테스트 커버리지 등 리뷰 지적 사항을 반영하여 보안 및 기능 버그 수정
+루프 엔진 instruction 추적 기능 추가 및 lock provider 장애 대응 처리 보완

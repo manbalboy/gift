@@ -127,6 +127,7 @@ jest.mock('./services/api', () => {
       resumeLoopEngine: jest.fn(),
       stopLoopEngine: jest.fn(),
       injectLoopInstruction: jest.fn(),
+      getLoopInstructionStatus: jest.fn(),
       getStatusArtifactAudits: jest.fn(),
       scanStaleHumanGateAlerts: jest.fn(),
       cancelApproval: jest.fn(),
@@ -181,7 +182,12 @@ describe('App', () => {
     (api.listWorkflows as jest.Mock).mockResolvedValue(workflowsFixture);
     (api.subscribeWorkflowRuns as jest.Mock).mockReturnValue(() => undefined);
     (api.listWebhookBlockedEvents as jest.Mock).mockResolvedValue([]);
-    (api.listSystemAlerts as jest.Mock).mockResolvedValue({ items: [], next_cursor: null });
+    (api.listSystemAlerts as jest.Mock).mockImplementation(
+      () =>
+        new Promise(() => {
+          // 테스트 기본 경로에서는 장기 폴링 응답을 보류해 act 경고를 방지합니다.
+        }),
+    );
     (api.clearSystemAlerts as jest.Mock).mockResolvedValue({ cleared_count: 0 });
     (api.getLoopEngineStatus as jest.Mock).mockResolvedValue({
       mode: 'idle',
@@ -245,6 +251,15 @@ describe('App', () => {
         started_at: '2026-03-05T00:00:00Z',
         updated_at: '2026-03-05T00:00:06Z',
       },
+    });
+    (api.getLoopInstructionStatus as jest.Mock).mockResolvedValue({
+      id: 'instr-001',
+      instruction: '테스트',
+      status: 'queued',
+      queued_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:01Z',
+      applied_at: null,
+      dropped_reason: null,
     });
     (api.getStatusArtifactAudits as jest.Mock).mockResolvedValue({
       items: [],
@@ -389,7 +404,8 @@ describe('App', () => {
     expect(screen.getByText('속성 누락 노드 1개가 task 타입으로 폴백되었습니다.')).toBeInTheDocument();
   });
 
-  test('동시성 웹훅 이벤트가 빠르게 유입되어도 상태 갱신 요청이 누락되지 않는다', async () => {
+  test('동시성 웹훅 이벤트가 빠르게 유입되면 상태 동기화 요청을 쓰로틀링한다', async () => {
+    jest.useFakeTimers();
     const streamHandlers: { onRunStatus: (payload: { workflow_id: number; runs: Array<{ id: number; status: string; updated_at: string }> }) => void }[] = [];
     (api.subscribeWorkflowRuns as jest.Mock).mockImplementation(
       (
@@ -428,10 +444,50 @@ describe('App', () => {
       }
     });
 
-    await waitFor(() => {
-      expect(api.getRun).toHaveBeenCalledTimes(6);
-      expect(api.getConstellation).toHaveBeenCalledTimes(6);
+    act(() => {
+      jest.advanceTimersByTime(250);
     });
+
+    await waitFor(() => {
+      expect(api.getRun).toHaveBeenCalledTimes(1);
+      expect(api.getConstellation).toHaveBeenCalledTimes(1);
+    });
+
+    jest.useRealTimers();
+  });
+
+  test('queue_overflow dropped 상태 수신 시 경고 토스트와 상세 모달을 노출한다', async () => {
+    jest.useFakeTimers();
+    (api.getLoopInstructionStatus as jest.Mock).mockResolvedValue({
+      id: 'instr-001',
+      instruction: '테스트',
+      status: 'dropped',
+      queued_at: '2026-03-05T00:00:00Z',
+      updated_at: '2026-03-05T00:00:01Z',
+      applied_at: null,
+      dropped_reason: 'queue_overflow',
+    });
+
+    render(<App />);
+    await waitFor(() => expect(api.listWorkflows).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText('Inject Instruction'), { target: { value: '부하 제어 지시' } });
+    fireEvent.click(screen.getByRole('button', { name: '등록' }));
+    await waitFor(() => expect(api.injectLoopInstruction).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      jest.advanceTimersByTime(1300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('큐 포화로 이전 지시사항 일부가 drop 처리되었습니다. 처리량을 낮추거나 재주입하세요.')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '상세 보기' }));
+    expect(screen.getByRole('dialog', { name: '큐 오버플로우 상세' })).toBeInTheDocument();
+    expect(screen.getByText('instruction_id: instr-001')).toBeInTheDocument();
+
+    jest.useRealTimers();
   });
 
   test('Human Gate 403 응답 시 권한 안내 모달을 노출한다', async () => {

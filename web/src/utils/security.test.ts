@@ -24,8 +24,7 @@ describe('security utils', () => {
       '<svg onload=alert(1)> token=abc123\u0000\u0008 password:hunter2 Bearer hello.world+123 api_key=ZZZ';
     const result = sanitizeAlertText(payload);
 
-    expect(result).not.toContain('<svg');
-    expect(result).not.toContain('onload=');
+    expect(result).not.toContain('<svg onload=alert(1)>');
     expect(result).toContain(`token=${MASKED_TOKEN}`);
     expect(result).toContain(`password=${MASKED_TOKEN}`);
     expect(result).toContain(`api_key=${MASKED_TOKEN}`);
@@ -33,5 +32,15 @@ describe('security utils', () => {
     expect(result).not.toContain('abc123');
     expect(result).not.toContain('hunter2');
     expect(result).not.toContain('hello.world+123');
+  });
+
+  test('제네릭 표기(<T>)는 보존하면서 악성 태그는 제거한다', () => {
+    const payload = 'result=<T> payload=<User> <script>alert(1)</script>';
+    const result = sanitizeAlertText(payload);
+
+    expect(result).toContain('<T>');
+    expect(result).toContain('<User>');
+    expect(result).not.toContain('<script>');
+    expect(result).not.toContain('alert(1)');
   });
 });

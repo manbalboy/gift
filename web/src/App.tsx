@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Dashboard from './components/Dashboard';
 import LiveRunConstellation from './components/LiveRunConstellation';
+import LoopMonitorWidget from './components/LoopMonitorWidget';
 import SafeArtifactViewer from './components/SafeArtifactViewer';
 import StatusBadge from './components/StatusBadge';
 import SystemAlertWidget from './components/SystemAlertWidget';
@@ -27,6 +28,14 @@ const HUMAN_GATE_REJECT_PRESETS = [
   '핵심 오류가 재현되어 수정 후 재검토가 필요합니다.',
   '보안/권한 검증 근거가 부족하여 반려합니다.',
 ];
+const RUN_SYNC_THROTTLE_MS = 180;
+
+type LoopPendingAction = 'start' | 'pause' | 'resume' | 'stop' | 'inject' | null;
+type QueueOverflowDetail = {
+  instructionId: string;
+  droppedReason: string;
+  updatedAt: string;
+} | null;
 
 export default function App() {
   const [streamState, setStreamState] = useState<'connecting' | 'connected' | 'reconnecting' | 'closed' | 'failed'>('closed');
@@ -59,7 +68,9 @@ export default function App() {
   const [systemAlertsActionLoading, setSystemAlertsActionLoading] = useState(false);
   const [loopEngineStatus, setLoopEngineStatus] = useState<LoopEngineStatus | null>(null);
   const [loopEngineActionLoading, setLoopEngineActionLoading] = useState(false);
+  const [loopPendingAction, setLoopPendingAction] = useState<LoopPendingAction>(null);
   const [loopInjectInstruction, setLoopInjectInstruction] = useState('');
+  const [queueOverflowDetail, setQueueOverflowDetail] = useState<QueueOverflowDetail>(null);
   const [humanGateAuditModalOpen, setHumanGateAuditModalOpen] = useState(false);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectTargetNodeId, setRejectTargetNodeId] = useState<string | null>(null);
@@ -74,6 +85,11 @@ export default function App() {
   const toastsRef = useRef<ToastItem[]>([]);
   const toastQueueRef = useRef<ToastItem[]>([]);
   const dedupedToastKeysRef = useRef<Set<string>>(new Set());
+  const trackedLoopInstructionIdsRef = useRef<string[]>([]);
+  const notifiedDroppedInstructionIdsRef = useRef<Set<string>>(new Set());
+  const pendingRunSyncIdRef = useRef<number | null>(null);
+  const runSyncTimerRef = useRef<number | null>(null);
+  const runSyncInFlightRef = useRef(false);
   const timezoneOffsetMinutes = useMemo(() => new Date().getTimezoneOffset(), []);
 
   const resolveErrorMessage = (error: unknown, fallback: string) =>
@@ -143,6 +159,41 @@ export default function App() {
     commitToastQueue([]);
     dedupedToastKeysRef.current.clear();
     commitVisibleToasts([]);
+  };
+
+  const flushRunSync = async () => {
+    if (runSyncInFlightRef.current) return;
+    const targetRunId = pendingRunSyncIdRef.current;
+    if (!targetRunId) return;
+    pendingRunSyncIdRef.current = null;
+    runSyncInFlightRef.current = true;
+    try {
+      const [latestRun, latestConstellation] = await Promise.all([api.getRun(targetRunId), api.getConstellation(targetRunId)]);
+      setRun(latestRun);
+      setConstellation(latestConstellation);
+      clearApiDegraded();
+    } catch (error) {
+      const message = resolveErrorMessage(error, '실시간 상태 동기화 실패');
+      markApiDegraded(error, '서버 상태가 불안정합니다');
+      enqueueToast('error', `실시간 상태 동기화 실패 (${message})`);
+    } finally {
+      runSyncInFlightRef.current = false;
+      if (pendingRunSyncIdRef.current && runSyncTimerRef.current === null) {
+        runSyncTimerRef.current = window.setTimeout(() => {
+          runSyncTimerRef.current = null;
+          void flushRunSync();
+        }, RUN_SYNC_THROTTLE_MS);
+      }
+    }
+  };
+
+  const scheduleRunSync = (runId: number) => {
+    pendingRunSyncIdRef.current = runId;
+    if (runSyncTimerRef.current !== null || runSyncInFlightRef.current) return;
+    runSyncTimerRef.current = window.setTimeout(() => {
+      runSyncTimerRef.current = null;
+      void flushRunSync();
+    }, RUN_SYNC_THROTTLE_MS);
   };
 
   const loadWorkflows = async () => {
@@ -252,6 +303,64 @@ export default function App() {
   }, [loopEngineStatus?.mode]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const pollInstructionStatuses = async () => {
+      const instructionIds = trackedLoopInstructionIdsRef.current;
+      if (instructionIds.length === 0) return;
+
+      const checks = await Promise.all(
+        instructionIds.slice(0, 30).map(async (instructionId) => {
+          try {
+            const status = await api.getLoopInstructionStatus(instructionId);
+            return { instructionId, status };
+          } catch {
+            return { instructionId, status: null };
+          }
+        }),
+      );
+      if (cancelled) return;
+
+      const retainedInstructionIds = new Set(instructionIds);
+      checks.forEach(({ instructionId, status }) => {
+        if (!status) return;
+        if (status.status === 'applied') {
+          retainedInstructionIds.delete(instructionId);
+          return;
+        }
+        if (status.status === 'dropped' && status.dropped_reason === 'queue_overflow') {
+          retainedInstructionIds.delete(instructionId);
+          if (notifiedDroppedInstructionIdsRef.current.has(instructionId)) return;
+          notifiedDroppedInstructionIdsRef.current.add(instructionId);
+          enqueueToast('warning', '큐 포화로 이전 지시사항 일부가 drop 처리되었습니다. 처리량을 낮추거나 재주입하세요.', {
+            dedupeKey: `loop-queue-overflow-${instructionId}`,
+            action: {
+              label: '상세 보기',
+              onClick: () =>
+                setQueueOverflowDetail({
+                  instructionId,
+                  droppedReason: status.dropped_reason ?? 'unknown',
+                  updatedAt: status.updated_at,
+                }),
+            },
+          });
+        }
+      });
+      trackedLoopInstructionIdsRef.current = instructionIds.filter((instructionId) => retainedInstructionIds.has(instructionId));
+    };
+
+    const timer = window.setInterval(() => {
+      void pollInstructionStatuses();
+    }, 1_200);
+    void pollInstructionStatuses();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     activeRunRef.current = run;
   }, [run]);
 
@@ -347,22 +456,10 @@ export default function App() {
     if (!activeWorkflow) return;
 
     const unsubscribe = api.subscribeWorkflowRuns(activeWorkflow.id, {
-      onRunStatus: async (event) => {
-        try {
-          const targetRunId = activeRunRef.current?.id ?? event.runs[0]?.id;
-          if (!targetRunId) return;
-        const [latestRun, latestConstellation] = await Promise.all([
-          api.getRun(targetRunId),
-          api.getConstellation(targetRunId),
-        ]);
-        setRun(latestRun);
-        setConstellation(latestConstellation);
-        clearApiDegraded();
-      } catch (error) {
-          const message = resolveErrorMessage(error, '실시간 상태 동기화 실패');
-          markApiDegraded(error, '서버 상태가 불안정합니다');
-          enqueueToast('error', `실시간 상태 동기화 실패 (${message})`);
-        }
+      onRunStatus: (event) => {
+        const targetRunId = activeRunRef.current?.id ?? event.runs[0]?.id;
+        if (!targetRunId) return;
+        scheduleRunSync(targetRunId);
       },
       onError: () => {
         enqueueToast('error', '실시간 스트림 연결이 끊겨 재연결을 시도합니다.', {
@@ -384,7 +481,15 @@ export default function App() {
       },
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      pendingRunSyncIdRef.current = null;
+      runSyncInFlightRef.current = false;
+      if (runSyncTimerRef.current !== null) {
+        window.clearTimeout(runSyncTimerRef.current);
+        runSyncTimerRef.current = null;
+      }
+    };
   }, [activeWorkflow?.id]);
 
   const runStatus = useMemo(() => run?.status ?? 'queued', [run?.status]);
@@ -410,6 +515,14 @@ export default function App() {
     if (!loopEngineStatus?.current_stage) return '-';
     return loopEngineStatus.current_stage.toUpperCase();
   }, [loopEngineStatus?.current_stage]);
+  const loopPendingActionLabel = useMemo(() => {
+    if (loopPendingAction === 'start') return '시작';
+    if (loopPendingAction === 'pause') return '일시정지';
+    if (loopPendingAction === 'resume') return '재개';
+    if (loopPendingAction === 'stop') return '중지';
+    if (loopPendingAction === 'inject') return '지시사항 등록';
+    return '명령';
+  }, [loopPendingAction]);
   const nodeStatuses = useMemo(
     () =>
       Object.fromEntries(
@@ -718,6 +831,7 @@ export default function App() {
 
   const handleStartLoopEngine = async () => {
     if (loopEngineActionLoading) return;
+    setLoopPendingAction('start');
     setLoopEngineActionLoading(true);
     try {
       const next = await api.startLoopEngine();
@@ -728,12 +842,14 @@ export default function App() {
       enqueueToast('error', `Loop Engine 시작 실패 (${message})`);
     } finally {
       setLoopEngineActionLoading(false);
+      setLoopPendingAction(null);
       void syncLoopEngineStatus();
     }
   };
 
   const handlePauseLoopEngine = async () => {
     if (loopEngineActionLoading) return;
+    setLoopPendingAction('pause');
     setLoopEngineActionLoading(true);
     try {
       const next = await api.pauseLoopEngine();
@@ -744,12 +860,14 @@ export default function App() {
       enqueueToast('error', `Loop Engine 일시정지 실패 (${message})`);
     } finally {
       setLoopEngineActionLoading(false);
+      setLoopPendingAction(null);
       void syncLoopEngineStatus();
     }
   };
 
   const handleStopLoopEngine = async () => {
     if (loopEngineActionLoading) return;
+    setLoopPendingAction('stop');
     setLoopEngineActionLoading(true);
     try {
       const next = await api.stopLoopEngine();
@@ -760,12 +878,14 @@ export default function App() {
       enqueueToast('error', `Loop Engine 중지 실패 (${message})`);
     } finally {
       setLoopEngineActionLoading(false);
+      setLoopPendingAction(null);
       void syncLoopEngineStatus();
     }
   };
 
   const handleResumeLoopEngine = async () => {
     if (loopEngineActionLoading) return;
+    setLoopPendingAction('resume');
     setLoopEngineActionLoading(true);
     try {
       const next = await api.resumeLoopEngine();
@@ -776,6 +896,7 @@ export default function App() {
       enqueueToast('error', `Loop Engine 재개 실패 (${message})`);
     } finally {
       setLoopEngineActionLoading(false);
+      setLoopPendingAction(null);
       void syncLoopEngineStatus();
     }
   };
@@ -783,17 +904,20 @@ export default function App() {
   const handleInjectLoopInstruction = async () => {
     const instruction = loopInjectInstruction.trim();
     if (!instruction || loopEngineActionLoading) return;
+    setLoopPendingAction('inject');
     setLoopEngineActionLoading(true);
     try {
       const queued = await api.injectLoopInstruction(instruction);
       setLoopEngineStatus(queued.status);
       setLoopInjectInstruction('');
+      trackedLoopInstructionIdsRef.current = [...trackedLoopInstructionIdsRef.current, queued.instruction_id].slice(-40);
       enqueueToast('warning', `Inject Instruction을 큐에 등록했습니다. (${queued.instruction_id})`);
     } catch (error) {
       const message = resolveErrorMessage(error, 'Inject Instruction 등록 실패');
       enqueueToast('error', `Inject Instruction 등록 실패 (${message})`);
     } finally {
       setLoopEngineActionLoading(false);
+      setLoopPendingAction(null);
       void syncLoopEngineStatus();
     }
   };
@@ -939,6 +1063,12 @@ export default function App() {
                 중지
               </button>
             </div>
+            {loopEngineActionLoading && (
+              <p className="loop-engine-pending mono" role="status" aria-live="polite">
+                <span className="loop-engine-spinner" aria-hidden />
+                {loopPendingActionLabel} 요청 처리 중...
+              </p>
+            )}
             <form
               className="loop-engine-inject"
               onSubmit={(event) => {
@@ -968,6 +1098,7 @@ export default function App() {
               </div>
             </form>
           </section>
+          <LoopMonitorWidget status={loopEngineStatus} run={run} />
           <SystemAlertWidget
             alerts={systemAlerts}
             loading={systemAlertsLoading}
@@ -1143,6 +1274,28 @@ export default function App() {
           </section>
         </aside>
       </div>
+      {queueOverflowDetail && (
+        <div className="auth-modal-backdrop" role="presentation" onClick={() => setQueueOverflowDetail(null)}>
+          <div
+            className={`auth-modal card ${isMobilePortrait ? 'sheet-modal' : ''}`}
+            role="dialog"
+            aria-modal="true"
+            aria-label="큐 오버플로우 상세"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>큐 오버플로우 상세</h2>
+            <p>루프 지시사항 큐가 포화되어 일부 항목이 drop 처리되었습니다.</p>
+            <p className="mono">instruction_id: {queueOverflowDetail.instructionId}</p>
+            <p className="mono">reason: {queueOverflowDetail.droppedReason}</p>
+            <p className="mono">updated_at: {queueOverflowDetail.updatedAt}</p>
+            <div className="builder-actions">
+              <button type="button" className="btn btn-primary" onClick={() => setQueueOverflowDetail(null)}>
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {rejectModalOpen && (
         <div className="auth-modal-backdrop" role="presentation" onClick={() => setRejectModalOpen(false)}>
           <div
